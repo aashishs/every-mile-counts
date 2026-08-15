@@ -1,0 +1,29 @@
+{
+  "name": "every-mile-counts-server",
+  "version": "1.0.0",
+  "description": "Backend API for Every Mile Counts",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js",
+    "migrate": "node db/migrate.js",
+    "seed": "node db/seed.js",
+    "setup": "node db/migrate.js && node db/seed.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.9",
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "every-mile-counts": "file:..",
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.5.0",
+    "helmet": "^8.0.0",
+    "jsonwebtoken": "^9.0.2",
+    "node-cron": "^3.0.3",
+    "oauth-1.0a": "^2.2.6",
+    "pg": "^8.13.1",
+    "web-push": "^3.6.7"
+  }
+}

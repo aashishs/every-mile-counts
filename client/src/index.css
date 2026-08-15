@@ -1,0 +1,57 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-ink text-slate-100 font-sans min-h-screen antialiased;
+  }
+  input, select, textarea {
+    @apply bg-ink border border-line rounded-xl px-3 py-2.5 text-slate-100 w-full focus:outline-none focus:border-brand;
+  }
+  label {
+    @apply block text-sm font-medium mb-1.5;
+  }
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-semibold text-sm transition disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply btn bg-brand text-white hover:bg-brand-dark;
+  }
+  .btn-accent {
+    @apply btn bg-accent text-white hover:bg-accent-dark;
+  }
+  .btn-outline {
+    @apply btn border border-line text-slate-100 hover:bg-hover;
+  }
+  .btn-danger {
+    @apply btn bg-red-500 text-white hover:bg-red-600;
+  }
+  .btn-sm {
+    @apply px-3 py-1.5 text-xs;
+  }
+  .card {
+    @apply bg-card border border-line rounded-xl p-5 shadow-card;
+  }
+  .stat-card {
+    @apply card;
+  }
+  .page-title {
+    @apply text-2xl font-bold mb-1;
+  }
+  .page-sub {
+    @apply text-muted mb-6;
+  }
+  .nav-link {
+    @apply flex items-center gap-3 px-4 py-2.5 rounded-xl text-muted font-medium hover:bg-hover hover:text-slate-100;
+  }
+  .nav-link.active {
+    @apply bg-brand/15 text-brand;
+  }
+  .badge {
+    @apply inline-block px-2.5 py-0.5 rounded-full text-xs font-semibold uppercase;
+  }
+}

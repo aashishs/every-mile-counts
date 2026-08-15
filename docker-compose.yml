@@ -1,0 +1,50 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: emc
+      POSTGRES_PASSWORD: emc
+      POSTGRES_DB: every_mile_counts
+    ports:
+      - "5432:5432"
+    volumes:
+      - emc_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U emc -d every_mile_counts"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: ./server
+    environment:
+      PORT: 5000
+      DATABASE_URL: postgres://emc:emc@postgres:5432/every_mile_counts
+      JWT_SECRET: ${JWT_SECRET:-change-me-to-a-long-random-secret}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
+      CLIENT_URL: ${CLIENT_URL:-http://localhost:8080}
+      STRAVA_CLIENT_ID: ${STRAVA_CLIENT_ID:-}
+      STRAVA_CLIENT_SECRET: ${STRAVA_CLIENT_SECRET:-}
+      STRAVA_REDIRECT_URI: ${STRAVA_REDIRECT_URI:-http://localhost:5000/api/strava/callback}
+      GARMIN_CONSUMER_KEY: ${GARMIN_CONSUMER_KEY:-}
+      GARMIN_CONSUMER_SECRET: ${GARMIN_CONSUMER_SECRET:-}
+      GARMIN_REDIRECT_URI: ${GARMIN_REDIRECT_URI:-http://localhost:5000/api/garmin/callback}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@everymilecounts.app}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-Admin123!}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "5000:5000"
+
+  web:
+    build:
+      context: ./client
+    ports:
+      - "8080:80"
+    depends_on:
+      - api
+
+volumes:
+  emc_pg:

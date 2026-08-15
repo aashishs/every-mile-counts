@@ -1,0 +1,8 @@
+node_modules/
+.env
+LOCAL_SETUP.txt
+dist/
+*.log
+.DS_Store
+.vite
+coverage/
