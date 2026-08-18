@@ -95,11 +95,12 @@ export function analyzeActivity(activity, athlete = {}) {
   };
 }
 
-export async function athleteDashboard(athleteId, athlete = {}) {
+export async function athleteDashboard(athleteId, athlete = {}, { type } = {}) {
   const now = new Date();
   const week = startOfWeek(now);
   const month = startOfMonth(now);
   const year = startOfYear(now);
+  const filterType = type && type !== 'all' ? type : null;
 
   const activities = camelMany(
     await many(
@@ -112,16 +113,20 @@ export async function athleteDashboard(athleteId, athlete = {}) {
     await many(`SELECT * FROM activities WHERE athlete_id = $1 ORDER BY start_date DESC`, [athleteId])
   );
 
+  const scopedYear = filterType ? activities.filter((a) => sportFamily(a) === filterType) : activities;
+  const scopedAll = filterType ? allTime.filter((a) => sportFamily(a) === filterType) : allTime;
+
   const sum = (list, key) => list.reduce((a, b) => a + num(b[key]), 0);
-  const inRange = (from) => activities.filter((a) => a.startDate && new Date(a.startDate) >= from);
+  const inRange = (from) => scopedYear.filter((a) => a.startDate && new Date(a.startDate) >= from);
 
   const weekly = inRange(week);
   const monthly = inRange(month);
-  const yearly = activities;
+  const yearly = scopedYear;
 
   const last30 = new Date(now);
   last30.setDate(last30.getDate() - 30);
-  const recent = allTime.filter((a) => a.startDate && new Date(a.startDate) >= last30);
+  const recent = scopedAll.filter((a) => a.startDate && new Date(a.startDate) >= last30);
+  const durationView = filterType ? isDurationSport(filterType) : false;
 
   const weeklyTrend = {};
   for (const act of recent) {
@@ -138,7 +143,8 @@ export async function athleteDashboard(athleteId, athlete = {}) {
   ).size;
   const consistency = Math.round((daysWithActivity / 30) * 100);
 
-  const personalRecords = detectPersonalRecords(allTime);
+  const personalRecords = detectPersonalRecords(scopedAll, filterType);
+  const byActivityType = buildActivityTypeHighlights(filterType ? scopedAll : allTime);
 
   const coaches = camelMany(
     await many(
@@ -189,25 +195,55 @@ export async function athleteDashboard(athleteId, athlete = {}) {
       distance: a.distance,
     }));
 
+  const formatVolume = (list) => {
+    if (durationView) return formatDuration(sum(list, 'movingTime'));
+    if (filterType === 'Swim') return `${Math.round(sum(list, 'distance'))} m`;
+    return formatDistance(sum(list, 'distance'));
+  };
+
+  const DISTANCE_SPORTS = ['Run', 'Ride', 'Hike', 'Swim'];
+  const distanceSports = DISTANCE_SPORTS.map((sport) => {
+    const all = allTime.filter((a) => sportFamily(a) === sport);
+    const yearList = all.filter((a) => a.startDate && new Date(a.startDate) >= year);
+    const allDist = sum(all, 'distance');
+    const yearDist = sum(yearList, 'distance');
+    const fmt = (meters) => (sport === 'Swim' ? `${Math.round(meters)} m` : formatDistance(meters));
+    return {
+      type: sport,
+      count: all.length,
+      yearCount: yearList.length,
+      allTime: allDist,
+      yearly: yearDist,
+      formattedAllTime: fmt(allDist),
+      formattedYearly: fmt(yearDist),
+    };
+  });
+
   return {
+    filterType: filterType || 'all',
+    metric: durationView ? 'duration' : filterType === 'Swim' ? 'swim' : 'distance',
     mileage: {
-      weekly: sum(weekly, 'distance'),
-      monthly: sum(monthly, 'distance'),
-      yearly: sum(yearly, 'distance'),
+      weekly: sum(weekly, durationView ? 'movingTime' : 'distance'),
+      monthly: sum(monthly, durationView ? 'movingTime' : 'distance'),
+      yearly: sum(yearly, durationView ? 'movingTime' : 'distance'),
+      allTime: sum(scopedAll, durationView ? 'movingTime' : 'distance'),
       formatted: {
-        weekly: formatDistance(sum(weekly, 'distance')),
-        monthly: formatDistance(sum(monthly, 'distance')),
-        yearly: formatDistance(sum(yearly, 'distance')),
+        weekly: formatVolume(weekly),
+        monthly: formatVolume(monthly),
+        yearly: formatVolume(yearly),
+        allTime: formatVolume(scopedAll),
       },
     },
     totals: {
-      activities: allTime.length,
-      elevation: sum(allTime, 'elevationGain'),
-      movingTime: sum(allTime, 'movingTime'),
+      activities: scopedAll.length,
+      elevation: sum(scopedAll, 'elevationGain'),
+      movingTime: sum(scopedAll, 'movingTime'),
     },
     consistency,
     recoveryIndicator: consistency > 80 ? 'high load — watch recovery' : consistency > 40 ? 'steady' : 'building',
     personalRecords,
+    byActivityType,
+    distanceSports,
     paceTrends: avgPaceSeries,
     weeklyTrend: Object.values(weeklyTrend).sort((a, b) => a.week.localeCompare(b.week)),
     coaches,
@@ -220,60 +256,230 @@ export async function athleteDashboard(athleteId, athlete = {}) {
   };
 }
 
-export function detectPersonalRecords(activities) {
-  const targets = [
-    { key: 'fastest5k', meters: 5000, type: 'Run' },
-    { key: 'fastest10k', meters: 10000, type: 'Run' },
-    { key: 'fastestHalf', meters: 21097, type: 'Run' },
-    { key: 'fastestMarathon', meters: 42195, type: 'Run' },
-  ];
+function sportFamily(activity) {
+  const t = `${activity.type || ''} ${activity.sportType || ''}`.toLowerCase();
+  if (t.includes('swim')) return 'Swim';
+  if (t.includes('ride') || t.includes('cycle') || t.includes('bike')) return 'Ride';
+  if (t.includes('run') || t.includes('trail')) return 'Run';
+  if (t.includes('walk')) return 'Walk';
+  if (t.includes('hike')) return 'Hike';
+  if (t.includes('yoga')) return 'Yoga';
+  if (t.includes('weight') || t.includes('strength')) return 'WeightTraining';
+  if (t.includes('hiit') || t.includes('highintensity')) return 'HIIT';
+  if (t.includes('workout')) return 'Workout';
+  return activity.type || 'Other';
+}
+
+const TYPE_BUCKETS = {
+  Run: [
+    { key: '5k', label: '5K', min: 5000, max: 10000 },
+    { key: '10k', label: '10K', min: 10000, max: 21097.5 },
+    { key: 'hm', label: 'Half marathon', min: 21097.5, max: 42195 },
+    { key: 'fm', label: 'Marathon', min: 42195, max: 50000 },
+    { key: 'ultra', label: '50K+ ultra', min: 50000, max: Infinity },
+  ],
+  Ride: [
+    { key: '50k', label: '50 km', min: 50000, max: 100000 },
+    { key: '100k', label: '100 km', min: 100000, max: 150000 },
+    { key: '150k', label: '150 km+', min: 150000, max: Infinity },
+  ],
+  Swim: [
+    { key: '100m', label: '100 m', min: 100, max: 200 },
+    { key: '200m', label: '200 m', min: 200, max: 500 },
+    { key: '500m', label: '500 m', min: 500, max: 1000 },
+    { key: '1000m', label: '1000 m', min: 1000, max: 1500 },
+    { key: 'plus', label: '1500 m+', min: 1500, max: Infinity },
+  ],
+};
+
+function recordPayload(act) {
+  return {
+    activityId: act.id,
+    name: act.name,
+    time: formatDuration(act.movingTime),
+    movingTime: num(act.movingTime),
+    date: act.startDate,
+    distance: formatDistance(act.distance),
+    meters: num(act.distance),
+  };
+}
+
+function isDurationSport(type) {
+  const t = String(type || '').toLowerCase();
+  return [
+    'workout', 'weight', 'yoga', 'crossfit', 'pilates', 'stretch', 'hiit',
+    'highintensity', 'climb', 'stair', 'elliptical', 'meditation', 'taichi', 'strength',
+  ].some((k) => t.includes(k));
+}
+
+const DURATION_BUCKETS = [
+  { key: '15', label: '15–30 min', min: 15 * 60, max: 30 * 60 },
+  { key: '30', label: '30–45 min', min: 30 * 60, max: 45 * 60 },
+  { key: '45', label: '45–60 min', min: 45 * 60, max: 60 * 60 },
+  { key: '60', label: '60–90 min', min: 60 * 60, max: 90 * 60 },
+  { key: '90', label: '90 min+', min: 90 * 60, max: Infinity },
+];
+
+export function buildActivityTypeHighlights(activities) {
+  const groups = {};
+  for (const act of activities) {
+    const family = sportFamily(act);
+    if (!groups[family]) groups[family] = [];
+    groups[family].push(act);
+  }
+
+  const order = ['Run', 'Ride', 'Hike', 'Swim'];
+  const extra = Object.keys(groups).filter((k) => !order.includes(k)).sort();
+  const types = [...order.filter((k) => groups[k]?.length), ...extra.filter((k) => groups[k]?.length)];
+
+  return types.map((type) => {
+    const list = groups[type];
+    const totalDistance = list.reduce((a, b) => a + num(b.distance), 0);
+    const totalTime = list.reduce((a, b) => a + num(b.movingTime || b.elapsedTime), 0);
+    const totalCalories = list.reduce((a, b) => a + num(b.calories), 0);
+    const metric = TYPE_BUCKETS[type] || ['Hike', 'Walk'].includes(type)
+      ? (type === 'Swim' ? 'swim' : 'distance')
+      : isDurationSport(type) || totalDistance < 50 * list.length
+        ? 'duration'
+        : 'distance';
+
+    const bucketDefs = metric === 'duration' ? DURATION_BUCKETS : (TYPE_BUCKETS[type] || []);
+    const buckets = bucketDefs.map((bucket) => {
+      const matches = list.filter((a) => {
+        const value = metric === 'duration' ? num(a.movingTime || a.elapsedTime) : num(a.distance);
+        return value >= bucket.min && value < bucket.max && num(a.movingTime || a.elapsedTime) > 0;
+      });
+      const fastest = [...matches].sort((a, b) => num(a.movingTime) - num(b.movingTime))[0] || null;
+      const longestSession = [...matches].sort((a, b) => num(b.movingTime) - num(a.movingTime))[0] || null;
+      const highlight = metric === 'duration' ? longestSession : fastest;
+      return {
+        key: bucket.key,
+        label: bucket.label,
+        count: matches.length,
+        fastest: highlight ? recordPayload(highlight) : null,
+        badge: metric === 'duration' ? 'Longest' : 'Fastest',
+      };
+    });
+
+    const longest = metric === 'duration'
+      ? [...list].sort((a, b) => num(b.movingTime || b.elapsedTime) - num(a.movingTime || a.elapsedTime))[0]
+      : [...list].sort((a, b) => num(b.distance) - num(a.distance))[0];
+
+    const formattedPrimary = metric === 'swim'
+      ? `${Math.round(totalDistance)} m`
+      : metric === 'duration'
+        ? formatDuration(totalTime)
+        : formatDistance(totalDistance);
+
+    return {
+      type,
+      metric,
+      count: list.length,
+      distance: totalDistance,
+      formattedDistance: formattedPrimary,
+      formattedTime: formatDuration(totalTime),
+      formattedCalories: totalCalories ? `${Math.round(totalCalories)} kcal` : null,
+      buckets,
+      longest: longest
+        ? {
+            ...recordPayload(longest),
+            distance: metric === 'swim'
+              ? `${Math.round(num(longest.distance))} m`
+              : metric === 'duration'
+                ? formatDuration(longest.movingTime || longest.elapsedTime)
+                : formatDistance(longest.distance),
+          }
+        : null,
+    };
+  });
+}
+
+export function detectPersonalRecords(activities, type) {
+  const family = type && type !== 'all' ? type : 'Run';
+  const list = activities.filter((a) => sportFamily(a) === family);
   const records = {};
-  for (const t of targets) {
-    const candidates = activities.filter(
-      (a) => a.type === t.type && num(a.distance) >= t.meters * 0.98 && num(a.distance) <= t.meters * 1.08 && a.movingTime
-    );
-    const best = candidates.sort((a, b) => num(a.movingTime) - num(b.movingTime))[0];
-    if (best) {
-      records[t.key] = {
-        activityId: best.id,
-        name: best.name,
-        time: formatDuration(best.movingTime),
-        date: best.startDate,
-        distance: formatDistance(best.distance),
+  const buckets = TYPE_BUCKETS[family];
+  if (buckets) {
+    for (const bucket of buckets) {
+      const candidates = list.filter(
+        (a) => num(a.distance) >= bucket.min && num(a.distance) < bucket.max && a.movingTime
+      );
+      const best = candidates.sort((a, b) => num(a.movingTime) - num(b.movingTime))[0];
+      if (best) {
+        records[bucket.key] = {
+          ...recordPayload(best),
+          label: `Fastest ${bucket.label}`,
+        };
+      }
+    }
+    const longest = [...list].sort((a, b) => num(b.distance) - num(a.distance))[0];
+    if (longest) {
+      records.longest = {
+        ...recordPayload(longest),
+        distance: family === 'Swim' ? `${Math.round(num(longest.distance))} m` : formatDistance(longest.distance),
+        label: family === 'Swim' ? 'Longest swim' : 'Longest distance',
       };
     }
+    return records;
   }
-  const longest = [...activities].sort((a, b) => num(b.distance) - num(a.distance))[0];
+
+  if (isDurationSport(family)) {
+    const longest = [...list].sort((a, b) => num(b.movingTime || b.elapsedTime) - num(a.movingTime || a.elapsedTime))[0];
+    if (longest) {
+      records.longestSession = {
+        ...recordPayload(longest),
+        distance: formatDuration(longest.movingTime || longest.elapsedTime),
+        label: 'Longest session',
+      };
+    }
+    return records;
+  }
+
+  const longest = [...list].sort((a, b) => num(b.distance) - num(a.distance))[0];
   if (longest) {
     records.longestDistance = {
-      activityId: longest.id,
-      name: longest.name,
-      distance: formatDistance(longest.distance),
-      date: longest.startDate,
-      type: longest.type,
+      ...recordPayload(longest),
+      label: 'Longest distance',
     };
   }
   return records;
 }
 
-export async function periodAnalysis(athleteId, days = 30) {
+function volumeMetric(type) {
+  if (!type || type === 'all') return 'distance';
+  if (isDurationSport(type)) return 'duration';
+  if (type === 'Swim') return 'swim';
+  return 'distance';
+}
+
+function formatVolumeValue(distance, time, metric) {
+  if (metric === 'duration') return formatDuration(time);
+  if (metric === 'swim') return `${Math.round(distance)} m`;
+  return formatDistance(distance);
+}
+
+export async function periodAnalysis(athleteId, days = 30, { type } = {}) {
   const since = new Date();
   since.setDate(since.getDate() - Number(days));
   const prevSince = new Date(since);
   prevSince.setDate(prevSince.getDate() - Number(days));
+  const filterType = type && type !== 'all' ? type : null;
+  const metric = volumeMetric(filterType);
 
-  const current = camelMany(
+  const currentRaw = camelMany(
     await many(
       `SELECT * FROM activities WHERE athlete_id = $1 AND start_date >= $2 ORDER BY start_date`,
       [athleteId, since]
     )
   );
-  const previous = camelMany(
+  const previousRaw = camelMany(
     await many(
       `SELECT * FROM activities WHERE athlete_id = $1 AND start_date >= $2 AND start_date < $3`,
       [athleteId, prevSince, since]
     )
   );
+  const current = filterType ? currentRaw.filter((a) => sportFamily(a) === filterType) : currentRaw;
+  const previous = filterType ? previousRaw.filter((a) => sportFamily(a) === filterType) : previousRaw;
 
   const aggregate = (list) => ({
     count: list.length,
@@ -291,14 +497,16 @@ export async function periodAnalysis(athleteId, days = 30) {
   const cur = aggregate(current);
   const prev = aggregate(previous);
   const delta = (a, b) => (b ? ((a - b) / b) * 100 : a ? 100 : 0);
+  const compareKey = metric === 'duration' ? 'time' : 'distance';
 
   const byType = {};
   for (const act of current) {
-    if (!byType[act.type]) byType[act.type] = { count: 0, distance: 0, time: 0, elevation: 0 };
-    byType[act.type].count += 1;
-    byType[act.type].distance += num(act.distance);
-    byType[act.type].time += num(act.movingTime);
-    byType[act.type].elevation += num(act.elevationGain);
+    const family = sportFamily(act);
+    if (!byType[family]) byType[family] = { count: 0, distance: 0, time: 0, elevation: 0 };
+    byType[family].count += 1;
+    byType[family].distance += num(act.distance);
+    byType[family].time += num(act.movingTime);
+    byType[family].elevation += num(act.elevationGain);
   }
 
   const weeklyBreakdown = {};
@@ -310,29 +518,29 @@ export async function periodAnalysis(athleteId, days = 30) {
     weeklyBreakdown[key].time += num(act.movingTime);
   }
 
-  const personalRecords = detectPersonalRecords(
-    camelMany(await many(`SELECT * FROM activities WHERE athlete_id = $1`, [athleteId]))
-  );
+  const allTime = camelMany(await many(`SELECT * FROM activities WHERE athlete_id = $1`, [athleteId]));
 
   return {
     period: Number(days),
+    filterType: filterType || 'all',
+    metric,
     current: {
       ...cur,
       formatted: {
-        distance: formatDistance(cur.distance),
+        distance: formatVolumeValue(cur.distance, cur.time, metric),
         time: formatDuration(cur.time),
         elevation: `${Math.round(cur.elevation)} m`,
       },
     },
     previous: prev,
     comparison: {
-      distancePct: Math.round(delta(cur.distance, prev.distance)),
+      distancePct: Math.round(delta(cur[compareKey], prev[compareKey])),
       timePct: Math.round(delta(cur.time, prev.time)),
       countPct: Math.round(delta(cur.count, prev.count)),
     },
     byType,
     weeklyBreakdown: Object.values(weeklyBreakdown).sort((a, b) => a.week.localeCompare(b.week)),
-    personalRecords,
+    personalRecords: detectPersonalRecords(allTime, filterType),
     paceTrends: current
       .filter((a) => a.avgSpeed)
       .map((a) => ({ date: a.startDate, paceSecPerKm: 1000 / Number(a.avgSpeed), hr: a.avgHeartrate })),

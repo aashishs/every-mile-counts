@@ -13,6 +13,42 @@ export function formatDistance(meters) {
   return `${(Number(meters) / 1000).toFixed(2)} km`;
 }
 
+const DURATION_SPORTS = [
+  'workout', 'weight', 'yoga', 'crossfit', 'pilates', 'stretch', 'hiit',
+  'highintensity', 'climb', 'stair', 'elliptical', 'meditation', 'taichi',
+  'strength', 'functional', 'prepare_for_battle',
+];
+
+const SWIM_SPORTS = ['swim'];
+const DISTANCE_SPORTS = [
+  'run', 'ride', 'cycle', 'bike', 'walk', 'hike', 'trail', 'row', 'kayak',
+  'canoe', 'skate', 'ski', 'surf', 'sail', 'paddle', 'snowshoe',
+];
+
+export function activityMetric(type, sportType, distance) {
+  const t = `${type || ''} ${sportType || ''}`.toLowerCase();
+  if (DURATION_SPORTS.some((k) => t.includes(k))) return 'duration';
+  if (SWIM_SPORTS.some((k) => t.includes(k))) return 'swim';
+  if (DISTANCE_SPORTS.some((k) => t.includes(k))) return 'distance';
+  if (!distance || Number(distance) < 50) return 'duration';
+  return 'distance';
+}
+
+export function formatActivityPrimary(activity) {
+  const metric = activityMetric(activity.type, activity.sportType, activity.distance);
+  if (metric === 'swim') return `${Math.round(Number(activity.distance) || 0)} m`;
+  if (metric === 'distance') return formatDistance(activity.distance);
+  return formatDuration(activity.movingTime || activity.elapsedTime);
+}
+
+export function formatActivitySecondary(activity) {
+  const metric = activityMetric(activity.type, activity.sportType, activity.distance);
+  if (metric === 'duration') {
+    return activity.calories ? `${Math.round(activity.calories)} kcal` : '';
+  }
+  return formatDuration(activity.movingTime);
+}
+
 export function formatPace(mps) {
   if (!mps || Number(mps) <= 0) return '—';
   const secPerKm = 1000 / Number(mps);
@@ -50,12 +86,29 @@ export const ACTIVITY_ICONS = {
   VirtualRide: '🚴',
   VirtualRun: '🏃',
   Workout: '⚡',
+  WeightTraining: '🏋️',
+  Yoga: '🧘',
+  HIIT: '💥',
   default: '⚡',
 };
 
 export function getActivityIcon(type) {
   return ACTIVITY_ICONS[type] || ACTIVITY_ICONS.default;
 }
+
+export const ACTIVITY_TYPE_OPTIONS = [
+  { value: 'Run', label: 'Run' },
+  { value: 'Ride', label: 'Ride' },
+  { value: 'Swim', label: 'Swim' },
+  { value: 'Walk', label: 'Walk' },
+  { value: 'Hike', label: 'Hike' },
+  { value: 'Workout', label: 'Workout' },
+  { value: 'WeightTraining', label: 'Weights' },
+  { value: 'Yoga', label: 'Yoga' },
+  { value: 'HIIT', label: 'HIIT' },
+];
+
+export const DEFAULT_ACTIVITY_TYPE = 'Run';
 
 export const EVENT_TYPES = [
   { value: 'run', label: 'Run' },

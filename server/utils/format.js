@@ -33,8 +33,9 @@ export function slugify(text) {
 export function startOfWeek(date = new Date()) {
   const d = new Date(date);
   const day = d.getDay();
+  const mondayOffset = day === 0 ? 6 : day - 1;
   d.setHours(0, 0, 0, 0);
-  d.setDate(d.getDate() - day);
+  d.setDate(d.getDate() - mondayOffset);
   return d;
 }
 

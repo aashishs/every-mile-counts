@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import api from '../api/client';
 import Layout from '../components/Layout';
 import { useAuth } from '../context/AuthContext';
+import { homePath } from '../utils/roles';
 
 export default function Membership() {
   const { user } = useAuth();
@@ -14,7 +15,7 @@ export default function Membership() {
     try {
       await api.post('/membership/activate', { code });
       setMsg('Membership activated. Reloading…');
-      setTimeout(() => window.location.assign('/dashboard'), 800);
+      setTimeout(() => window.location.assign(homePath(user)), 800);
     } catch (err) {
       setMsg(err.response?.data?.message || 'Activation failed');
     }

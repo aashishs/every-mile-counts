@@ -2,8 +2,10 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../api/client';
 import Layout from '../components/Layout';
+import { useAuth } from '../context/AuthContext';
 
 export default function Clubs() {
+  const { isClubAdmin } = useAuth();
   const [clubs, setClubs] = useState([]);
   const [mine, setMine] = useState([]);
   const [q, setQ] = useState('');
@@ -22,7 +24,11 @@ export default function Clubs() {
   return (
     <Layout>
       <h2 className="page-title">Clubs</h2>
-      <p className="page-sub">Find a club, request membership, or manage your club</p>
+      <p className="page-sub">
+        {isClubAdmin
+          ? 'Your club is an organization that adds coaches and assigns them to athletes. Clubs do not connect to Strava.'
+          : 'Join a club to be assigned a coach. You connect Strava on your own athlete account.'}
+      </p>
       {!!mine.length && (
         <div className="mb-6">
           <h3 className="font-semibold mb-3">My clubs</h3>
@@ -30,7 +36,10 @@ export default function Clubs() {
             {mine.map((c) => (
               <Link key={c.id} to={`/clubs/${c.id}`} className="card text-inherit no-underline hover:border-brand">
                 <div className="font-semibold">{c.name}</div>
-                <div className="text-xs text-muted">{c.role} · {c.membershipStatus} {c.isVerified ? '· verified' : ''}</div>
+                <div className="text-xs text-muted">
+                  {c.role === 'club_admin' ? 'Admin' : c.role === 'coach' ? 'Coach' : 'Athlete'}
+                  {c.isVerified ? ' · verified' : ''}
+                </div>
               </Link>
             ))}
           </div>
@@ -45,9 +54,9 @@ export default function Clubs() {
           <Link key={c.id} to={`/clubs/${c.id}`} className="card flex justify-between items-center text-inherit no-underline hover:border-brand">
             <div>
               <div className="font-semibold">{c.name} {c.isVerified ? '✓' : ''}</div>
-              <div className="text-sm text-muted">{c.location || 'Location TBD'} · {c.memberCount} members</div>
+              <div className="text-sm text-muted">{c.location || 'Location TBD'}</div>
             </div>
-            <span className="badge bg-brand/15 text-brand">{c.status}</span>
+            <span className="badge bg-brand/15 text-brand">{c.status === 'pending_coach' ? 'needs coach' : 'club'}</span>
           </Link>
         ))}
       </div>

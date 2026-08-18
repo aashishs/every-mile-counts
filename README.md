@@ -74,6 +74,55 @@ npm run dev
 - App: [http://localhost:5173](http://localhost:5173)
 - API: [http://localhost:5000/api/health](http://localhost:5000/api/health)
 
+## Deploy (free test, ~1 month)
+
+Use **Neon** (Postgres) + **Render** (API + web). No credit card. The API sleeps after 15 minutes idle; the first request after that takes about a minute.
+
+### 1. Neon
+
+1. Create a project at [neon.tech](https://neon.tech).
+2. Copy the connection string (`?sslmode=require`).
+
+### 2. Render
+
+1. Push this repo to GitHub.
+2. On [dashboard.render.com](https://dashboard.render.com) → **New** → **Blueprint** → select the repo (`render.yaml`).
+3. Fill the prompted env vars (see list below).
+4. After deploy, copy the two URLs:
+   - API: `https://emc-api.onrender.com`
+   - Web: `https://emc-web.onrender.com`
+5. On **emc-api** set `CLIENT_URL` to the web URL, then **Manual Deploy**.
+
+### 3. Strava
+
+In [Strava API settings](https://www.strava.com/settings/api):
+
+- Authorization Callback Domain: `emc-api.onrender.com` (host only)
+- Redirect: `https://emc-api.onrender.com/api/strava/callback`
+
+### Env vars (API / emc-api)
+
+| Name | Example |
+| --- | --- |
+| `DATABASE_URL` | Neon URL with `sslmode=require` |
+| `CLIENT_URL` | `https://emc-web.onrender.com` |
+| `JWT_SECRET` | auto-generated on Render is fine |
+| `ENCRYPTION_KEY` | 64 hex chars (command below) |
+| `STRAVA_CLIENT_ID` | from Strava |
+| `STRAVA_CLIENT_SECRET` | from Strava |
+| `ADMIN_EMAIL` | `admin@everymilecounts.app` |
+| `ADMIN_PASSWORD` | choose a strong password |
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+Frontend `VITE_API_URL` is set from the API URL by `render.yaml`.
+
+Seeded login after first boot: `ADMIN_EMAIL` / `ADMIN_PASSWORD`. Invite codes: `WELCOME-EMC`, `ATHLETE-BETA`, `COACH-BETA`, `CLUB-BETA`.
+
+**Vercel alternative for the web app:** import `client/`, set `VITE_API_URL` to the Render API URL, then put that Vercel URL in `CLIENT_URL`.
+
 ## Garmin & Strava
 
 1. Create a [Strava API application](https://www.strava.com/settings/api). Callback domain: `localhost`. Redirect URI: `http://localhost:5000/api/strava/callback`.

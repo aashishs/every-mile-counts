@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import api from '../api/client';
 import Layout from '../components/Layout';
 import { useAuth } from '../context/AuthContext';
-import { formatDate, formatDistance } from '../utils/format';
+import { formatDate, formatActivityPrimary } from '../utils/format';
 
 export default function Coaches() {
   const { isCoach } = useAuth();
@@ -34,7 +34,7 @@ export default function Coaches() {
   return (
     <Layout>
       <h2 className="page-title">Coaching</h2>
-      <p className="page-sub">Athletes may have up to three coaches. Coaches only see assigned athletes.</p>
+      <p className="page-sub">Athletes may have up to three coaches. Clubs assign coaches; coaches only see assigned athletes.</p>
 
       <h3 className="font-semibold mb-2">My coaches</h3>
       <div className="grid md:grid-cols-3 gap-3 mb-8">
@@ -74,7 +74,7 @@ export default function Coaches() {
               {athleteActs.map((act) => (
                 <Link key={act.id} to={`/activities/${act.id}`} className="card flex justify-between text-inherit no-underline">
                   <span>{act.name}</span>
-                  <span className="text-brand">{formatDistance(act.distance)}</span>
+                  <span className="text-brand">{formatActivityPrimary(act)}</span>
                 </Link>
               ))}
             </div>

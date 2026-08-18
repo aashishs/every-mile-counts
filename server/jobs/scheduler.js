@@ -3,13 +3,13 @@ import { dailySyncAll } from '../services/syncService.js';
 import { refreshMembershipStatuses } from '../services/membershipJob.js';
 
 export function startScheduler() {
-  cron.schedule('0 4 * * *', async () => {
-    console.log('[job] daily activity sync starting');
+  cron.schedule('0 5 * * *', async () => {
+    console.log('[job] daily Strava catch-up starting');
     try {
       const result = await dailySyncAll();
-      console.log('[job] daily sync complete', result);
+      console.log('[job] daily Strava catch-up complete', result);
     } catch (err) {
-      console.error('[job] daily sync failed', err.message);
+      console.error('[job] daily Strava catch-up failed', err.message);
     }
   });
 

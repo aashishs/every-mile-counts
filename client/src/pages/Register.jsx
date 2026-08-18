@@ -1,6 +1,13 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { homePath } from '../utils/roles';
+
+const ACCOUNT_TYPES = [
+  { value: 'athlete', label: 'Athlete', hint: 'Sync training and get coached' },
+  { value: 'coach', label: 'Coach', hint: 'Review assigned athletes' },
+  { value: 'club', label: 'Club', hint: 'Organization that assigns coaches' },
+];
 
 export default function Register() {
   const [form, setForm] = useState({
@@ -11,7 +18,7 @@ export default function Register() {
     invitationCode: '',
     location: '',
     clubName: '',
-    roles: ['athlete'],
+    accountType: 'athlete',
   });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -20,21 +27,14 @@ export default function Register() {
 
   const set = (e) => setForm({ ...form, [e.target.name]: e.target.value });
 
-  const toggleRole = (role) => {
-    setForm((prev) => {
-      let roles = prev.roles.includes(role) ? prev.roles.filter((r) => r !== role) : [...prev.roles, role];
-      if (!roles.length) roles = ['athlete'];
-      return { ...prev, roles };
-    });
-  };
-
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
     setLoading(true);
     try {
-      await register(form);
-      navigate('/dashboard');
+      const roles = form.accountType === 'club' ? ['club_admin'] : [form.accountType];
+      const user = await register({ ...form, roles });
+      navigate(homePath(user));
     } catch (err) {
       setError(err.response?.data?.message || 'Registration failed');
     } finally {
@@ -53,11 +53,11 @@ export default function Register() {
         <form onSubmit={handleSubmit} className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label htmlFor="firstName">First name</label>
+              <label htmlFor="firstName">{form.accountType === 'club' ? 'Admin first name' : 'First name'}</label>
               <input id="firstName" name="firstName" value={form.firstName} onChange={set} required />
             </div>
             <div>
-              <label htmlFor="lastName">Last name</label>
+              <label htmlFor="lastName">{form.accountType === 'club' ? 'Admin last name' : 'Last name'}</label>
               <input id="lastName" name="lastName" value={form.lastName} onChange={set} required />
             </div>
           </div>
@@ -78,17 +78,27 @@ export default function Register() {
             <input id="location" name="location" value={form.location} onChange={set} />
           </div>
           <div>
-            <span className="block text-sm font-medium mb-1.5">I am a…</span>
-            <div className="flex flex-wrap gap-4 text-sm">
-              {['athlete', 'coach', 'club_admin'].map((role) => (
-                <label key={role} className="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" checked={form.roles.includes(role)} onChange={() => toggleRole(role)} className="w-auto" />
-                  {role.replace('_', ' ')}
+            <span className="block text-sm font-medium mb-1.5">Account type</span>
+            <div className="space-y-2">
+              {ACCOUNT_TYPES.map((opt) => (
+                <label key={opt.value} className="flex items-start gap-2 cursor-pointer text-sm">
+                  <input
+                    type="radio"
+                    className="w-auto mt-1"
+                    name="accountType"
+                    value={opt.value}
+                    checked={form.accountType === opt.value}
+                    onChange={set}
+                  />
+                  <span>
+                    <span className="font-medium">{opt.label}</span>
+                    <span className="block text-xs text-muted">{opt.hint}</span>
+                  </span>
                 </label>
               ))}
             </div>
           </div>
-          {form.roles.includes('club_admin') && (
+          {form.accountType === 'club' && (
             <div>
               <label htmlFor="clubName">Club name</label>
               <input id="clubName" name="clubName" value={form.clubName} onChange={set} required />

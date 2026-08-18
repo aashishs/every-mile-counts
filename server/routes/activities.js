@@ -32,9 +32,15 @@ router.get(
     const filters = ['athlete_id = $1'];
     const params = [ownerId];
     let i = 2;
-    if (type) {
-      filters.push(`type = $${i++}`);
-      params.push(type);
+    if (type && type !== 'all') {
+      const family = activityTypeSql(type);
+      if (family.params.length) {
+        filters.push(family.clause.replace(/\$n/g, `$${i}`));
+        params.push(...family.params);
+        i += family.params.length;
+      } else {
+        filters.push(family.clause);
+      }
     }
     if (startDate) {
       filters.push(`start_date >= $${i++}`);
@@ -70,7 +76,7 @@ router.get(
 router.get(
   '/dashboard',
   asyncHandler(async (req, res) => {
-    const data = await athleteDashboard(req.user.id, req.user);
+    const data = await athleteDashboard(req.user.id, req.user, { type: req.query.type });
     res.json(data);
   })
 );
@@ -78,7 +84,7 @@ router.get(
 router.get(
   '/analysis',
   asyncHandler(async (req, res) => {
-    const data = await periodAnalysis(req.user.id, req.query.period || 30);
+    const data = await periodAnalysis(req.user.id, req.query.period || 30, { type: req.query.type });
     res.json(data);
   })
 );
@@ -86,7 +92,7 @@ router.get(
 router.post(
   '/sync',
   asyncHandler(async (req, res) => {
-    const result = await syncUserActivities(req.user.id);
+    const result = await syncUserActivities(req.user.id, { full: true });
     res.json(result);
   })
 );
@@ -159,5 +165,22 @@ router.get(
     });
   })
 );
+
+function activityTypeSql(type) {
+  const blob = `LOWER(COALESCE(type,'') || ' ' || COALESCE(sport_type,''))`;
+  const like = (term) => ({ clause: `${blob} LIKE '%${term}%'`, params: [] });
+  const map = {
+    Run: { clause: `(${blob} LIKE '%run%' OR ${blob} LIKE '%trail%')`, params: [] },
+    Ride: { clause: `(${blob} LIKE '%ride%' OR ${blob} LIKE '%cycle%' OR ${blob} LIKE '%bike%')`, params: [] },
+    Swim: like('swim'),
+    Walk: like('walk'),
+    Hike: like('hike'),
+    Yoga: like('yoga'),
+    HIIT: { clause: `(${blob} LIKE '%hiit%' OR ${blob} LIKE '%highintensity%')`, params: [] },
+    WeightTraining: { clause: `(${blob} LIKE '%weight%' OR ${blob} LIKE '%strength%')`, params: [] },
+    Workout: like('workout'),
+  };
+  return map[type] || { clause: 'type = $n', params: [type] };
+}
 
 export default router;

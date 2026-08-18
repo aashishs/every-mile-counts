@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { homePath } from '../utils/roles';
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -15,8 +16,8 @@ export default function Login() {
     setError('');
     setLoading(true);
     try {
-      await login(email, password);
-      navigate('/dashboard');
+      const user = await login(email, password);
+      navigate(homePath(user));
     } catch (err) {
       setError(err.response?.data?.message || 'Login failed');
     } finally {

@@ -72,7 +72,11 @@ router.post(
     const requested = Array.isArray(roles) ? roles : [roles || 'athlete'];
     const valid = ['athlete', 'coach', 'club_admin'];
     let userRoles = requested.filter((r) => valid.includes(r));
-    if (!userRoles.length) userRoles = ['athlete'];
+    if (userRoles.includes('club_admin')) {
+      userRoles = ['club_admin'];
+    } else if (!userRoles.length) {
+      userRoles = ['athlete'];
+    }
     if (userRoles.includes('club_admin') && !clubName) {
       return res.status(400).json({ message: 'Club name is required for club registration' });
     }

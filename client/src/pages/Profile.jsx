@@ -2,9 +2,12 @@ import { useState } from 'react';
 import api from '../api/client';
 import Layout from '../components/Layout';
 import { useAuth } from '../context/AuthContext';
+import { ACTIVITY_TYPE_OPTIONS, DEFAULT_ACTIVITY_TYPE } from '../utils/format';
+import { isClubOnlyAccount } from '../utils/roles';
 
 export default function Profile() {
   const { user, refresh } = useAuth();
+  const clubOnly = isClubOnlyAccount(user);
   const [form, setForm] = useState({
     firstName: user.firstName || '',
     lastName: user.lastName || '',
@@ -14,6 +17,7 @@ export default function Profile() {
     maxHeartRate: user.maxHeartRate || '',
     restingHeartRate: user.restingHeartRate || '',
     dateOfBirth: user.dateOfBirth ? String(user.dateOfBirth).slice(0, 10) : '',
+    defaultActivityType: user.defaultActivityType || DEFAULT_ACTIVITY_TYPE,
     notificationPrefs: user.notificationPrefs || {},
   });
   const [pw, setPw] = useState({ currentPassword: '', newPassword: '' });
@@ -43,20 +47,37 @@ export default function Profile() {
   return (
     <Layout>
       <h2 className="page-title">Profile</h2>
-      <p className="page-sub">Personal details, heart-rate zones, and notification preferences</p>
+      <p className="page-sub">{clubOnly ? 'Club admin contact details and notifications' : 'Personal details, default sport, heart-rate zones, and notifications'}</p>
       {msg && <div className="card mb-4 text-brand text-sm">{msg}</div>}
       <form className="card grid md:grid-cols-2 gap-3 mb-6" onSubmit={save}>
         <input value={form.firstName} onChange={(e) => setForm({ ...form, firstName: e.target.value })} placeholder="First name" />
         <input value={form.lastName} onChange={(e) => setForm({ ...form, lastName: e.target.value })} placeholder="Last name" />
         <input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} placeholder="Location" />
-        <input type="date" value={form.dateOfBirth} onChange={(e) => setForm({ ...form, dateOfBirth: e.target.value })} />
-        <input type="number" value={form.maxHeartRate} onChange={(e) => setForm({ ...form, maxHeartRate: e.target.value })} placeholder="Max HR" />
-        <input type="number" value={form.restingHeartRate} onChange={(e) => setForm({ ...form, restingHeartRate: e.target.value })} placeholder="Resting HR" />
+        {!clubOnly && (
+          <>
+            <input type="date" value={form.dateOfBirth} onChange={(e) => setForm({ ...form, dateOfBirth: e.target.value })} />
+            <input type="number" value={form.maxHeartRate} onChange={(e) => setForm({ ...form, maxHeartRate: e.target.value })} placeholder="Max HR" />
+            <input type="number" value={form.restingHeartRate} onChange={(e) => setForm({ ...form, restingHeartRate: e.target.value })} placeholder="Resting HR" />
+            <div>
+              <label htmlFor="defaultActivityType">Default activity</label>
+              <select
+                id="defaultActivityType"
+                value={form.defaultActivityType}
+                onChange={(e) => setForm({ ...form, defaultActivityType: e.target.value })}
+              >
+                {ACTIVITY_TYPE_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
+              <p className="text-xs text-muted mt-1">Dashboard and analysis open on this sport.</p>
+            </div>
+          </>
+        )}
         <textarea className="md:col-span-2" value={form.bio} onChange={(e) => setForm({ ...form, bio: e.target.value })} placeholder="Bio" />
         <div className="md:col-span-2">
           <p className="text-sm font-medium mb-2">Notifications</p>
           <div className="flex flex-wrap gap-4 text-sm">
-            {['push', 'inApp', 'sync', 'reviews', 'events', 'membership', 'goals', 'announcements'].map((k) => (
+            {['push', 'inApp', ...(clubOnly ? [] : ['sync']), 'reviews', 'events', 'membership', 'goals', 'announcements'].map((k) => (
               <label key={k} className="flex items-center gap-2">
                 <input type="checkbox" className="w-auto" checked={form.notificationPrefs?.[k] !== false} onChange={() => togglePref(k)} />
                 {k}

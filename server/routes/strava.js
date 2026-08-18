@@ -4,17 +4,27 @@ import { protect, requireMembership } from '../middleware/auth.js';
 import { completeStravaOAuth, getStravaConnection, syncStravaActivities } from '../services/stravaService.js';
 import { asyncHandler } from '../middleware/error.js';
 import { writeAudit } from '../services/auditService.js';
+import { getUserRoles, isClubOnlyUser } from '../utils/membership.js';
+import { clientUrl, stravaRedirectUri } from '../utils/urls.js';
 
 const router = express.Router();
+
+function rejectClubAccount(req, res, next) {
+  if (isClubOnlyUser(req.user)) {
+    return res.status(400).json({ message: 'Clubs do not connect to Strava. Athletes sync their own activities.' });
+  }
+  next();
+}
 
 router.get(
   '/connect',
   protect,
   requireMembership,
+  rejectClubAccount,
   (req, res) => {
     const params = new URLSearchParams({
       client_id: process.env.STRAVA_CLIENT_ID,
-      redirect_uri: process.env.STRAVA_REDIRECT_URI,
+      redirect_uri: stravaRedirectUri(),
       response_type: 'code',
       approval_prompt: 'auto',
       scope: 'read,activity:read_all,profile:read_all',
@@ -28,8 +38,12 @@ router.get(
   '/callback',
   asyncHandler(async (req, res) => {
     const { code, state, error } = req.query;
-    const clientUrl = process.env.CLIENT_URL;
-    if (error) return res.redirect(`${clientUrl}/dashboard?strava=error`);
+    const appUrl = clientUrl();
+    if (error) return res.redirect(`${appUrl}/dashboard?strava=error`);
+    const roles = state ? await getUserRoles(state) : [];
+    if (isClubOnlyUser(roles)) {
+      return res.redirect(`${appUrl}/clubs`);
+    }
     try {
       const tokenRes = await axios.post('https://www.strava.com/oauth/token', {
         client_id: process.env.STRAVA_CLIENT_ID,
@@ -38,12 +52,14 @@ router.get(
         grant_type: 'authorization_code',
       });
       await completeStravaOAuth(state, tokenRes.data);
-      await syncStravaActivities(state);
       await writeAudit({ userId: state, action: 'strava_connect', entityType: 'oauth' });
-      res.redirect(`${clientUrl}/dashboard?strava=connected`);
+      res.redirect(`${appUrl}/dashboard?strava=connected`);
+      syncStravaActivities(state, { full: true }).catch((err) => {
+        console.error('Strava history sync error:', err.message);
+      });
     } catch (err) {
       console.error('Strava callback error:', err.message);
-      res.redirect(`${clientUrl}/dashboard?strava=error`);
+      res.redirect(`${appUrl}/dashboard?strava=error`);
     }
   })
 );
@@ -52,8 +68,9 @@ router.post(
   '/sync',
   protect,
   requireMembership,
+  rejectClubAccount,
   asyncHandler(async (req, res) => {
-    const synced = await syncStravaActivities(req.user.id);
+    const synced = await syncStravaActivities(req.user.id, { full: true });
     res.json({ message: `Synced ${synced} activities`, synced });
   })
 );
@@ -62,6 +79,9 @@ router.get(
   '/status',
   protect,
   asyncHandler(async (req, res) => {
+    if (isClubOnlyUser(req.user)) {
+      return res.json({ connected: false, applicable: false });
+    }
     const conn = await getStravaConnection(req.user.id);
     res.json({
       connected: Boolean(conn?.connected),
@@ -70,6 +90,14 @@ router.get(
       lastSyncError: conn?.lastSyncError,
       providerUserId: conn?.providerUserId,
     });
+    if (conn?.connected && conn.lastSyncStatus !== 'running') {
+      const stale = !conn.lastSyncAt || Date.now() - new Date(conn.lastSyncAt).getTime() > 10 * 60 * 1000;
+      if (stale) {
+        syncStravaActivities(req.user.id, { full: false }).catch((err) => {
+          console.error('Background Strava sync:', err.message);
+        });
+      }
+    }
   })
 );
 

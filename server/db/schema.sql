@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS users (
     "announcements": true
   }'::jsonb,
   last_login_at TIMESTAMPTZ,
+  default_activity_type TEXT NOT NULL DEFAULT 'Run',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -395,3 +396,5 @@ CREATE TABLE IF NOT EXISTS oauth_pending (
   request_token_secret_enc TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS default_activity_type TEXT NOT NULL DEFAULT 'Run';

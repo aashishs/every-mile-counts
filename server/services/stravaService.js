@@ -4,6 +4,33 @@ import { decrypt, encrypt } from '../utils/crypto.js';
 import { analyzeActivity } from './analysisService.js';
 
 const STRAVA_API = 'https://www.strava.com/api/v3';
+const PER_PAGE = 200;
+const MAX_PAGES = 250;
+
+const stravaHttp = axios.create({
+  timeout: 30000,
+});
+
+async function sleep(ms) {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function stravaGet(url, accessToken, params, attempt = 0) {
+  try {
+    return await stravaHttp.get(url, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      params,
+    });
+  } catch (err) {
+    const status = err.response?.status;
+    if ((status === 429 || status >= 500) && attempt < 6) {
+      const retryAfter = Number(err.response?.headers?.['retry-after'] || 15);
+      await sleep((retryAfter + attempt * 2) * 1000);
+      return stravaGet(url, accessToken, params, attempt + 1);
+    }
+    throw err;
+  }
+}
 
 async function getConnection(userId) {
   const row = await one(
@@ -57,9 +84,7 @@ export async function getValidAccessToken(userId) {
 }
 
 export async function fetchStravaAthlete(accessToken) {
-  const { data } = await axios.get(`${STRAVA_API}/athlete`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
+  const { data } = await stravaGet(`${STRAVA_API}/athlete`, accessToken);
   return data;
 }
 
@@ -121,10 +146,13 @@ export async function upsertActivity(athleteId, source, mapped) {
      ON CONFLICT (source, source_activity_id) DO UPDATE SET
        name = EXCLUDED.name,
        type = EXCLUDED.type,
+       sport_type = EXCLUDED.sport_type,
        distance = EXCLUDED.distance,
        moving_time = EXCLUDED.moving_time,
        elapsed_time = EXCLUDED.elapsed_time,
        elevation_gain = EXCLUDED.elevation_gain,
+       start_date = EXCLUDED.start_date,
+       start_date_local = EXCLUDED.start_date_local,
        avg_speed = EXCLUDED.avg_speed,
        max_speed = EXCLUDED.max_speed,
        avg_heartrate = EXCLUDED.avg_heartrate,
@@ -132,6 +160,7 @@ export async function upsertActivity(athleteId, source, mapped) {
        avg_cadence = EXCLUDED.avg_cadence,
        avg_power = EXCLUDED.avg_power,
        calories = EXCLUDED.calories,
+       description = EXCLUDED.description,
        polyline = EXCLUDED.polyline,
        splits = EXCLUDED.splits,
        weather = EXCLUDED.weather,
@@ -170,33 +199,69 @@ export async function upsertActivity(athleteId, source, mapped) {
   return row.id;
 }
 
-export async function syncStravaActivities(userId) {
+async function newestStravaTimestamp(userId) {
+  const row = await one(
+    `SELECT EXTRACT(EPOCH FROM MAX(start_date))::bigint AS ts
+     FROM activities WHERE athlete_id = $1 AND source = 'strava'`,
+    [userId]
+  );
+  return row?.ts ? Number(row.ts) : null;
+}
+
+export async function syncStravaActivities(userId, { full = false } = {}) {
   const accessToken = await getValidAccessToken(userId);
-  let page = 1;
-  let synced = 0;
-  const perPage = 50;
-
-  while (page <= 20) {
-    const { data: activities } = await axios.get(`${STRAVA_API}/athlete/activities`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-      params: { page, per_page: perPage },
-    });
-    if (!activities.length) break;
-    for (const act of activities) {
-      await upsertActivity(userId, 'strava', mapStravaActivity(act));
-      synced += 1;
-    }
-    if (activities.length < perPage) break;
-    page += 1;
-  }
-
   await query(
     `UPDATE oauth_connections
-     SET last_sync_at = NOW(), last_sync_status = 'ok', last_sync_error = NULL, updated_at = NOW()
+     SET last_sync_status = 'running', last_sync_error = NULL, updated_at = NOW()
      WHERE user_id = $1 AND provider = 'strava'`,
     [userId]
   );
-  return synced;
+
+  let page = 1;
+  let synced = 0;
+  const params = { per_page: PER_PAGE };
+  if (!full) {
+    const after = await newestStravaTimestamp(userId);
+    if (after) params.after = after - 2 * 24 * 3600;
+  }
+
+  try {
+    while (page <= MAX_PAGES) {
+      const { data: activities } = await stravaGet(`${STRAVA_API}/athlete/activities`, accessToken, {
+        ...params,
+        page,
+      });
+      if (!Array.isArray(activities) || !activities.length) break;
+
+      for (const act of activities) {
+        try {
+          await upsertActivity(userId, 'strava', mapStravaActivity(act));
+          synced += 1;
+        } catch (err) {
+          console.error(`Strava activity ${act.id} failed:`, err.message);
+        }
+      }
+
+      if (activities.length < PER_PAGE) break;
+      page += 1;
+    }
+
+    await query(
+      `UPDATE oauth_connections
+       SET last_sync_at = NOW(), last_sync_status = 'ok', last_sync_error = NULL, updated_at = NOW()
+       WHERE user_id = $1 AND provider = 'strava'`,
+      [userId]
+    );
+    return synced;
+  } catch (err) {
+    await query(
+      `UPDATE oauth_connections
+       SET last_sync_status = 'error', last_sync_error = $2, updated_at = NOW()
+       WHERE user_id = $1 AND provider = 'strava'`,
+      [userId, err.message]
+    );
+    throw err;
+  }
 }
 
 export { analyzeActivity, getConnection as getStravaConnection };

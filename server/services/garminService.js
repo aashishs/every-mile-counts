@@ -3,6 +3,7 @@ import oauth1 from 'oauth-1.0a';
 import axios from 'axios';
 import { camel, one, query } from '../config/db.js';
 import { decrypt, encrypt } from '../utils/crypto.js';
+import { garminRedirectUri } from '../utils/urls.js';
 import { upsertActivity } from './stravaService.js';
 
 const REQUEST_TOKEN_URL = 'https://connectapi.garmin.com/oauth-service/oauth/request_token';
@@ -46,7 +47,7 @@ export async function startGarminOAuth(userId) {
      VALUES ($1, 'garmin', $2, $3)`,
     [userId, token, encrypt(secret)]
   );
-  const callback = encodeURIComponent(process.env.GARMIN_REDIRECT_URI);
+  const callback = encodeURIComponent(garminRedirectUri());
   return `${AUTHORIZE_URL}?oauth_token=${token}&oauth_callback=${callback}`;
 }
 

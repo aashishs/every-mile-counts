@@ -1,15 +1,18 @@
 import { useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { isClubOnlyAccount } from '../utils/roles';
 
-const links = [
+const athleteLinks = [
   { to: '/dashboard', label: 'Dashboard', icon: '📊' },
   { to: '/activities', label: 'Activities', icon: '⚡' },
   { to: '/analysis', label: 'Analysis', icon: '📈' },
   { to: '/events', label: 'Events', icon: '📅' },
   { to: '/goals', label: 'Goals', icon: '🎯' },
+];
+
+const sharedLinks = [
   { to: '/clubs', label: 'Clubs', icon: '🏅' },
-  { to: '/coaches', label: 'Coaching', icon: '👥' },
   { to: '/notifications', label: 'Notifications', icon: '🔔' },
   { to: '/profile', label: 'Profile', icon: '👤' },
   { to: '/support', label: 'Support', icon: '💬' },
@@ -22,6 +25,14 @@ export default function Layout({ children }) {
   const initials = `${user.firstName?.[0] || ''}${user.lastName?.[0] || ''}`.toUpperCase();
   const membership = user.membership;
   const expiring = membership?.status === 'expiring_soon';
+  const clubOnly = isClubOnlyAccount(user);
+
+  const links = [
+    ...(!clubOnly ? athleteLinks : []),
+    ...(!clubOnly ? [{ to: '/coaches', label: 'Coaching', icon: '👥' }] : []),
+    ...(clubOnly ? [{ to: '/clubs', label: 'Club', icon: '🏅' }] : []),
+    ...sharedLinks.filter((l) => !(clubOnly && l.to === '/clubs')),
+  ];
 
   const handleLogout = () => {
     logout();
@@ -65,7 +76,9 @@ export default function Layout({ children }) {
               <div className="font-semibold text-sm">
                 {user.firstName} {user.lastName}
               </div>
-              <div className="text-xs text-muted">{user.roles?.join(' · ')}</div>
+              <div className="text-xs text-muted">
+                {clubOnly ? 'Club admin' : user.roles?.join(' · ')}
+              </div>
             </div>
           </div>
           <button className="btn-outline btn-sm w-full" onClick={handleLogout}>

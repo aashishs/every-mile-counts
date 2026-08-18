@@ -1,8 +1,7 @@
 import express from 'express';
 import { camel, camelMany, many, one, query } from '../config/db.js';
-import { protect, requireMembership, requireRole } from '../middleware/auth.js';
+import { protect, requireMembership } from '../middleware/auth.js';
 import { getClubMembership, isMembershipUsable } from '../utils/membership.js';
-import { clubAnalytics } from '../services/analysisService.js';
 import { createNotification, notifyMany } from '../services/notificationService.js';
 import { slugify } from '../utils/format.js';
 import { asyncHandler } from '../middleware/error.js';
@@ -94,21 +93,26 @@ router.get(
         [club.id]
       )
     );
-    const events = camelMany(
+    const assignments = camelMany(
       await many(
-        `SELECT * FROM events WHERE club_id = $1 ORDER BY event_date DESC LIMIT 20`,
+        `SELECT ca.*,
+                ath.first_name AS athlete_first_name, ath.last_name AS athlete_last_name,
+                co.first_name AS coach_first_name, co.last_name AS coach_last_name
+         FROM coach_assignments ca
+         JOIN users ath ON ath.id = ca.athlete_id
+         JOIN users co ON co.id = ca.coach_id
+         WHERE ca.club_id = $1 AND ca.status = 'active'
+         ORDER BY ath.last_name`,
         [club.id]
       )
     );
-    const analytics = await clubAnalytics(club.id);
     const myMembership = await membership(req.user.id, club.id);
     const clubMem = await getClubMembership(club.id);
     res.json({
       club,
       members,
       announcements,
-      events,
-      analytics,
+      assignments,
       myMembership,
       clubMembership: clubMem,
     });
@@ -186,9 +190,6 @@ router.post(
       return res.status(400).json({ message: 'Assign at least one coach before accepting members' });
     }
     const { coachId } = req.body;
-    if (!coachId) {
-      return res.status(400).json({ message: 'At least one coach must be assigned when an athlete joins' });
-    }
     const member = camel(
       await one(
         `UPDATE club_members SET status = 'active', approved_at = NOW()
@@ -198,20 +199,22 @@ router.post(
     );
     if (!member) return res.status(404).json({ message: 'Membership not found' });
 
-    const countRow = await one(
-      `SELECT COUNT(*)::int AS count FROM coach_assignments
-       WHERE athlete_id = $1 AND status = 'active'`,
-      [member.userId]
-    );
-    if (countRow.count >= MAX_COACHES) {
-      return res.status(400).json({ message: 'Athlete already has three coaches' });
+    if (coachId) {
+      const countRow = await one(
+        `SELECT COUNT(*)::int AS count FROM coach_assignments
+         WHERE athlete_id = $1 AND status = 'active'`,
+        [member.userId]
+      );
+      if (countRow.count >= MAX_COACHES) {
+        return res.status(400).json({ message: 'Athlete already has three coaches' });
+      }
+      await query(
+        `INSERT INTO coach_assignments (athlete_id, coach_id, club_id, assigned_by, status)
+         VALUES ($1,$2,$3,$4,'active')
+         ON CONFLICT (athlete_id, coach_id) DO UPDATE SET status = 'active', club_id = EXCLUDED.club_id`,
+        [member.userId, coachId, req.params.id, req.user.id]
+      );
     }
-    await query(
-      `INSERT INTO coach_assignments (athlete_id, coach_id, club_id, assigned_by, status)
-       VALUES ($1,$2,$3,$4,'active')
-       ON CONFLICT (athlete_id, coach_id) DO UPDATE SET status = 'active', club_id = EXCLUDED.club_id`,
-      [member.userId, coachId, req.params.id, req.user.id]
-    );
     await createNotification({
       userId: member.userId,
       type: 'club',
@@ -284,6 +287,17 @@ router.post(
       return res.status(403).json({ message: 'Club admin required' });
     }
     const { athleteId, coachId } = req.body;
+    if (!athleteId || !coachId) {
+      return res.status(400).json({ message: 'Athlete and coach are required' });
+    }
+    const athleteMem = await membership(athleteId, req.params.id);
+    const coachMem = await membership(coachId, req.params.id);
+    if (!athleteMem || athleteMem.status !== 'active' || athleteMem.role !== 'member') {
+      return res.status(400).json({ message: 'Athlete must be an active club athlete' });
+    }
+    if (!coachMem || coachMem.status !== 'active' || coachMem.role !== 'coach') {
+      return res.status(400).json({ message: 'Coach must belong to this club' });
+    }
     const countRow = await one(
       `SELECT COUNT(*)::int AS count FROM coach_assignments WHERE athlete_id = $1 AND status = 'active'`,
       [athleteId]
@@ -294,10 +308,43 @@ router.post(
     await query(
       `INSERT INTO coach_assignments (athlete_id, coach_id, club_id, assigned_by, status)
        VALUES ($1,$2,$3,$4,'active')
-       ON CONFLICT (athlete_id, coach_id) DO UPDATE SET status = 'active'`,
+       ON CONFLICT (athlete_id, coach_id) DO UPDATE SET status = 'active', club_id = EXCLUDED.club_id`,
       [athleteId, coachId, req.params.id, req.user.id]
     );
+    await createNotification({
+      userId: athleteId,
+      type: 'club',
+      title: 'Coach assigned',
+      body: 'Your club assigned a coach to you.',
+      data: { clubId: req.params.id, coachId },
+    });
+    await createNotification({
+      userId: coachId,
+      type: 'club',
+      title: 'New athlete assigned',
+      body: 'A club assigned an athlete to you.',
+      data: { clubId: req.params.id, athleteId },
+    });
     res.json({ message: 'Coach assigned' });
+  })
+);
+
+router.post(
+  '/:id/unassign-coach',
+  asyncHandler(async (req, res) => {
+    if (!(await requireClubAdmin(req, req.params.id))) {
+      return res.status(403).json({ message: 'Club admin required' });
+    }
+    const { athleteId, coachId } = req.body;
+    if (!athleteId || !coachId) {
+      return res.status(400).json({ message: 'Athlete and coach are required' });
+    }
+    await query(
+      `UPDATE coach_assignments SET status = 'inactive'
+       WHERE athlete_id = $1 AND coach_id = $2 AND club_id = $3 AND status = 'active'`,
+      [athleteId, coachId, req.params.id]
+    );
+    res.json({ message: 'Coach unassigned' });
   })
 );
 

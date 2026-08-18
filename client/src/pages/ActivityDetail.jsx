@@ -3,7 +3,7 @@ import { useParams } from 'react-router-dom';
 import api from '../api/client';
 import Layout from '../components/Layout';
 import { useAuth } from '../context/AuthContext';
-import { formatDate, formatDistance, formatDuration, formatPace } from '../utils/format';
+import { formatDate, formatDistance, formatDuration, formatPace, activityMetric } from '../utils/format';
 
 export default function ActivityDetail() {
   const { id } = useParams();
@@ -62,14 +62,25 @@ export default function ActivityDetail() {
       {message && <div className="mb-4 card text-sm text-brand">{message}</div>}
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-        <Metric label="Distance" value={formatDistance(activity.distance)} />
-        <Metric label="Moving time" value={formatDuration(activity.movingTime)} />
-        <Metric label="Pace" value={formatPace(activity.avgSpeed)} />
-        <Metric label="Elevation" value={`${Math.round(activity.elevationGain || 0)} m`} />
-        <Metric label="Avg HR" value={activity.avgHeartrate ? `${Math.round(activity.avgHeartrate)} bpm` : '—'} />
-        <Metric label="Cadence" value={activity.avgCadence ? Math.round(activity.avgCadence) : '—'} />
-        <Metric label="Power" value={activity.avgPower ? `${Math.round(activity.avgPower)} W` : '—'} />
-        <Metric label="Calories" value={activity.calories ? Math.round(activity.calories) : '—'} />
+        {activityMetric(activity.type, activity.sportType, activity.distance) === 'duration' ? (
+          <>
+            <Metric label="Duration" value={formatDuration(activity.movingTime || activity.elapsedTime)} />
+            <Metric label="Calories" value={activity.calories ? `${Math.round(activity.calories)} kcal` : '—'} />
+            <Metric label="Avg HR" value={activity.avgHeartrate ? `${Math.round(activity.avgHeartrate)} bpm` : '—'} />
+            <Metric label="Max HR" value={activity.maxHeartrate ? `${Math.round(activity.maxHeartrate)} bpm` : '—'} />
+          </>
+        ) : (
+          <>
+            <Metric label="Distance" value={activityMetric(activity.type, activity.sportType, activity.distance) === 'swim' ? `${Math.round(activity.distance || 0)} m` : formatDistance(activity.distance)} />
+            <Metric label="Moving time" value={formatDuration(activity.movingTime)} />
+            <Metric label="Pace" value={formatPace(activity.avgSpeed)} />
+            <Metric label="Elevation" value={`${Math.round(activity.elevationGain || 0)} m`} />
+            <Metric label="Avg HR" value={activity.avgHeartrate ? `${Math.round(activity.avgHeartrate)} bpm` : '—'} />
+            <Metric label="Cadence" value={activity.avgCadence ? Math.round(activity.avgCadence) : '—'} />
+            <Metric label="Power" value={activity.avgPower ? `${Math.round(activity.avgPower)} W` : '—'} />
+            <Metric label="Calories" value={activity.calories ? Math.round(activity.calories) : '—'} />
+          </>
+        )}
       </div>
 
       {(athleteInsights || insights) && (

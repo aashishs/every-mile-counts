@@ -62,6 +62,11 @@ export async function getUserRoles(userId) {
   return rows.map((r) => r.role);
 }
 
+export function isClubOnlyUser(userOrRoles) {
+  const roles = Array.isArray(userOrRoles) ? userOrRoles : userOrRoles?.roles || [];
+  return roles.includes('club_admin') && !roles.includes('athlete') && !roles.includes('coach') && !roles.includes('app_admin');
+}
+
 export async function publicUser(user, extras = {}) {
   if (!user) return null;
   const roles = extras.roles || (await getUserRoles(user.id));
@@ -77,6 +82,7 @@ export async function publicUser(user, extras = {}) {
     dateOfBirth: user.dateOfBirth ?? user.date_of_birth,
     maxHeartRate: user.maxHeartRate ?? user.max_heart_rate,
     restingHeartRate: user.restingHeartRate ?? user.resting_heart_rate,
+    defaultActivityType: user.defaultActivityType ?? user.default_activity_type ?? 'Run',
     status: user.status,
     notificationPrefs: user.notificationPrefs ?? user.notification_prefs,
     roles,

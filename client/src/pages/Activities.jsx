@@ -2,12 +2,15 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../api/client';
 import Layout from '../components/Layout';
-import { formatDate, formatDistance, formatDuration, getActivityIcon } from '../utils/format';
+import ActivityTypeFilter from '../components/ActivityTypeFilter';
+import { useAuth } from '../context/AuthContext';
+import { DEFAULT_ACTIVITY_TYPE, formatDate, formatActivityPrimary, formatActivitySecondary, getActivityIcon } from '../utils/format';
 
 export default function Activities() {
+  const { user } = useAuth();
   const [activities, setActivities] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [typeFilter, setTypeFilter] = useState('');
+  const [typeFilter, setTypeFilter] = useState(user?.defaultActivityType || DEFAULT_ACTIVITY_TYPE);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
 
@@ -30,22 +33,21 @@ export default function Activities() {
     }
   };
 
-  const types = ['Run', 'Ride', 'Swim', 'Walk', 'Hike', 'VirtualRun', 'VirtualRide'];
-
   return (
     <Layout>
       <h2 className="page-title">Activities</h2>
-      <p className="page-sub">Synced from Garmin and Strava</p>
-      <div className="mb-4">
-        <select value={typeFilter} onChange={(e) => { setTypeFilter(e.target.value); setPage(1); }} className="max-w-xs">
-          <option value="">All types</option>
-          {types.map((t) => <option key={t} value={t}>{t}</option>)}
-        </select>
-      </div>
+      <p className="page-sub">Synced from Strava</p>
+      <ActivityTypeFilter
+        value={typeFilter}
+        onChange={(next) => {
+          setTypeFilter(next);
+          setPage(1);
+        }}
+      />
       {loading ? (
         <p className="text-muted">Loading…</p>
       ) : !activities.length ? (
-        <div className="card text-center text-muted py-12">No activities yet. Connect Garmin or Strava from the dashboard.</div>
+        <div className="card text-center text-muted py-12">No activities yet. Connect Strava from the dashboard.</div>
       ) : (
         <div className="space-y-3">
           {activities.map((act) => (
@@ -56,8 +58,8 @@ export default function Activities() {
                 <div className="text-sm text-muted">{formatDate(act.startDate)} · {act.type} · {act.source}</div>
               </div>
               <div className="text-right">
-                <div className="font-semibold text-brand">{formatDistance(act.distance)}</div>
-                <div className="text-sm text-muted">{formatDuration(act.movingTime)}</div>
+                <div className="font-semibold text-brand">{formatActivityPrimary(act)}</div>
+                <div className="text-sm text-muted">{formatActivitySecondary(act)}</div>
               </div>
             </Link>
           ))}

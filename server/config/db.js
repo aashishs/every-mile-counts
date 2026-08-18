@@ -5,11 +5,18 @@ dotenv.config();
 
 const { Pool } = pg;
 
+const connectionString = process.env.DATABASE_URL || '';
+const useSsl =
+  process.env.PGSSL === 'true' ||
+  /sslmode=require/i.test(connectionString) ||
+  /neon\.tech|render\.com|amazonaws\.com/i.test(connectionString);
+
 export const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
+  connectionString,
   max: 20,
   idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 5000,
+  connectionTimeoutMillis: 10000,
+  ssl: useSsl ? { rejectUnauthorized: false } : undefined,
 });
 
 pool.on('error', (err) => {

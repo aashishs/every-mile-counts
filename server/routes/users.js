@@ -31,6 +31,7 @@ router.patch(
       'maxHeartRate',
       'restingHeartRate',
       'notificationPrefs',
+      'defaultActivityType',
     ];
     const map = {
       firstName: 'first_name',
@@ -40,7 +41,12 @@ router.patch(
       maxHeartRate: 'max_heart_rate',
       restingHeartRate: 'resting_heart_rate',
       notificationPrefs: 'notification_prefs',
+      defaultActivityType: 'default_activity_type',
     };
+    const allowedTypes = ['Run', 'Ride', 'Swim', 'Walk', 'Hike', 'Workout', 'WeightTraining', 'Yoga', 'HIIT'];
+    if (req.body.defaultActivityType !== undefined && !allowedTypes.includes(req.body.defaultActivityType)) {
+      return res.status(400).json({ message: 'Choose a valid default activity type' });
+    }
     const sets = [];
     const vals = [];
     let i = 1;
@@ -48,7 +54,13 @@ router.patch(
       if (req.body[key] !== undefined) {
         const col = map[key] || key;
         sets.push(`${col} = $${i++}`);
-        vals.push(key === 'notificationPrefs' ? JSON.stringify(req.body[key]) : req.body[key]);
+        vals.push(
+          key === 'notificationPrefs'
+            ? JSON.stringify(req.body[key])
+            : ['maxHeartRate', 'restingHeartRate', 'dateOfBirth'].includes(key) && req.body[key] === ''
+              ? null
+              : req.body[key]
+        );
       }
     }
     if (!sets.length) {

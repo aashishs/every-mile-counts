@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import Layout from '../components/Layout';
-import { EVENT_TYPES, formatDate, formatDistance } from '../utils/format';
+import { EVENT_TYPES, formatDate, formatDistance, formatActivityPrimary } from '../utils/format';
 
 export default function Events() {
   const [events, setEvents] = useState([]);
@@ -68,7 +68,7 @@ export default function Events() {
               <select onChange={(e) => e.target.value && mapActivity(event.id, e.target.value)} defaultValue="">
                 <option value="">Select activity…</option>
                 {activities.map((a) => (
-                  <option key={a.id} value={a.id}>{a.name} · {formatDistance(a.distance)}</option>
+                  <option key={a.id} value={a.id}>{a.name} · {formatActivityPrimary(a)}</option>
                 ))}
               </select>
             </div>

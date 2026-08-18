@@ -3,38 +3,55 @@ import { useParams } from 'react-router-dom';
 import api from '../api/client';
 import Layout from '../components/Layout';
 import { useAuth } from '../context/AuthContext';
-import { formatDate, formatDistance } from '../utils/format';
+import { isClubOnlyAccount } from '../utils/roles';
 
 export default function ClubDetail() {
   const { id } = useParams();
-  const { isAppAdmin } = useAuth();
+  const { isAppAdmin, user } = useAuth();
+  const clubOnly = isClubOnlyAccount(user);
   const [data, setData] = useState(null);
   const [code, setCode] = useState('');
-  const [announce, setAnnounce] = useState({ title: '', body: '' });
   const [coachEmail, setCoachEmail] = useState('');
-  const [eventForm, setEventForm] = useState({ name: '', eventDate: '', distance: '', location: '' });
+  const [profile, setProfile] = useState({ name: '', description: '', location: '', website: '' });
+  const [assignPick, setAssignPick] = useState({});
   const [msg, setMsg] = useState('');
 
-  const load = () => api.get(`/clubs/${id}`).then((r) => setData(r.data));
+  const load = () =>
+    api.get(`/clubs/${id}`).then((r) => {
+      setData(r.data);
+      const c = r.data.club;
+      setProfile({
+        name: c.name || '',
+        description: c.description || '',
+        location: c.location || '',
+        website: c.website || '',
+      });
+    });
   useEffect(() => { load(); }, [id]);
 
   if (!data) return <Layout><p className="text-muted">Loading…</p></Layout>;
-  const { club, members, announcements, events, analytics, myMembership } = data;
+  const { club, members, assignments, myMembership } = data;
   const isAdmin = isAppAdmin || (myMembership?.role === 'club_admin' && myMembership.status === 'active');
   const coaches = members.filter((m) => m.role === 'coach' && m.status === 'active');
+  const athletes = members.filter((m) => m.role === 'member' && m.status === 'active');
+  const admins = members.filter((m) => m.role === 'club_admin' && m.status === 'active');
+  const pending = members.filter((m) => m.status === 'pending');
+  const assignedFor = (athleteId) => (assignments || []).filter((a) => a.athleteId === athleteId);
+
+  const flash = (text) => setMsg(text);
 
   const join = async () => {
     try {
       await api.post(`/clubs/${id}/join`, { invitationCode: code || undefined });
-      setMsg('Request sent');
+      flash('Request sent');
       load();
     } catch (err) {
-      setMsg(err.response?.data?.message || 'Join failed');
+      flash(err.response?.data?.message || 'Join failed');
     }
   };
 
-  const approve = async (memberId, coachId) => {
-    await api.post(`/clubs/${id}/members/${memberId}/approve`, { coachId });
+  const approve = async (memberId) => {
+    await api.post(`/clubs/${id}/members/${memberId}/approve`, {});
     load();
   };
 
@@ -42,114 +59,161 @@ export default function ClubDetail() {
     e.preventDefault();
     await api.post(`/clubs/${id}/coaches`, { email: coachEmail });
     setCoachEmail('');
+    flash('Coach added');
     load();
   };
 
-  const publish = async (e) => {
-    e.preventDefault();
-    await api.post(`/clubs/${id}/announcements`, announce);
-    setAnnounce({ title: '', body: '' });
+  const removeCoach = async (userId) => {
+    await api.delete(`/clubs/${id}/coaches/${userId}`);
     load();
   };
 
-  const addEvent = async (e) => {
+  const assign = async (athleteId) => {
+    const coachId = assignPick[athleteId];
+    if (!coachId) return;
+    await api.post(`/clubs/${id}/assign-coach`, { athleteId, coachId });
+    setAssignPick((prev) => ({ ...prev, [athleteId]: '' }));
+    load();
+  };
+
+  const unassign = async (athleteId, coachId) => {
+    await api.post(`/clubs/${id}/unassign-coach`, { athleteId, coachId });
+    load();
+  };
+
+  const saveProfile = async (e) => {
     e.preventDefault();
-    await api.post(`/clubs/${id}/events`, { ...eventForm, distance: eventForm.distance ? Number(eventForm.distance) * 1000 : null });
-    setEventForm({ name: '', eventDate: '', distance: '', location: '' });
+    await api.patch(`/clubs/${id}`, profile);
+    flash('Club updated');
     load();
   };
 
   return (
     <Layout>
       <h2 className="page-title">{club.name} {club.isVerified ? '✓' : ''}</h2>
-      <p className="page-sub">{club.location} · {club.status} · {club.description || 'No description yet'}</p>
+      <p className="page-sub">
+        {club.location || 'Location TBD'} · organization · {coaches.length} coaches · {athletes.length} athletes
+        {isAdmin ? ' · athletes connect Strava on their own accounts' : ''}
+      </p>
+      {club.description && <p className="text-sm text-muted mb-4">{club.description}</p>}
       {msg && <div className="card mb-4 text-sm">{msg}</div>}
 
-      {!myMembership && (
+      {!myMembership && !clubOnly && (
         <div className="card mb-6 flex gap-2">
-          <input placeholder="Club invitation code (optional)" value={code} onChange={(e) => setCode(e.target.value)} />
+          <input placeholder="Invitation code (optional)" value={code} onChange={(e) => setCode(e.target.value)} />
           <button className="btn-primary" onClick={join}>Request to join</button>
         </div>
       )}
 
-      <div className="grid md:grid-cols-3 gap-4 mb-6">
-        <div className="stat-card"><div className="text-sm text-muted">Members</div><div className="text-xl font-bold text-brand">{analytics.members}</div></div>
-        <div className="stat-card"><div className="text-sm text-muted">Month distance</div><div className="text-xl font-bold text-brand">{formatDistance(analytics.distance)}</div></div>
-        <div className="stat-card"><div className="text-sm text-muted">Activities</div><div className="text-xl font-bold text-brand">{analytics.activities}</div></div>
-      </div>
+      {isAdmin && (
+        <form className="card grid md:grid-cols-2 gap-3 mb-6" onSubmit={saveProfile}>
+          <h3 className="font-semibold md:col-span-2">Club profile</h3>
+          <input value={profile.name} onChange={(e) => setProfile({ ...profile, name: e.target.value })} placeholder="Name" required />
+          <input value={profile.location} onChange={(e) => setProfile({ ...profile, location: e.target.value })} placeholder="Location" />
+          <input value={profile.website} onChange={(e) => setProfile({ ...profile, website: e.target.value })} placeholder="Website" />
+          <textarea className="md:col-span-2" value={profile.description} onChange={(e) => setProfile({ ...profile, description: e.target.value })} placeholder="About this club" />
+          <button className="btn-primary md:col-span-2" type="submit">Save club</button>
+        </form>
+      )}
 
-      <h3 className="font-semibold mb-2">Leaderboard</h3>
-      <div className="card mb-6">
-        {(analytics.leaderboard || []).map((row) => (
-          <div key={row.athleteId} className="flex justify-between py-2 border-b border-line last:border-0 text-sm">
-            <span>#{row.rank} {row.name}</span>
-            <span className="text-brand">{row.formattedDistance}</span>
+      <div className="grid md:grid-cols-2 gap-6 mb-8">
+        <section>
+          <h3 className="font-semibold mb-3">Coaches</h3>
+          {isAdmin && (
+            <form className="card space-y-2 mb-3" onSubmit={addCoach}>
+              <input placeholder="Coach email" value={coachEmail} onChange={(e) => setCoachEmail(e.target.value)} required />
+              <button className="btn-primary">Add coach</button>
+              {club.status === 'pending_coach' && (
+                <p className="text-xs text-accent">Add at least one coach before accepting athletes.</p>
+              )}
+            </form>
+          )}
+          <div className="space-y-2">
+            {coaches.map((c) => (
+              <div key={c.id} className="card flex justify-between items-center gap-3">
+                <div>
+                  <div className="font-semibold">{c.firstName} {c.lastName}</div>
+                  <div className="text-xs text-muted">{c.email}</div>
+                </div>
+                {isAdmin && (
+                  <button className="btn-outline btn-sm" onClick={() => removeCoach(c.userId)}>Remove</button>
+                )}
+              </div>
+            ))}
+            {!coaches.length && <div className="card text-muted text-sm">No coaches yet.</div>}
           </div>
-        ))}
-        {!analytics.leaderboard?.length && <p className="text-muted text-sm">No activity this month.</p>}
+        </section>
+
+        <section>
+          <h3 className="font-semibold mb-3">Admins</h3>
+          <div className="space-y-2">
+            {admins.map((a) => (
+              <div key={a.id} className="card">
+                <div className="font-semibold">{a.firstName} {a.lastName}</div>
+                <div className="text-xs text-muted">{a.email}</div>
+              </div>
+            ))}
+          </div>
+        </section>
       </div>
 
       {isAdmin && (
-        <div className="grid md:grid-cols-2 gap-4 mb-6">
-          <form className="card space-y-2" onSubmit={addCoach}>
-            <h3 className="font-semibold">Add coach</h3>
-            <input placeholder="Coach email" value={coachEmail} onChange={(e) => setCoachEmail(e.target.value)} required />
-            <button className="btn-primary">Add</button>
-            {club.status === 'pending_coach' && <p className="text-xs text-accent">Add a coach before accepting members.</p>}
-          </form>
-          <form className="card space-y-2" onSubmit={publish}>
-            <h3 className="font-semibold">Announcement</h3>
-            <input placeholder="Title" value={announce.title} onChange={(e) => setAnnounce({ ...announce, title: e.target.value })} required />
-            <textarea placeholder="Body" value={announce.body} onChange={(e) => setAnnounce({ ...announce, body: e.target.value })} required />
-            <button className="btn-primary">Publish</button>
-          </form>
-          <form className="card space-y-2 md:col-span-2" onSubmit={addEvent}>
-            <h3 className="font-semibold">Club event</h3>
-            <div className="grid md:grid-cols-4 gap-2">
-              <input placeholder="Name" value={eventForm.name} onChange={(e) => setEventForm({ ...eventForm, name: e.target.value })} required />
-              <input type="date" value={eventForm.eventDate} onChange={(e) => setEventForm({ ...eventForm, eventDate: e.target.value })} required />
-              <input placeholder="Distance km" value={eventForm.distance} onChange={(e) => setEventForm({ ...eventForm, distance: e.target.value })} />
-              <input placeholder="Location" value={eventForm.location} onChange={(e) => setEventForm({ ...eventForm, location: e.target.value })} />
-            </div>
-            <button className="btn-primary">Create event</button>
-          </form>
-        </div>
-      )}
-
-      {isAdmin && (
-        <div className="card mb-6">
-          <h3 className="font-semibold mb-3">Membership requests</h3>
-          {members.filter((m) => m.status === 'pending').map((m) => (
-            <div key={m.id} className="flex flex-wrap items-center gap-2 py-2 border-b border-line">
-              <span className="flex-1">{m.firstName} {m.lastName}</span>
-              <select id={`coach-${m.id}`} className="max-w-xs">
-                {coaches.map((c) => <option key={c.userId} value={c.userId}>{c.firstName} {c.lastName}</option>)}
-              </select>
-              <button className="btn-primary btn-sm" onClick={() => approve(m.id, document.getElementById(`coach-${m.id}`)?.value)}>Approve + assign coach</button>
-            </div>
-          ))}
-          {!members.some((m) => m.status === 'pending') && <p className="text-sm text-muted">No pending requests.</p>}
-        </div>
-      )}
-
-      <h3 className="font-semibold mb-2">Announcements</h3>
-      <div className="space-y-2 mb-6">
-        {announcements.map((a) => (
-          <div key={a.id} className="card">
-            <div className="font-semibold">{a.title}</div>
-            <p className="text-sm text-muted">{a.body}</p>
+        <>
+          <div className="card mb-6">
+            <h3 className="font-semibold mb-3">Join requests</h3>
+            {pending.map((m) => (
+              <div key={m.id} className="flex flex-wrap items-center gap-2 py-2 border-b border-line">
+                <span className="flex-1">{m.firstName} {m.lastName} · {m.email}</span>
+                <button className="btn-primary btn-sm" onClick={() => approve(m.id)}>Approve</button>
+              </div>
+            ))}
+            {!pending.length && <p className="text-sm text-muted">No pending requests.</p>}
           </div>
-        ))}
-      </div>
-      <h3 className="font-semibold mb-2">Club events</h3>
-      <div className="space-y-2">
-        {events.map((e) => (
-          <div key={e.id} className="card flex justify-between">
-            <span>{e.name}</span>
-            <span className="text-sm text-muted">{formatDate(e.eventDate)}</span>
+
+          <h3 className="font-semibold mb-3">Athletes</h3>
+          <div className="space-y-3">
+            {athletes.map((a) => {
+              const assigned = assignedFor(a.userId);
+              const available = coaches.filter((c) => !assigned.some((x) => x.coachId === c.userId));
+              return (
+                <div key={a.id} className="card">
+                  <div className="flex flex-wrap justify-between gap-2 mb-2">
+                    <div>
+                      <div className="font-semibold">{a.firstName} {a.lastName}</div>
+                      <div className="text-xs text-muted">{a.email}</div>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2 mb-2">
+                    {assigned.map((x) => (
+                      <span key={x.id} className="badge bg-brand/15 text-brand normal-case">
+                        {x.coachFirstName} {x.coachLastName}
+                        <button className="ml-1" type="button" onClick={() => unassign(a.userId, x.coachId)}>×</button>
+                      </span>
+                    ))}
+                    {!assigned.length && <span className="text-sm text-muted">No coach assigned</span>}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <select
+                      className="max-w-xs"
+                      value={assignPick[a.userId] || ''}
+                      onChange={(e) => setAssignPick((prev) => ({ ...prev, [a.userId]: e.target.value }))}
+                    >
+                      <option value="">Assign a coach…</option>
+                      {available.map((c) => (
+                        <option key={c.userId} value={c.userId}>{c.firstName} {c.lastName}</option>
+                      ))}
+                    </select>
+                    <button className="btn-primary btn-sm" type="button" onClick={() => assign(a.userId)} disabled={!assignPick[a.userId]}>
+                      Assign
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+            {!athletes.length && <div className="card text-muted text-sm">No athletes in this club yet.</div>}
           </div>
-        ))}
-      </div>
+        </>
+      )}
     </Layout>
   );
 }
