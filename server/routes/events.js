@@ -65,13 +65,11 @@ router.post(
     if (!name || !eventDate) {
       return res.status(400).json({ message: 'Name and date are required' });
     }
-    const start = eventTime ? new Date(`${eventDate}T${eventTime}`) : new Date(eventDate);
-    const status = start < new Date() ? 'completed' : 'upcoming';
     const event = camel(
       await one(
         `INSERT INTO events (owner_type, owner_id, name, event_date, event_time, distance, category, goal_time, goal_pace, notes, location, status)
          VALUES ('athlete', $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
-        [req.user.id, name, eventDate, eventTime || null, distance || null, category, goalTime || null, goalPace || null, notes || null, location || null, status]
+        [req.user.id, name, eventDate, eventTime || null, distance || null, category, goalTime || null, goalPace || null, notes || null, location || null, 'upcoming']
       )
     );
     res.status(201).json({ event });
@@ -81,12 +79,17 @@ router.post(
 router.put(
   '/:id',
   asyncHandler(async (req, res) => {
-    const existing = await one(`SELECT * FROM events WHERE id = $1 AND owner_type = 'athlete' AND owner_id = $2`, [
-      req.params.id,
-      req.user.id,
-    ]);
+    const existing = camel(
+      await one(`SELECT * FROM events WHERE id = $1 AND owner_type = 'athlete' AND owner_id = $2`, [
+        req.params.id,
+        req.user.id,
+      ])
+    );
     if (!existing) return res.status(404).json({ message: 'Event not found' });
-    const { name, eventDate, eventTime, distance, category, goalTime, goalPace, notes, location, status } = req.body;
+    if (existing.status === 'completed') {
+      return res.status(400).json({ message: 'Completed events cannot be edited' });
+    }
+    const { name, eventDate, eventTime, distance, category, goalTime, goalPace, notes, location } = req.body;
     const event = camel(
       await one(
         `UPDATE events SET
@@ -99,10 +102,9 @@ router.put(
            goal_pace = COALESCE($7, goal_pace),
            notes = COALESCE($8, notes),
            location = COALESCE($9, location),
-           status = COALESCE($10, status),
            updated_at = NOW()
-         WHERE id = $11 RETURNING *`,
-        [name, eventDate, eventTime, distance, category, goalTime, goalPace, notes, location, status, req.params.id]
+         WHERE id = $10 RETURNING *`,
+        [name, eventDate, eventTime, distance, category, goalTime, goalPace, notes, location, req.params.id]
       )
     );
     res.json({ event });
@@ -112,12 +114,18 @@ router.put(
 router.delete(
   '/:id',
   asyncHandler(async (req, res) => {
-    const event = await one(`DELETE FROM events WHERE id = $1 AND owner_type = 'athlete' AND owner_id = $2 RETURNING id`, [
-      req.params.id,
-      req.user.id,
-    ]);
-    if (!event) return res.status(404).json({ message: 'Event not found' });
+    const existing = camel(
+      await one(`SELECT id, status FROM events WHERE id = $1 AND owner_type = 'athlete' AND owner_id = $2`, [
+        req.params.id,
+        req.user.id,
+      ])
+    );
+    if (!existing) return res.status(404).json({ message: 'Event not found' });
+    if (existing.status === 'completed') {
+      return res.status(400).json({ message: 'Completed events cannot be deleted' });
+    }
     await query(`UPDATE activities SET event_id = NULL WHERE event_id = $1`, [req.params.id]);
+    await query(`DELETE FROM events WHERE id = $1`, [req.params.id]);
     res.json({ message: 'Event deleted' });
   })
 );
@@ -136,9 +144,36 @@ router.post(
       ])
     );
     if (!event) return res.status(404).json({ message: 'Event not found' });
+    if (event.status === 'completed') {
+      return res.status(400).json({ message: 'This event already has a linked activity and cannot be changed' });
+    }
+    const alreadyLinked = await one(`SELECT 1 FROM event_activities WHERE event_id = $1 LIMIT 1`, [event.id]);
+    if (alreadyLinked) {
+      return res.status(400).json({ message: 'This event already has a linked activity and cannot be changed' });
+    }
+    const eventDay = new Date(event.eventDate);
+    eventDay.setHours(0, 0, 0, 0);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    if (eventDay > today) {
+      return res.status(400).json({ message: 'Link an activity after the event has taken place' });
+    }
     for (const activityId of activityIds) {
-      const act = await one(`SELECT id FROM activities WHERE id = $1 AND athlete_id = $2`, [activityId, req.user.id]);
+      const act = camel(
+        await one(
+          `SELECT id, type, sport_type,
+                  ((COALESCE(start_date_local, start_date)::date) = $3::date) AS same_day
+           FROM activities WHERE id = $1 AND athlete_id = $2`,
+          [activityId, req.user.id, event.eventDate]
+        )
+      );
       if (!act) return res.status(400).json({ message: 'Some activities not found or not owned by you' });
+      if (!act.sameDay) {
+        return res.status(400).json({ message: 'Link an activity from the event date' });
+      }
+      if (!matchesEventCategory(act, event.category)) {
+        return res.status(400).json({ message: `Link a ${event.category || 'matching'} activity to this event` });
+      }
       await query(
         `INSERT INTO event_activities (event_id, activity_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
         [event.id, activityId]
@@ -149,5 +184,19 @@ router.post(
     res.json({ message: 'Activities mapped' });
   })
 );
+
+function matchesEventCategory(activity, category) {
+  const blob = `${activity.type || ''} ${activity.sportType || ''}`.toLowerCase();
+  const cat = String(category || '').toLowerCase();
+  if (cat === 'run') return blob.includes('run') || blob.includes('trail');
+  if (cat === 'bike') return blob.includes('ride') || blob.includes('cycle') || blob.includes('bike');
+  if (cat === 'swim') return blob.includes('swim');
+  if (cat === 'walk') return blob.includes('walk');
+  if (cat === 'triathlon') {
+    return blob.includes('run') || blob.includes('trail') || blob.includes('ride')
+      || blob.includes('cycle') || blob.includes('bike') || blob.includes('swim');
+  }
+  return true;
+}
 
 export default router;

@@ -176,3 +176,12 @@ export function secondsFromTime(value) {
   const total = h * 3600 + m * 60 + s;
   return total > 0 ? total : null;
 }
+
+export function timeFromSeconds(total) {
+  const n = Number(total);
+  if (!n || n <= 0) return '';
+  const h = Math.floor(n / 3600);
+  const m = Math.floor((n % 3600) / 60);
+  const s = Math.floor(n % 60);
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
