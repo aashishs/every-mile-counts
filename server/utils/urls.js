@@ -3,6 +3,7 @@ export function publicApiUrl() {
     process.env.PUBLIC_API_URL ||
     process.env.RENDER_EXTERNAL_URL ||
     (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : '') ||
+    process.env.CLIENT_URL ||
     `http://localhost:${process.env.PORT || 5000}`;
   return String(raw).replace(/\/$/, '');
 }
@@ -26,6 +27,9 @@ export function isAllowedOrigin(origin) {
   try {
     const host = new URL(origin).hostname;
     if (
+      host === 'everymilecounts.in' ||
+      host === 'www.everymilecounts.in' ||
+      host.endsWith('.everymilecounts.in') ||
       host.endsWith('.onrender.com') ||
       host.endsWith('.vercel.app') ||
       host.endsWith('.up.railway.app') ||

@@ -98,13 +98,15 @@ For **api**:
 
 - **Settings → Root Directory:** `server`
 - **Settings → Source:** connect `aashishs/every-mile-counts`, branch `main`
-- **Settings → Networking → Generate domain**
+- Leave **api** private (no public domain). The browser cannot use `RAILWAY_PRIVATE_DOMAIN`.
 
 For **web**:
 
 - **Settings → Root Directory:** `client`
 - **Settings → Source:** same repo / `main`
-- **Settings → Networking → Generate domain**
+- **Settings → Networking → Public Networking → Generate domain**
+
+`RAILWAY_PUBLIC_DOMAIN` only appears **after** you generate that public domain. It will show on **web**, not on **api**.
 
 ### 3. API variables
 
@@ -114,7 +116,8 @@ On **api** → **Variables**, add:
 | --- | --- |
 | `NODE_ENV` | `production` |
 | `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` |
-| `CLIENT_URL` | `https://${{web.RAILWAY_PUBLIC_DOMAIN}}` |
+| `CLIENT_URL` | `https://www.everymilecounts.in` |
+| `CORS_ORIGINS` | `https://everymilecounts.in` |
 | `JWT_SECRET` | a long random string |
 | `ENCRYPTION_KEY` | 64 hex chars (command below) |
 | `ADMIN_EMAIL` | your admin email |
@@ -128,28 +131,41 @@ If your Postgres service is not named `Postgres`, use that service’s name in `
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
 
-### 4. Web variables
+### 4. Custom domain (`www.everymilecounts.in`)
+
+Attach the domain to **web** only (api stays private).
+
+1. **web** → **Settings → Networking → Custom Domain** → add `www.everymilecounts.in`.
+2. In your DNS (GoDaddy, Cloudflare, Namecheap, etc.) create **both** records Railway shows:
+   - **CNAME** `www` → the Railway target (looks like `xxxx.up.railway.app`)
+   - **TXT** (verification) — required; without it the domain stays 404
+3. Optional: also add `everymilecounts.in` (apex). That needs CNAME flattening / ALIAS / ANAME, not a normal A record. Then point `www` at `@` or add both hostnames on the same Railway service.
+4. Wait until Railway shows the domain as verified (SSL is automatic).
+
+You can still generate a Railway `*.up.railway.app` domain for testing; production traffic should use `https://www.everymilecounts.in`.
+
+### 5. Web variables
 
 On **web** → **Variables**:
 
 | Name | Value |
 | --- | --- |
-| `VITE_API_URL` | `https://${{api.RAILWAY_PUBLIC_DOMAIN}}` |
+| `API_URL` | `http://${{api.RAILWAY_PRIVATE_DOMAIN}}:${{api.PORT}}` |
 
-`VITE_*` is baked in at **build** time. If you change it later, **Redeploy** web.
+Do **not** set `VITE_API_URL`. The web app calls `/api` on its own public URL; Caddy proxies that to the private API.
 
-### 5. Deploy and log in
+### 6. Deploy and log in
 
-Click **Deploy**. Wait until api health is green (`/api/health`). Open the **web** public URL.
+Click **Deploy**. Wait until api health is green (`/api/health`). Open [https://www.everymilecounts.in](https://www.everymilecounts.in).
 
 Login: `ADMIN_EMAIL` / `ADMIN_PASSWORD`. Invite codes: `WELCOME-EMC`, `ATHLETE-BETA`, `COACH-BETA`, `CLUB-BETA`.
 
-### 6. Strava (optional)
+### 7. Strava (optional)
 
 In [Strava API settings](https://www.strava.com/settings/api):
 
-- Authorization Callback Domain: your **api** host only (e.g. `api-production-xxxx.up.railway.app`)
-- Redirect: `https://<api-host>/api/strava/callback`
+- Authorization Callback Domain: `www.everymilecounts.in` (host only, no `https`)
+- Redirect: `https://www.everymilecounts.in/api/strava/callback`
 
 ### Railway notes
 

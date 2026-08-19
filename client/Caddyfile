@@ -15,8 +15,15 @@
 		format json
 	}
 
-	root * dist
 	encode gzip
-	file_server
-	try_files {path} /index.html
+
+	handle /api* {
+		reverse_proxy {$API_URL}
+	}
+
+	handle {
+		root * dist
+		file_server
+		try_files {path} /index.html
+	}
 }
