@@ -133,16 +133,19 @@ function proxyApi(req, res) {
     dest,
     { method: req.method, headers },
     (up) => {
-      const outHeaders = proxyHeaders(up);
-      if (outHeaders.location) {
-        outHeaders.location = rewriteLocation(outHeaders.location, incomingHost, incomingProto);
-      }
-      res.writeHead(up.statusCode || 502, outHeaders);
-      if ((up.statusCode || 0) >= 300 && (up.statusCode || 0) < 400) {
+      const status = up.statusCode || 502;
+      if (status >= 300 && status < 400) {
+        const location = rewriteLocation(up.headers.location, incomingHost, incomingProto);
+        res.writeHead(status, {
+          location,
+          'cache-control': 'no-store',
+        });
         up.resume();
         res.end();
         return;
       }
+      const outHeaders = proxyHeaders(up);
+      res.writeHead(status, outHeaders);
       up.pipe(res);
     }
   );

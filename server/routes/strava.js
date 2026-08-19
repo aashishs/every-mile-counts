@@ -72,13 +72,17 @@ router.get(
       });
       await completeStravaOAuth(state, tokenRes.data);
       await writeAudit({ userId: state, action: 'strava_connect', entityType: 'oauth' });
-      res.redirect(`${appUrl}/dashboard?strava=connected`);
+      res.redirect(302, `${appUrl}/dashboard?strava=connected`);
       syncStravaActivities(state, { full: true }).catch((err) => {
         console.error('Strava history sync error:', err.message);
       });
     } catch (err) {
-      console.error('Strava callback error:', err.message);
-      res.redirect(`${appUrl}/dashboard?strava=error`);
+      console.error('Strava callback error:', err.response?.data || err.message);
+      const conn = state ? await getStravaConnection(state) : null;
+      if (conn?.connected) {
+        return res.redirect(302, `${appUrl}/dashboard?strava=connected`);
+      }
+      res.redirect(302, `${appUrl}/dashboard?strava=error`);
     }
   })
 );

@@ -34,7 +34,7 @@ export default function Dashboard() {
   const [data, setData] = useState(null);
   const [strava, setStrava] = useState(null);
   const [syncing, setSyncing] = useState(false);
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams] = useSearchParams();
   const [type, setType] = useState(() => initialActivityType(user, searchParams.get('type')));
   const alertKey = searchParams.get('strava');
 
@@ -44,7 +44,6 @@ export default function Dashboard() {
 
   useEffect(() => {
     load();
-    if (alertKey) setSearchParams({}, { replace: true });
   }, [type]);
 
   const load = async () => {
@@ -63,7 +62,11 @@ export default function Dashboard() {
   const connect = async (provider) => {
     try {
       const { data: d } = await api.get(`/${provider}/connect`);
-      window.location.href = d.url;
+      if (!d?.url || !String(d.url).startsWith('https://www.strava.com/')) {
+        alert('Strava did not return a valid connect URL. Check CLIENT_URL on the API service.');
+        return;
+      }
+      window.location.assign(d.url);
     } catch (err) {
       alert(err.response?.data?.message || 'Could not start Strava connect');
     }
