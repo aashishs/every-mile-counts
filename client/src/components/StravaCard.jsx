@@ -1,13 +1,14 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import api from '../api/client';
 import { isAppAdminAccount, isClubOnlyAccount } from '../utils/roles';
 
-export default function StravaCard({ user }) {
+export default function StravaCard({ user, autoConnect = false }) {
   const hidden = isAppAdminAccount(user) || isClubOnlyAccount(user);
   const [strava, setStrava] = useState(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
+  const autoStarted = useRef(false);
 
   const load = async () => {
     if (hidden) return;
@@ -23,7 +24,9 @@ export default function StravaCard({ user }) {
     load();
   }, [user?.id]);
 
-  if (hidden) return null;
+  const missing = strava?.missing || [];
+  const connected = Boolean(strava?.connected);
+  const idsMissing = missing.includes('STRAVA_CLIENT_ID') || missing.includes('STRAVA_CLIENT_SECRET') || strava?.configured === false;
 
   const connect = async () => {
     setErr('');
@@ -43,6 +46,14 @@ export default function StravaCard({ user }) {
     }
   };
 
+  useEffect(() => {
+    if (!autoConnect || autoStarted.current || hidden || !strava || connected || idsMissing || busy) return;
+    autoStarted.current = true;
+    connect();
+  }, [autoConnect, hidden, strava, connected, idsMissing, busy]);
+
+  if (hidden) return null;
+
   const sync = async () => {
     setErr('');
     setMsg('');
@@ -58,19 +69,17 @@ export default function StravaCard({ user }) {
     }
   };
 
-  const missing = strava?.missing || [];
-  const connected = Boolean(strava?.connected);
-  const idsMissing = missing.includes('STRAVA_CLIENT_ID') || missing.includes('STRAVA_CLIENT_SECRET') || strava?.configured === false;
+  if (!strava) return null;
 
   return (
-    <div className="card mb-5 border-accent/40">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+    <div className={`card mb-5 ${connected ? 'border-accent/40' : 'border-accent/60'}`}>
+      <div className={`flex ${connected ? 'flex-col sm:flex-row sm:items-center' : 'flex-col'} justify-between gap-3`}>
         <div>
-          <div className="font-semibold">{connected ? 'Strava connected' : 'Sync from Strava'}</div>
-          <p className="text-xs text-muted mt-1">
+          <div className="font-semibold">{connected ? 'Strava connected' : 'Connect Strava to get started'}</div>
+          <p className="text-sm text-muted mt-1">
             {connected
               ? `Last sync ${strava.lastSyncAt ? new Date(strava.lastSyncAt).toLocaleString() : 'not yet'}`
-              : 'Connect your Strava account to pull in runs, rides, and swims.'}
+              : 'Authorize Strava to pull in your runs, rides, and swims automatically. This is the fastest way to fill your log.'}
           </p>
           {strava?.lastSyncError && connected && (
             <p className="text-xs text-orange-300 mt-1">{strava.lastSyncError}</p>
@@ -94,8 +103,8 @@ export default function StravaCard({ user }) {
               </button>
             </>
           ) : (
-            <button className="btn-accent btn-sm" type="button" onClick={connect} disabled={busy || idsMissing}>
-              {busy ? 'Connecting…' : 'Connect Strava'}
+            <button className="btn-accent w-full sm:w-auto px-5 py-3" type="button" onClick={connect} disabled={busy || idsMissing}>
+              {busy ? 'Opening Strava…' : 'Connect Strava'}
             </button>
           )}
         </div>

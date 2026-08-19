@@ -45,6 +45,16 @@ export default function Dashboard() {
     load();
   }, [type]);
 
+  useEffect(() => {
+    if (alertKey !== 'connected') return undefined;
+    const later = setTimeout(load, 4000);
+    const again = setTimeout(load, 15000);
+    return () => {
+      clearTimeout(later);
+      clearTimeout(again);
+    };
+  }, [alertKey]);
+
   const load = async () => {
     try {
       const dash = await api.get('/activities/dashboard', { params: { type } });
@@ -56,14 +66,14 @@ export default function Dashboard() {
 
   const why = searchParams.get('why');
   const messages = {
-    connected: { type: 'success', text: 'Device connected. Activities are syncing.' },
+    connected: { type: 'success', text: 'Strava authorized. Your activities are syncing into your log.' },
     error: {
       type: 'error',
       text:
         why === 'encryption'
           ? 'Set ENCRYPTION_KEY on the Railway api service to 64 hex characters, then redeploy and connect again.'
           : why === 'token'
-            ? 'Strava rejected the login. Check STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET, and the Authorization Callback Domain.'
+            ? 'Strava rejected the connection. Check STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET, and the Authorization Callback Domain.'
             : 'Connection failed. Check the api service logs, then try Connect Strava once more.',
     },
   };
@@ -86,7 +96,7 @@ export default function Dashboard() {
         </div>
       )}
 
-      {!clubOnly && <StravaCard user={user} />}
+      {!clubOnly && <StravaCard user={user} autoConnect={searchParams.get('connect') === 'strava'} />}
       {!clubOnly && (
         <p className="text-sm text-muted -mt-2 mb-5">
           Or{' '}

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { homePath } from '../utils/roles';
+import { afterJoinPath } from '../utils/roles';
 import OtpVerify from '../components/OtpVerify';
 import { VersionBadge } from '../components/Badge';
 import { isBeta } from '../utils/appVersion';
@@ -51,7 +51,7 @@ export default function Register() {
         setOtp(data);
         return;
       }
-      if (data.user) navigate(homePath(data.user));
+      if (data.user) navigate(afterJoinPath(data.user));
     } catch (err) {
       setError(err.response?.data?.message || 'Registration failed');
     } finally {
@@ -80,7 +80,7 @@ export default function Register() {
             debugCode={otp.debugCode}
             onVerify={async (code) => {
               const user = await verifyOtp(otp.challengeId, code);
-              navigate(homePath(user));
+              navigate(afterJoinPath(user));
             }}
             onResend={async () => {
               const next = await resendOtp(otp.challengeId);

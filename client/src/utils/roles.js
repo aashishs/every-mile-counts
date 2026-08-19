@@ -17,3 +17,8 @@ export function homePath(user) {
   if (hasRole(user, 'club_admin') && !hasRole(user, 'athlete')) return '/clubs';
   return '/dashboard';
 }
+
+export function afterJoinPath(user) {
+  const path = homePath(user);
+  return path === '/dashboard' ? '/dashboard?connect=strava' : path;
+}

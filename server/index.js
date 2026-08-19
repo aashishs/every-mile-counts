@@ -48,6 +48,7 @@ app.use(
     max: 400,
     standardHeaders: true,
     legacyHeaders: false,
+    skip: (req) => req.path === '/api/strava/webhook',
   })
 );
 
