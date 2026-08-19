@@ -32,6 +32,8 @@ export default function ActivityDetail() {
   });
   const [message, setMessage] = useState('');
   const [copied, setCopied] = useState(false);
+  const [reviewCoachId, setReviewCoachId] = useState('');
+  const [asking, setAsking] = useState(false);
 
   useEffect(() => {
     api.get(`/activities/${id}`).then((res) => setData(res.data));
@@ -48,6 +50,16 @@ export default function ActivityDetail() {
   const hasReview = (reviews || []).length > 0;
   const myReview = (reviews || []).find((r) => r.coachId === user.id);
   const myPendingRequest = (requests || []).find((r) => r.status === 'pending' && r.coachId === user.id);
+  const coachIdOf = (c) => c.coachId || c.id;
+  const pendingCoachIds = new Set(pendingRequests.map((r) => r.coachId));
+  const reviewedCoachIds = new Set((reviews || []).map((r) => r.coachId));
+  const availableCoaches = coaches.filter((c) => {
+    const id = coachIdOf(c);
+    return id && !pendingCoachIds.has(id) && !reviewedCoachIds.has(id);
+  });
+  const selectedCoachId = availableCoaches.some((c) => coachIdOf(c) === reviewCoachId)
+    ? reviewCoachId
+    : '';
   const glance = insights || athleteInsights || {};
   const metric = activityMetric(activity.type, activity.sportType, activity.distance);
   const primary = metric === 'swim'
@@ -58,13 +70,21 @@ export default function ActivityDetail() {
   const primaryLabel = metric === 'duration' ? 'Duration' : metric === 'swim' ? 'Distance' : 'Distance';
 
   const requestReview = async (coachId) => {
+    if (!coachId) {
+      setMessage('Select a coach');
+      return;
+    }
+    setAsking(true);
     try {
       await api.post('/reviews/request', { activityId: activity.id, coachId });
       const { data: fresh } = await api.get(`/activities/${id}`);
       setData(fresh);
+      setReviewCoachId('');
       setMessage('Review requested');
     } catch (err) {
       setMessage(err.response?.data?.message || 'Request failed');
+    } finally {
+      setAsking(false);
     }
   };
 
@@ -227,13 +247,14 @@ export default function ActivityDetail() {
       {mine && (
         <div className="card mb-6">
           <h3 className="section-title mb-3">Coach review</h3>
-          {hasReview ? (
-            <div className="flex flex-wrap items-center gap-2">
+          {hasReview && (
+            <div className="flex flex-wrap items-center gap-2 mb-3">
               <Badge variant="success">Reviewed</Badge>
               <span className="text-sm text-muted">A coach has already reviewed this activity.</span>
             </div>
-          ) : pendingRequests.length ? (
-            <div className="space-y-2">
+          )}
+          {pendingRequests.length > 0 && (
+            <div className="space-y-2 mb-3">
               {pendingRequests.map((r) => (
                 <div key={r.id} className="flex flex-wrap items-center gap-2">
                   <Badge variant="warning">Review requested</Badge>
@@ -244,15 +265,41 @@ export default function ActivityDetail() {
                 </div>
               ))}
             </div>
-          ) : !coaches.length ? (
-            <p className="text-sm text-muted mb-0">No coach yet. Add one from Profile.</p>
+          )}
+          {!coaches.length ? (
+            <p className="text-sm text-muted mb-0">No coach yet. Add one from Profile, or ask your club admin to assign a coach.</p>
+          ) : availableCoaches.length === 0 ? null : coaches.length === 1 ? (
+            <button
+              className="btn-outline btn-sm"
+              type="button"
+              disabled={asking}
+              onClick={() => requestReview(coachIdOf(availableCoaches[0]))}
+            >
+              {asking ? 'Sending…' : 'Ask coach for review'}
+            </button>
           ) : (
-            <div className="flex flex-wrap gap-2">
-              {coaches.map((c) => (
-                <button key={c.coachId || c.id} className="btn-outline btn-sm" type="button" onClick={() => requestReview(c.coachId || c.id)}>
-                  Ask {c.firstName} for review
-                </button>
-              ))}
+            <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
+              <select
+                className="sm:max-w-xs"
+                value={selectedCoachId}
+                onChange={(e) => setReviewCoachId(e.target.value)}
+                aria-label="Select a coach"
+              >
+                <option value="">Select a coach</option>
+                {availableCoaches.map((c) => (
+                  <option key={coachIdOf(c)} value={coachIdOf(c)}>
+                    {c.firstName} {c.lastName}
+                  </option>
+                ))}
+              </select>
+              <button
+                className="btn-outline btn-sm sm:w-auto"
+                type="button"
+                disabled={asking || !selectedCoachId}
+                onClick={() => requestReview(selectedCoachId)}
+              >
+                {asking ? 'Sending…' : 'Ask for review'}
+              </button>
             </div>
           )}
         </div>

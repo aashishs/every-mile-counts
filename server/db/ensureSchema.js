@@ -144,4 +144,18 @@ export async function ensureSchemaPatches() {
     `CREATE INDEX IF NOT EXISTS idx_coach_assignment_requests_club
      ON coach_assignment_requests (club_id, status)`
   );
+  await pool.query(`
+    DELETE FROM review_requests a
+    USING review_requests b
+    WHERE a.ctid < b.ctid
+      AND a.activity_id = b.activity_id
+      AND a.coach_id = b.coach_id
+      AND a.status = 'pending'
+      AND b.status = 'pending'
+  `);
+  await pool.query(
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_review_requests_pending
+     ON review_requests (activity_id, coach_id)
+     WHERE status = 'pending'`
+  );
 }

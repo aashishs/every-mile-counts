@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import api from '../api/client';
 import Layout from '../components/Layout';
 import MonthCalendar, { DurationPicker, TimePicker, secondsFromTime, timeFromSeconds, ymd } from '../components/MonthCalendar';
 import ConfirmDialog from '../components/ConfirmDialog';
-import { EVENT_TYPES, formatDate, formatActivityPrimary, formatTime } from '../utils/format';
+import { EVENT_TYPES, formatDate, formatActivityPrimary, formatTime, formatDistance } from '../utils/format';
+
+const PAGE_SIZES = [10, 20, 50, 100];
 
 const emptyForm = {
   name: '',
@@ -17,6 +19,8 @@ const emptyForm = {
 
 export default function Events() {
   const [events, setEvents] = useState([]);
+  const [calendarEvents, setCalendarEvents] = useState([]);
+  const [dayEvents, setDayEvents] = useState([]);
   const [activities, setActivities] = useState([]);
   const [open, setOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
@@ -27,22 +31,28 @@ export default function Events() {
   const [confirmError, setConfirmError] = useState('');
   const [monthDate, setMonthDate] = useState(() => new Date());
   const [selected, setSelected] = useState(() => ymd(new Date()));
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(10);
+  const [pages, setPages] = useState(1);
+  const [total, setTotal] = useState(0);
 
-  const load = async () => {
+  const load = async (nextPage = page, nextLimit = limit, date = selected) => {
     const [{ data: e }, { data: a }] = await Promise.all([
-      api.get('/events'),
+      api.get('/events', { params: { page: nextPage, limit: nextLimit, date } }),
       api.get('/activities?limit=200'),
     ]);
-    setEvents(e.events);
+    setEvents(e.events || []);
+    setCalendarEvents(e.calendar || []);
+    setDayEvents(e.dayEvents || []);
+    setTotal(e.total || 0);
+    setPages(e.pages || 1);
+    if (e.page && e.page !== nextPage) setPage(e.page);
+    else setPage(nextPage);
+    setLimit(e.limit || nextLimit);
     setActivities(a.activities || []);
   };
 
-  useEffect(() => { load(); }, []);
-
-  const dayEvents = useMemo(
-    () => events.filter((ev) => String(ev.eventDate).slice(0, 10) === selected),
-    [events, selected]
-  );
+  useEffect(() => { load(page, limit, selected); }, [page, limit, selected]);
 
   const closeForm = () => {
     setOpen(false);
@@ -94,7 +104,8 @@ export default function Events() {
         await api.post('/events', payload);
       }
       closeForm();
-      load();
+      await load(1, limit, selected);
+      setPage(1);
     } catch (err) {
       setFormError(err.response?.data?.message || 'Could not save event');
     }
@@ -128,7 +139,7 @@ export default function Events() {
         await api.delete(`/events/${confirm.event.id}`);
       }
       setConfirm(null);
-      load();
+      await load(page, limit, selected);
     } catch (err) {
       setConfirmError(err.response?.data?.message || (confirm.kind === 'link' ? 'Could not link activity' : 'Could not delete event'));
     } finally {
@@ -156,7 +167,7 @@ export default function Events() {
         <MonthCalendar
           value={selected}
           monthDate={monthDate}
-          events={events}
+          events={calendarEvents}
           onMonthChange={setMonthDate}
           onChange={(day) => {
             setSelected(day);
@@ -188,20 +199,95 @@ export default function Events() {
       </div>
 
       <h3 className="font-semibold mb-3">All events</h3>
-      <div className="space-y-4">
-        {events.map((event) => (
-          <EventCard
-            key={event.id}
-            event={event}
-            when={when(event)}
-            activities={activities}
-            onMap={askLink}
-            onEdit={openEdit}
-            onDelete={askDelete}
-          />
-        ))}
-        {!events.length && <div className="card text-muted">No events yet.</div>}
-      </div>
+      {!total ? (
+        <div className="card text-muted mb-6">No events yet.</div>
+      ) : (
+        <>
+          <div className="flex justify-end mb-3">
+            <label className="flex items-center gap-2 text-sm text-muted mb-0">
+              <span>Show</span>
+              <select
+                className="w-auto py-1.5"
+                value={limit}
+                onChange={(e) => {
+                  setLimit(Number(e.target.value));
+                  setPage(1);
+                }}
+                aria-label="Events per page"
+              >
+                {PAGE_SIZES.map((n) => (
+                  <option key={n} value={n}>{n}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <div className="card overflow-x-auto mb-6">
+            <table className="w-full text-sm min-w-[720px]">
+              <thead>
+                <tr className="text-left text-muted">
+                  <th className="p-3">Date</th>
+                  <th className="p-3">Name</th>
+                  <th className="p-3">Type</th>
+                  <th className="p-3">Location</th>
+                  <th className="p-3">Distance</th>
+                  <th className="p-3">Status</th>
+                  <th className="p-3"> </th>
+                </tr>
+              </thead>
+              <tbody>
+                {events.map((event) => {
+                  const locked = event.status === 'completed' || (event.mappedActivities || []).length > 0;
+                  const typeLabel = EVENT_TYPES.find((t) => t.value === event.category)?.label || event.category || '—';
+                  return (
+                    <tr
+                      key={event.id}
+                      className="border-t border-line cursor-pointer hover:bg-hover/40"
+                      onClick={() => {
+                        const day = String(event.eventDate || '').slice(0, 10);
+                        if (!day) return;
+                        setSelected(day);
+                        setMonthDate(new Date(`${day}T00:00:00`));
+                      }}
+                    >
+                      <td className="p-3 whitespace-nowrap">{when(event)}</td>
+                      <td className="p-3 font-semibold text-slate-100">{event.name}</td>
+                      <td className="p-3">{typeLabel}</td>
+                      <td className="p-3 text-muted">{event.location || '—'}</td>
+                      <td className="p-3 whitespace-nowrap">{event.distance ? formatDistance(event.distance) : '—'}</td>
+                      <td className="p-3">
+                        <span className={`badge ${locked ? 'bg-emerald-500/15 text-emerald-300' : 'bg-accent/15 text-accent'}`}>
+                          {event.status}
+                        </span>
+                      </td>
+                      <td className="p-3 whitespace-nowrap text-right" onClick={(e) => e.stopPropagation()}>
+                        {!locked && (
+                          <>
+                            <button type="button" className="btn-outline btn-sm mr-1" onClick={() => openEdit(event)}>Edit</button>
+                            <button type="button" className="btn-outline btn-sm" onClick={() => askDelete(event)}>Delete</button>
+                          </>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mt-3 px-1">
+              <p className="text-xs text-muted mb-0">
+                Showing {(page - 1) * limit + 1}–{Math.min(page * limit, total)} of {total} · Page {page} of {pages}
+              </p>
+              <div className="grid grid-cols-2 gap-2 sm:flex">
+                <button className="btn-outline btn-sm" type="button" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
+                  Previous
+                </button>
+                <button className="btn-outline btn-sm" type="button" disabled={page >= pages} onClick={() => setPage((p) => p + 1)}>
+                  Next
+                </button>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
 
       {open && (
         <div className="fixed inset-0 bg-black/60 grid place-items-center p-4 z-50 overflow-y-auto" onClick={closeForm}>

@@ -33,7 +33,7 @@ const emptyCodeForm = {
   notes: '',
 };
 
-const AUDIT_SLOTS = [0, 4, 8, 12, 16, 20];
+const AUDIT_PAGE_SIZES = [10, 20, 50, 100];
 
 function copyText(value) {
   return navigator.clipboard.writeText(value);
@@ -57,9 +57,11 @@ export default function Admin() {
   const [settings, setSettings] = useState({});
   const [audit, setAudit] = useState([]);
   const [auditDays, setAuditDays] = useState([]);
-  const [auditSlots, setAuditSlots] = useState(AUDIT_SLOTS.map((slot) => ({ slot, count: 0 })));
   const [auditDay, setAuditDay] = useState(localDayString());
-  const [auditSlot, setAuditSlot] = useState(currentAuditSlot());
+  const [auditPage, setAuditPage] = useState(1);
+  const [auditLimit, setAuditLimit] = useState(20);
+  const [auditTotal, setAuditTotal] = useState(0);
+  const [auditPages, setAuditPages] = useState(1);
   const auditTz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
   const [plans, setPlans] = useState([]);
   const [codeForm, setCodeForm] = useState(emptyCodeForm);
@@ -80,6 +82,12 @@ export default function Admin() {
   const [coachPick, setCoachPick] = useState('');
   const [selectedClubId, setSelectedClubId] = useState(null);
   const [clubDetail, setClubDetail] = useState(null);
+  const [selectedMembershipId, setSelectedMembershipId] = useState(null);
+  const [membershipDetail, setMembershipDetail] = useState(null);
+  const [extendDates, setExtendDates] = useState({});
+  const [membershipBusy, setMembershipBusy] = useState(null);
+  const [membershipMsg, setMembershipMsg] = useState('');
+  const [membershipErr, setMembershipErr] = useState('');
   const [dialog, setDialog] = useState(null);
   const [dialogBusy, setDialogBusy] = useState(false);
   const [dialogError, setDialogError] = useState('');
@@ -101,12 +109,20 @@ export default function Admin() {
       setCodes((await api.get('/membership/codes', { params })).data.codes);
       setPlans((await api.get('/membership/plans')).data.plans);
     }
-    if (next === 'memberships') setMemberships((await api.get('/admin/memberships')).data.memberships);
+    if (next === 'memberships') {
+      setMemberships((await api.get('/admin/memberships')).data.memberships);
+      if (selectedMembershipId) {
+        try {
+          setMembershipDetail((await api.get(`/admin/memberships/${selectedMembershipId}`)).data);
+        } catch {
+          setSelectedMembershipId(null);
+          setMembershipDetail(null);
+        }
+      }
+    }
     if (next === 'settings') setSettings((await api.get('/admin/settings')).data.settings);
     if (next === 'audit') {
-      const day = localDayString();
-      const slot = currentAuditSlot();
-      await loadAudit(day, slot);
+      await loadAudit(auditDay, 1, auditLimit);
     }
   };
 
@@ -165,17 +181,64 @@ export default function Admin() {
     load('clubs');
   };
 
-  const loadAudit = async (day, slot = auditSlot) => {
+  const loadAudit = async (day, page = 1, limit = auditLimit) => {
     setAuditDay(day);
-    setAuditSlot(slot);
-    const [daysRes, slotsRes, logsRes] = await Promise.all([
+    setAuditPage(page);
+    setAuditLimit(limit);
+    const [daysRes, logsRes] = await Promise.all([
       api.get('/admin/audit/days', { params: { tz: auditTz } }),
-      api.get('/admin/audit/slots', { params: { tz: auditTz, day } }),
-      api.get('/admin/audit', { params: { tz: auditTz, day, slot } }),
+      api.get('/admin/audit', { params: { tz: auditTz, day, page, limit } }),
     ]);
     setAuditDays(daysRes.data.days || []);
-    setAuditSlots(slotsRes.data.slots || AUDIT_SLOTS.map((s) => ({ slot: s, count: 0 })));
     setAudit(logsRes.data.logs || []);
+    setAuditTotal(logsRes.data.total || 0);
+    setAuditPages(logsRes.data.pages || 1);
+    if (logsRes.data.page && logsRes.data.page !== page) setAuditPage(logsRes.data.page);
+  };
+
+  const openMembership = async (id) => {
+    if (selectedMembershipId === id) {
+      setSelectedMembershipId(null);
+      setMembershipDetail(null);
+      return;
+    }
+    setSelectedMembershipId(id);
+    setMembershipErr('');
+    setMembershipDetail((await api.get(`/admin/memberships/${id}`)).data);
+  };
+
+  const patchMembership = async (id, payload, okMsg) => {
+    setMembershipBusy(id);
+    setMembershipErr('');
+    setMembershipMsg('');
+    try {
+      const { data } = await api.patch(`/admin/memberships/${id}`, payload);
+      const nextId = data.membership?.id || id;
+      setMembershipMsg(okMsg);
+      setAdminMsg(okMsg);
+      await load('memberships');
+      if (selectedMembershipId === id || selectedMembershipId === nextId) {
+        setSelectedMembershipId(nextId);
+        setMembershipDetail((await api.get(`/admin/memberships/${nextId}`)).data);
+      }
+      if (selectedId) await openUser(selectedId);
+      return true;
+    } catch (err) {
+      setMembershipErr(err.response?.data?.message || 'Could not update membership');
+      setAdminErr(err.response?.data?.message || 'Could not update membership');
+      return false;
+    } finally {
+      setMembershipBusy(null);
+    }
+  };
+
+  const extendMembership = (id) => {
+    const day = extendDates[id];
+    if (!day) {
+      setMembershipErr('Choose a date to extend until');
+      return;
+    }
+    patchMembership(id, { action: 'extend', expiresAt: day }, 'Membership extended');
   };
 
   const openClub = async (id) => {
@@ -286,6 +349,19 @@ export default function Admin() {
     if (dialog?.kind === 'notice') {
       setDialog(null);
       setDialogError('');
+      return;
+    }
+    if (dialog?.kind === 'stop-membership') {
+      setDialogBusy(true);
+      setDialogError('');
+      try {
+        const ok = await patchMembership(dialog.membership.id, { action: 'stop' }, 'Membership stopped');
+        if (ok) setDialog(null);
+      } catch (err) {
+        setDialogError(err.response?.data?.message || 'Could not stop membership');
+      } finally {
+        setDialogBusy(false);
+      }
       return;
     }
     if (dialog?.kind === 'delete-user') {
@@ -467,6 +543,69 @@ export default function Admin() {
                 )}
               </div>
 
+              <div>
+                <h4 className="font-semibold mb-2">Membership</h4>
+                <div className="text-sm space-y-1 mb-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {detail.memberships?.[0]
+                      ? <StatusBadge value={detail.memberships[0].status} />
+                      : <span className="text-muted">No membership</span>}
+                    {detail.memberships?.[0]?.planName ? <span>{detail.memberships[0].planName}</span> : null}
+                  </div>
+                  <p className="text-xs text-muted mb-0">
+                    Member since {detail.memberSince ? formatDate(detail.memberSince) : '—'}
+                    {detail.memberships?.[0]?.expiresAt ? ` · expires ${formatDate(detail.memberships[0].expiresAt)}` : detail.memberships?.[0] ? ' · no expiry' : ''}
+                  </p>
+                  <p className="text-xs text-muted mb-0">
+                    Code used: {detail.memberships?.[0]?.invitationCode || detail.inviteCodes?.[0]?.code || '—'}
+                  </p>
+                </div>
+                {!!detail.inviteCodes?.length && (
+                  <p className="text-xs text-muted mb-3">
+                    Codes: {detail.inviteCodes.map((c) => c.code).join(', ')}
+                  </p>
+                )}
+                {detail.memberships?.[0] && (
+                  <div className="mb-3">
+                    <MembershipActions
+                      m={detail.memberships[0]}
+                      busy={membershipBusy === detail.memberships[0].id}
+                      extendDate={extendDates[detail.memberships[0].id] ?? isoDate(detail.memberships[0].expiresAt)}
+                      onExtendDate={(id, value) => setExtendDates((prev) => ({ ...prev, [id]: value }))}
+                      onStop={(m) => { setDialogError(''); setDialog({ kind: 'stop-membership', membership: m }); }}
+                      onRenew={(m) => patchMembership(m.id, { action: 'renew' }, 'Membership renewed')}
+                      onExtend={extendMembership}
+                    />
+                  </div>
+                )}
+                {!!detail.memberships?.length && (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="text-left text-muted">
+                          <th className="p-2">Started</th>
+                          <th>Plan</th>
+                          <th>Code</th>
+                          <th>Expires</th>
+                          <th>Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {detail.memberships.map((m) => (
+                          <tr key={m.id} className="border-t border-line">
+                            <td className="p-2">{m.startsAt ? formatDate(m.startsAt) : '—'}</td>
+                            <td>{m.planName || '—'}</td>
+                            <td className="font-mono text-xs">{m.invitationCode || '—'}</td>
+                            <td>{m.expiresAt ? formatDate(m.expiresAt) : 'Lifetime'}</td>
+                            <td><StatusBadge value={m.status} /></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
               <form className="grid sm:grid-cols-3 gap-2 items-end" onSubmit={addToClub}>
                 <div className="sm:col-span-2">
                   <label>Add to club</label>
@@ -532,38 +671,52 @@ export default function Admin() {
 
       {tab === 'clubs' && (
         <div className="space-y-4">
-          <div className="space-y-2">
-            {clubs.map((c) => (
-              <div
-                key={c.id}
-                className={`card flex justify-between items-center gap-3 cursor-pointer ${selectedClubId === c.id ? 'ring-1 ring-brand/40' : ''}`}
-                onClick={() => openClub(c.id)}
-              >
-                <div>
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <span className="font-semibold">{c.name}</span>
-                    <StatusBadge value={c.status} />
-                    {c.isVerified && <Badge variant="brand">Verified</Badge>}
-                  </div>
-                  <div className="text-xs text-muted mt-1">
-                    {c.athleteCount ?? 0} {c.athleteCount === 1 ? 'athlete' : 'athletes'}
-                    {' · '}
-                    {c.memberCount} {c.memberCount === 1 ? 'member' : 'members'}
-                  </div>
-                </div>
-                <button
-                  className="btn-outline btn-sm"
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    verifyClub(c.id, !c.isVerified);
-                  }}
-                >
-                  {c.isVerified ? 'Unverify' : 'Verify'}
-                </button>
-              </div>
-            ))}
-            {!clubs.length && <div className="card text-muted text-sm">No clubs yet.</div>}
+          <div className="card overflow-x-auto">
+            <table className="w-full text-sm min-w-[720px]">
+              <thead>
+                <tr className="text-left text-muted">
+                  <th className="p-2">Name</th>
+                  <th>Location</th>
+                  <th>Athletes</th>
+                  <th>Members</th>
+                  <th>Status</th>
+                  <th>Verified</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {clubs.map((c) => (
+                  <tr
+                    key={c.id}
+                    className={`border-t border-line cursor-pointer ${selectedClubId === c.id ? 'bg-brand/10' : ''}`}
+                    onClick={() => openClub(c.id)}
+                  >
+                    <td className="p-2 font-semibold text-slate-100 whitespace-nowrap">{c.name}</td>
+                    <td>{c.location || '—'}</td>
+                    <td>{c.athleteCount ?? 0}</td>
+                    <td>{c.memberCount ?? 0}</td>
+                    <td><StatusBadge value={c.status} /></td>
+                    <td>{c.isVerified ? <Badge variant="brand">Verified</Badge> : '—'}</td>
+                    <td className="whitespace-nowrap text-right">
+                      <button className="btn-outline btn-sm mr-1" type="button" onClick={(e) => { e.stopPropagation(); openClub(c.id); }}>
+                        View
+                      </button>
+                      <button
+                        className="btn-outline btn-sm"
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          verifyClub(c.id, !c.isVerified);
+                        }}
+                      >
+                        {c.isVerified ? 'Unverify' : 'Verify'}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {!clubs.length && <div className="text-muted text-sm p-2">No clubs yet.</div>}
           </div>
 
           {clubDetail && (
@@ -747,20 +900,102 @@ export default function Admin() {
       )}
 
       {tab === 'memberships' && (
-        <div className="card overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead><tr className="text-left text-muted"><th className="p-2">Who</th><th>Plan</th><th>Status</th><th>Expires</th></tr></thead>
-            <tbody>
-              {memberships.map((m) => (
-                <tr key={m.id} className="border-t border-line">
-                  <td className="p-2">{m.email || m.clubName || '—'}</td>
-                  <td>{m.planName}</td>
-                  <td><StatusBadge value={m.status} /></td>
-                  <td>{m.expiresAt ? new Date(m.expiresAt).toLocaleDateString() : 'Lifetime'}</td>
+        <div className="space-y-4">
+          {membershipErr && <div className="card text-orange-300 text-sm">{membershipErr}</div>}
+          {membershipMsg && <div className="card text-brand text-sm">{membershipMsg}</div>}
+          <div className="card overflow-x-auto">
+            <table className="w-full text-sm min-w-[960px]">
+              <thead>
+                <tr className="text-left text-muted">
+                  <th className="p-2">Who</th>
+                  <th>Plan</th>
+                  <th>Status</th>
+                  <th>Member since</th>
+                  <th>Expires</th>
+                  <th>Code</th>
+                  <th>Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {memberships.map((m) => (
+                  <tr
+                    key={m.id}
+                    className={`border-t border-line cursor-pointer ${selectedMembershipId === m.id ? 'bg-brand/10' : ''}`}
+                    onClick={() => openMembership(m.id)}
+                  >
+                    <td className="p-2">
+                      <div className="font-semibold text-slate-100">{membershipWho(m)}</div>
+                      {m.email && m.firstName ? <div className="text-xs text-muted">{m.email}</div> : null}
+                    </td>
+                    <td>{m.planName || '—'}</td>
+                    <td><StatusBadge value={m.status} /></td>
+                    <td>{m.memberSince ? formatDate(m.memberSince) : '—'}</td>
+                    <td>{m.expiresAt ? formatDate(m.expiresAt) : 'Lifetime'}</td>
+                    <td className="font-mono text-xs">{m.invitationCode || '—'}</td>
+                    <td>
+                      <MembershipActions
+                        m={m}
+                        busy={membershipBusy === m.id}
+                        extendDate={extendDates[m.id] ?? isoDate(m.expiresAt)}
+                        onExtendDate={(id, value) => setExtendDates((prev) => ({ ...prev, [id]: value }))}
+                        onStop={(row) => { setDialogError(''); setDialog({ kind: 'stop-membership', membership: row }); }}
+                        onRenew={(row) => patchMembership(row.id, { action: 'renew' }, 'Membership renewed')}
+                        onExtend={extendMembership}
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {!memberships.length && <div className="text-muted text-sm p-2">No memberships yet.</div>}
+          </div>
+
+          {membershipDetail && (
+            <div className="card space-y-3">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <h3 className="section-title">{membershipWho(membershipDetail.membership)}</h3>
+                  <p className="text-sm text-muted mb-0">
+                    Member since {membershipDetail.memberSince ? formatDate(membershipDetail.memberSince) : '—'}
+                    {membershipDetail.membership?.invitationCode ? ` · code ${membershipDetail.membership.invitationCode}` : ''}
+                  </p>
+                </div>
+                <button className="btn-outline btn-sm" type="button" onClick={() => { setSelectedMembershipId(null); setMembershipDetail(null); }}>
+                  Close
+                </button>
+              </div>
+              {!!membershipDetail.inviteCodes?.length && (
+                <p className="text-sm text-muted mb-0">
+                  Codes used: {membershipDetail.inviteCodes.map((c) => `${c.code}${c.redeemedAt ? ` (${formatDate(c.redeemedAt)})` : ''}`).join(', ')}
+                </p>
+              )}
+              <h4 className="font-semibold">Membership history</h4>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-muted">
+                      <th className="p-2">Started</th>
+                      <th>Plan</th>
+                      <th>Code</th>
+                      <th>Expires</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(membershipDetail.history || []).map((row) => (
+                      <tr key={row.id} className="border-t border-line">
+                        <td className="p-2">{row.startsAt ? formatDate(row.startsAt) : '—'}</td>
+                        <td>{row.planName || '—'}</td>
+                        <td className="font-mono text-xs">{row.invitationCode || '—'}</td>
+                        <td>{row.expiresAt ? formatDate(row.expiresAt) : 'Lifetime'}</td>
+                        <td><StatusBadge value={row.status} /></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -791,20 +1026,20 @@ export default function Admin() {
         <div className="space-y-4">
           <div className="card space-y-3">
             <div className="flex flex-wrap items-center gap-2">
-              <button className="btn-outline btn-sm" type="button" onClick={() => loadAudit(shiftDay(auditDay, -1))}>
+              <button className="btn-outline btn-sm" type="button" onClick={() => loadAudit(shiftDay(auditDay, -1), 1)}>
                 Prev
               </button>
               <button
                 className="btn-outline btn-sm min-w-[7.5rem]"
                 type="button"
-                onClick={() => loadAudit(shiftDay(auditDay, -1))}
+                onClick={() => loadAudit(shiftDay(auditDay, -1), 1)}
               >
                 {formatAuditDayLabel(shiftDay(auditDay, -1))}
               </button>
               <select
                 className="w-auto min-w-[11rem]"
                 value={auditDay}
-                onChange={(e) => loadAudit(e.target.value)}
+                onChange={(e) => loadAudit(e.target.value, 1)}
               >
                 {auditDropdownDays(auditDays, auditDay).map((day) => (
                   <option key={day} value={day}>{formatAuditDayLabel(day)}</option>
@@ -814,7 +1049,7 @@ export default function Admin() {
                 className="btn-outline btn-sm min-w-[7.5rem]"
                 type="button"
                 disabled={auditDay >= shiftDay(localDayString(), 1)}
-                onClick={() => loadAudit(shiftDay(auditDay, 1))}
+                onClick={() => loadAudit(shiftDay(auditDay, 1), 1)}
               >
                 {formatAuditDayLabel(shiftDay(auditDay, 1))}
               </button>
@@ -822,23 +1057,23 @@ export default function Admin() {
                 className="btn-outline btn-sm"
                 type="button"
                 disabled={auditDay >= shiftDay(localDayString(), 1)}
-                onClick={() => loadAudit(shiftDay(auditDay, 1))}
+                onClick={() => loadAudit(shiftDay(auditDay, 1), 1)}
               >
                 Next
               </button>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {(auditSlots.length ? auditSlots : AUDIT_SLOTS.map((slot) => ({ slot, count: 0 }))).map((s) => (
-                <button
-                  key={s.slot}
-                  className={auditSlot === s.slot ? 'btn-primary btn-sm' : 'btn-outline btn-sm'}
-                  type="button"
-                  onClick={() => loadAudit(auditDay, s.slot)}
+              <label className="flex items-center gap-2 text-sm text-muted mb-0 ml-auto">
+                <span>Show</span>
+                <select
+                  className="w-auto py-1.5"
+                  value={auditLimit}
+                  onChange={(e) => loadAudit(auditDay, 1, Number(e.target.value))}
+                  aria-label="Rows per page"
                 >
-                  {formatSlotRange(s.slot)}
-                  {s.count ? ` · ${s.count}` : ''}
-                </button>
-              ))}
+                  {AUDIT_PAGE_SIZES.map((n) => (
+                    <option key={n} value={n}>{n}</option>
+                  ))}
+                </select>
+              </label>
             </div>
           </div>
 
@@ -854,18 +1089,31 @@ export default function Admin() {
               <tbody>
                 {audit.map((a) => (
                   <tr key={a.id} className="border-t border-line">
-                    <td className="p-2">{new Date(a.createdAt).toLocaleString()}</td>
+                    <td className="p-2 whitespace-nowrap">{new Date(a.createdAt).toLocaleString()}</td>
                     <td>{a.email || 'system'}</td>
                     <td>{a.action} {a.entityType || ''}</td>
                   </tr>
                 ))}
                 {!audit.length && (
                   <tr>
-                    <td className="p-2 text-muted" colSpan={3}>No events in this 4-hour slot.</td>
+                    <td className="p-2 text-muted" colSpan={3}>No events on this day.</td>
                   </tr>
                 )}
               </tbody>
             </table>
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mt-4">
+              <p className="text-xs text-muted mb-0">
+                Showing {auditTotal === 0 ? 0 : (auditPage - 1) * auditLimit + 1}–{Math.min(auditPage * auditLimit, auditTotal)} of {auditTotal} · Page {auditPage} of {auditPages}
+              </p>
+              <div className="grid grid-cols-2 gap-2 sm:flex">
+                <button className="btn-outline btn-sm" type="button" disabled={auditPage <= 1} onClick={() => loadAudit(auditDay, auditPage - 1)}>
+                  Previous
+                </button>
+                <button className="btn-outline btn-sm" type="button" disabled={auditPage >= auditPages} onClick={() => loadAudit(auditDay, auditPage + 1)}>
+                  Next
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -895,7 +1143,63 @@ export default function Admin() {
           </p>
         </ConfirmDialog>
       )}
+      {dialog?.kind === 'stop-membership' && (
+        <ConfirmDialog
+          title="Stop this membership?"
+          confirmLabel="Stop membership"
+          danger
+          busy={dialogBusy || membershipBusy === dialog.membership.id}
+          error={dialogError || membershipErr}
+          onCancel={closeDialog}
+          onConfirm={runDialog}
+        >
+          <p className="mb-0">
+            Stop membership for{' '}
+            <span className="text-slate-100 font-medium">{membershipWho(dialog.membership)}</span>?
+            They will need an admin or a new invite code to get access again.
+          </p>
+        </ConfirmDialog>
+      )}
     </Layout>
+  );
+}
+
+function isoDate(value) {
+  if (!value) return '';
+  return String(value).slice(0, 10);
+}
+
+function membershipWho(m) {
+  if (!m) return '—';
+  const name = `${m.firstName || ''} ${m.lastName || ''}`.trim();
+  if (name) return name;
+  if (m.email) return m.email;
+  return m.clubName || '—';
+}
+
+function MembershipActions({ m, busy, extendDate, onExtendDate, onStop, onRenew, onExtend }) {
+  const stopped = m.status === 'cancelled';
+  return (
+    <div className="flex flex-wrap items-center gap-2" onClick={(e) => e.stopPropagation()}>
+      {!stopped && (
+        <button className="btn-outline btn-sm" type="button" disabled={busy} onClick={() => onStop(m)}>
+          Stop
+        </button>
+      )}
+      <button className="btn-outline btn-sm" type="button" disabled={busy} onClick={() => onRenew(m)}>
+        Renew
+      </button>
+      <input
+        type="date"
+        className="w-auto py-1.5"
+        value={extendDate || ''}
+        onChange={(e) => onExtendDate(m.id, e.target.value)}
+        aria-label="Extend until"
+      />
+      <button className="btn-outline btn-sm" type="button" disabled={busy || !extendDate} onClick={() => onExtend(m.id)}>
+        Extend till
+      </button>
+    </div>
   );
 }
 
@@ -911,20 +1215,6 @@ function shiftDay(day, delta) {
   const date = new Date(y, m - 1, d);
   date.setDate(date.getDate() + delta);
   return localDayString(date);
-}
-
-function currentAuditSlot() {
-  return Math.floor(new Date().getHours() / 4) * 4;
-}
-
-function formatSlotRange(slot) {
-  const start = Number(slot);
-  const fmt = (hour) => {
-    const date = new Date();
-    date.setHours(hour, 0, 0, 0);
-    return date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
-  };
-  return `${fmt(start)} – ${fmt(start + 4)}`;
 }
 
 function auditDropdownDays(activityDays, selected) {

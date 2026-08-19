@@ -18,54 +18,56 @@ async function assigned(coachId, athleteId) {
 router.post(
   '/request',
   asyncHandler(async (req, res) => {
-    const { activityId, coachId } = req.body;
+    const { activityId, coachId: bodyCoachId } = req.body;
     const activity = camel(await one('SELECT * FROM activities WHERE id = $1 AND athlete_id = $2', [activityId, req.user.id]));
     if (!activity) return res.status(404).json({ message: 'Activity not found' });
 
-    const coaches = coachId
-      ? [{ coach_id: coachId }]
-      : await many(
-          `SELECT coach_id FROM coach_assignments WHERE athlete_id = $1 AND status = 'active'`,
-          [req.user.id]
-        );
-    if (!coaches.length) {
+    const assignedCoaches = await many(
+      `SELECT coach_id FROM coach_assignments WHERE athlete_id = $1 AND status = 'active'`,
+      [req.user.id]
+    );
+    if (!assignedCoaches.length) {
       return res.status(400).json({ message: 'No assigned coach. Join a club or ask an admin to assign a coach.' });
     }
 
+    let coachId = bodyCoachId;
+    if (!coachId) {
+      if (assignedCoaches.length === 1) coachId = assignedCoaches[0].coach_id;
+      else return res.status(400).json({ message: 'Select a coach' });
+    }
+    const ok = await assigned(coachId, req.user.id);
+    if (!ok) return res.status(400).json({ message: 'That coach is not assigned to you' });
+
     const existingReview = await one(
-      `SELECT id FROM activity_reviews WHERE activity_id = $1 AND status = 'published' LIMIT 1`,
-      [activityId]
+      `SELECT id FROM activity_reviews WHERE activity_id = $1 AND coach_id = $2 AND status = 'published' LIMIT 1`,
+      [activityId, coachId]
     );
     if (existingReview) {
-      return res.status(400).json({ message: 'This activity already has a coach review' });
+      return res.status(400).json({ message: 'This coach already reviewed this activity' });
     }
     const existingRequest = await one(
-      `SELECT id FROM review_requests WHERE activity_id = $1 AND status = 'pending' LIMIT 1`,
-      [activityId]
+      `SELECT id FROM review_requests WHERE activity_id = $1 AND coach_id = $2 AND status = 'pending' LIMIT 1`,
+      [activityId, coachId]
     );
     if (existingRequest) {
-      return res.status(400).json({ message: 'A review has already been requested for this activity' });
+      return res.status(400).json({ message: 'You already asked this coach for a review' });
     }
 
-    const created = [];
-    for (const c of coaches) {
-      const ok = await assigned(c.coach_id, req.user.id);
-      if (!ok) continue;
-      const row = await one(
+    const row = camel(
+      await one(
         `INSERT INTO review_requests (activity_id, athlete_id, coach_id)
          VALUES ($1, $2, $3) RETURNING *`,
-        [activityId, req.user.id, c.coach_id]
-      );
-      created.push(camel(row));
-      await createNotification({
-        userId: c.coach_id,
-        type: 'review_request',
-        title: 'New activity review request',
-        body: `${req.user.firstName} requested a review of ${activity.name || 'an activity'}.`,
-        data: { activityId, requestId: row.id },
-      });
-    }
-    res.status(201).json({ requests: created });
+        [activityId, req.user.id, coachId]
+      )
+    );
+    await createNotification({
+      userId: coachId,
+      type: 'review_request',
+      title: 'New activity review request',
+      body: `${req.user.firstName} requested a review of ${activity.name || 'an activity'}.`,
+      data: { activityId, requestId: row.id },
+    });
+    res.status(201).json({ requests: [row] });
   })
 );
 
@@ -201,8 +203,8 @@ router.post(
     if (status === 'published') {
       await query(
         `UPDATE review_requests SET status = 'completed'
-         WHERE activity_id = $1 AND status = 'pending'`,
-        [activityId]
+         WHERE activity_id = $1 AND coach_id = $2 AND status = 'pending'`,
+        [activityId, req.user.id]
       );
       await createNotification({
         userId: activity.athleteId,

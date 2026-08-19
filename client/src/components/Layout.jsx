@@ -122,7 +122,7 @@ export default function Layout({ children }) {
           {user.firstName} {user.lastName}
         </div>
         <div className="flex flex-wrap items-center gap-1 mt-0.5">
-          <span className="text-xs text-muted truncate">
+          <span className="text-xs text-muted truncate" style={{ textTransform: 'capitalize' }}>
             {appAdmin ? 'App admin' : clubHome ? 'Club admin' : user.roles?.join(' · ')}
           </span>
           <VersionBadge />

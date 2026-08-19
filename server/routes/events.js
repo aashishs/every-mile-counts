@@ -10,33 +10,89 @@ router.use(protect, requireMembership, rejectAppAdmin);
 router.get(
   '/',
   asyncHandler(async (req, res) => {
-    const { status, scope = 'mine' } = req.query;
-    let sql = `SELECT * FROM events WHERE owner_type = 'athlete' AND owner_id = $1`;
-    const params = [req.user.id];
-    if (status) {
-      sql += ` AND status = $2`;
-      params.push(status);
-    }
-    sql += ' ORDER BY event_date DESC';
-    const events = camelMany(await many(sql, params));
+    const pageSizes = [10, 20, 50, 100];
+    const parsedLimit = pageSizes.includes(Number(req.query.limit)) ? Number(req.query.limit) : 10;
+    const parsedPage = Math.max(1, Number(req.query.page) || 1);
+    const date = String(req.query.date || '').slice(0, 10);
+    const owner = [req.user.id];
 
-    const withActivities = await Promise.all(
-      events.map(async (event) => {
-        const activities = camelMany(
+    const calendar = camelMany(
+      await many(
+        `SELECT id, name, event_date, event_time, status, category
+         FROM events
+         WHERE owner_type = 'athlete' AND owner_id = $1
+         ORDER BY event_date DESC, event_time DESC NULLS LAST`,
+        owner
+      )
+    );
+    const count = await one(
+      `SELECT COUNT(*)::int AS total FROM events WHERE owner_type = 'athlete' AND owner_id = $1`,
+      owner
+    );
+    const total = count.total;
+    const pages = Math.max(1, Math.ceil(total / parsedLimit) || 1);
+    const safePage = Math.min(parsedPage, pages);
+    const offset = (safePage - 1) * parsedLimit;
+
+    const rows = camelMany(
+      await many(
+        `SELECT * FROM events
+         WHERE owner_type = 'athlete' AND owner_id = $1
+         ORDER BY event_date DESC, event_time DESC NULLS LAST, created_at DESC
+         LIMIT $2 OFFSET $3`,
+        [req.user.id, parsedLimit, offset]
+      )
+    );
+
+    let dayRows = [];
+    if (/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      dayRows = camelMany(
+        await many(
+          `SELECT * FROM events
+           WHERE owner_type = 'athlete' AND owner_id = $1 AND event_date = $2::date
+           ORDER BY event_time ASC NULLS LAST, name`,
+          [req.user.id, date]
+        )
+      );
+    }
+
+    const ids = [...new Set([...rows, ...dayRows].map((e) => e.id))];
+    const mapped = ids.length
+      ? camelMany(
           await many(
-            `SELECT a.id, a.name, a.type, a.distance, a.moving_time, a.start_date, a.avg_speed
+            `SELECT ea.event_id, a.id, a.name, a.type, a.distance, a.moving_time, a.start_date, a.avg_speed
              FROM event_activities ea
              JOIN activities a ON a.id = ea.activity_id
-             WHERE ea.event_id = $1`,
-            [event.id]
+             WHERE ea.event_id = ANY($1::uuid[])`,
+            [ids]
           )
-        );
-        return { ...event, mappedActivities: activities, comparison: compare(event, activities) };
-      })
-    );
-    res.json({ events: withActivities, scope });
+        )
+      : [];
+
+    res.json({
+      events: withMappedActivities(rows, mapped),
+      dayEvents: withMappedActivities(dayRows, mapped),
+      calendar,
+      total,
+      page: safePage,
+      pages,
+      limit: parsedLimit,
+      scope: req.query.scope || 'mine',
+    });
   })
 );
+
+function withMappedActivities(events, mappedRows) {
+  const byEvent = {};
+  for (const row of mappedRows) {
+    const { eventId, ...activity } = row;
+    (byEvent[eventId] ||= []).push(activity);
+  }
+  return events.map((event) => {
+    const activities = byEvent[event.id] || [];
+    return { ...event, mappedActivities: activities, comparison: compare(event, activities) };
+  });
+}
 
 function compare(event, activities) {
   if (!activities.length) return null;

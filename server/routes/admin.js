@@ -3,11 +3,103 @@ import { camel, camelMany, many, one, query } from '../config/db.js';
 import { protect, requireRole } from '../middleware/auth.js';
 import { writeAudit } from '../services/auditService.js';
 import { createNotification } from '../services/notificationService.js';
-import { getUserRoles, grantAthleteUnlessClubAdmin, stripTrainingRolesForClubAdmin } from '../utils/membership.js';
+import { getUserRoles, grantAthleteUnlessClubAdmin, planExpiryDate, stripTrainingRolesForClubAdmin } from '../utils/membership.js';
 import { asyncHandler } from '../middleware/error.js';
 
 const router = express.Router();
 router.use(protect, requireRole('app_admin'));
+
+const MEMBERSHIP_SELECT = `
+  m.*, u.email, u.first_name, u.last_name, p.name AS plan_name,
+  p.duration_months, p.is_lifetime, c.name AS club_name, ic.code AS invitation_code
+`;
+
+async function loadMembershipRow(id) {
+  return camel(
+    await one(
+      `SELECT ${MEMBERSHIP_SELECT}
+       FROM memberships m
+       LEFT JOIN users u ON u.id = m.user_id
+       LEFT JOIN clubs c ON c.id = m.club_id
+       LEFT JOIN membership_plans p ON p.id = m.plan_id
+       LEFT JOIN invitation_codes ic ON ic.id = m.invitation_code_id
+       WHERE m.id = $1`,
+      [id]
+    )
+  );
+}
+
+async function membershipHistoryRows(membership) {
+  if (membership.userId) {
+    return camelMany(
+      await many(
+        `SELECT m.*, p.name AS plan_name, ic.code AS invitation_code
+         FROM memberships m
+         LEFT JOIN membership_plans p ON p.id = m.plan_id
+         LEFT JOIN invitation_codes ic ON ic.id = m.invitation_code_id
+         WHERE m.user_id = $1
+         ORDER BY m.starts_at DESC, m.created_at DESC`,
+        [membership.userId]
+      )
+    );
+  }
+  return camelMany(
+    await many(
+      `SELECT m.*, p.name AS plan_name, ic.code AS invitation_code
+       FROM memberships m
+       LEFT JOIN membership_plans p ON p.id = m.plan_id
+       LEFT JOIN invitation_codes ic ON ic.id = m.invitation_code_id
+       WHERE m.club_id = $1 AND m.user_id IS NULL
+       ORDER BY m.starts_at DESC, m.created_at DESC`,
+      [membership.clubId]
+    )
+  );
+}
+
+async function memberSinceFor(membership) {
+  const row = membership.userId
+    ? await one(`SELECT MIN(starts_at) AS since FROM memberships WHERE user_id = $1`, [membership.userId])
+    : await one(
+        `SELECT MIN(starts_at) AS since FROM memberships WHERE club_id = $1 AND user_id IS NULL`,
+        [membership.clubId]
+      );
+  return row?.since || membership.startsAt;
+}
+
+async function notifyMembershipOwners(membership, { title, body, data }) {
+  if (membership.userId) {
+    await createNotification({ userId: membership.userId, type: 'membership', title, body, data });
+    return;
+  }
+  if (!membership.clubId) return;
+  const admins = await many(
+    `SELECT user_id FROM club_members WHERE club_id = $1 AND role = 'club_admin' AND status = 'active'`,
+    [membership.clubId]
+  );
+  await Promise.all(
+    admins.map((a) => createNotification({ userId: a.user_id, type: 'membership', title, body, data }))
+  );
+}
+
+async function maybeFreezeClub(clubId) {
+  if (!clubId) return;
+  await query(
+    `UPDATE clubs SET status = 'read_only', updated_at = NOW() WHERE id = $1 AND status = 'active'`,
+    [clubId]
+  );
+}
+
+async function maybeRestoreClub(clubId) {
+  if (!clubId) return;
+  const hasCoach = await one(
+    `SELECT 1 FROM club_members WHERE club_id = $1 AND role = 'coach' AND status = 'active' LIMIT 1`,
+    [clubId]
+  );
+  await query(
+    `UPDATE clubs SET status = $2, updated_at = NOW() WHERE id = $1 AND status IN ('read_only', 'active', 'pending_coach')`,
+    [clubId, hasCoach ? 'active' : 'pending_coach']
+  );
+}
 
 router.get(
   '/overview',
@@ -46,7 +138,10 @@ router.get(
                FROM users u
                LEFT JOIN user_roles ur ON ur.user_id = u.id
                LEFT JOIN oauth_connections oc ON oc.user_id = u.id AND oc.provider = 'strava'
-               WHERE u.status <> 'deleted'`;
+               WHERE u.status <> 'deleted'
+                 AND NOT EXISTS (
+                   SELECT 1 FROM user_roles ar WHERE ar.user_id = u.id AND ar.role = 'app_admin'
+                 )`;
     if (q) {
       params.push(`%${q}%`);
       sql += ` AND (u.email ILIKE $${params.length} OR u.first_name ILIKE $${params.length} OR u.last_name ILIKE $${params.length})`;
@@ -177,6 +272,33 @@ router.get(
         [user.id]
       )
     );
+    const memberships = camelMany(
+      await many(
+        `SELECT m.*, p.name AS plan_name, p.duration_months, p.is_lifetime,
+                ic.code AS invitation_code, c.name AS club_name
+         FROM memberships m
+         LEFT JOIN membership_plans p ON p.id = m.plan_id
+         LEFT JOIN invitation_codes ic ON ic.id = m.invitation_code_id
+         LEFT JOIN clubs c ON c.id = m.club_id
+         WHERE m.user_id = $1
+         ORDER BY m.starts_at DESC, m.created_at DESC`,
+        [user.id]
+      )
+    );
+    const inviteCodes = camelMany(
+      await many(
+        `SELECT r.redeemed_at, ic.code, ic.type, ic.notes
+         FROM invitation_redemptions r
+         JOIN invitation_codes ic ON ic.id = r.code_id
+         WHERE r.user_id = $1
+         ORDER BY r.redeemed_at DESC`,
+        [user.id]
+      )
+    );
+    const sinceRow = await one(
+      `SELECT MIN(starts_at) AS member_since FROM memberships WHERE user_id = $1`,
+      [user.id]
+    );
     const { passwordHash: _pw, ...safeUser } = user;
     res.json({
       user: { ...safeUser, roles },
@@ -186,6 +308,9 @@ router.get(
       athletes,
       totals,
       recent,
+      memberships,
+      inviteCodes,
+      memberSince: sinceRow?.member_since || user.createdAt,
     });
   })
 );
@@ -541,22 +666,33 @@ router.get(
   asyncHandler(async (req, res) => {
     const tz = safeTz(req.query.tz);
     const day = String(req.query.day || '').slice(0, 10);
-    const slot = Number(req.query.slot);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || ![0, 4, 8, 12, 16, 20].includes(slot)) {
-      return res.status(400).json({ message: 'Pick a day and a 4-hour slot first' });
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+      return res.status(400).json({ message: 'Pick a day first' });
     }
+    const pageSizes = [10, 20, 50, 100];
+    const parsedLimit = pageSizes.includes(Number(req.query.limit)) ? Number(req.query.limit) : 20;
+    const parsedPage = Math.max(1, Number(req.query.page) || 1);
+    const where = `a.created_at >= ($1::timestamp AT TIME ZONE $2)
+               AND a.created_at < ((($1::date) + 1)::timestamp AT TIME ZONE $2)`;
+    const count = await one(
+      `SELECT COUNT(*)::int AS total FROM audit_logs a WHERE ${where}`,
+      [day, tz]
+    );
+    const total = count.total;
+    const pages = Math.max(1, Math.ceil(total / parsedLimit) || 1);
+    const safePage = Math.min(parsedPage, pages);
+    const offset = (safePage - 1) * parsedLimit;
     const logs = camelMany(
       await many(
         `SELECT a.*, u.email FROM audit_logs a
          LEFT JOIN users u ON u.id = a.user_id
-         WHERE a.created_at >= (($1::date + ($2::int * INTERVAL '1 hour')) AT TIME ZONE $3)
-           AND a.created_at < (($1::date + (($2::int + 4) * INTERVAL '1 hour')) AT TIME ZONE $3)
+         WHERE ${where}
          ORDER BY a.created_at DESC
-         LIMIT 500`,
-        [day, slot, tz]
+         LIMIT $3 OFFSET $4`,
+        [day, tz, parsedLimit, offset]
       )
     );
-    res.json({ tz, day, slot, logs });
+    res.json({ tz, day, logs, total, page: safePage, pages, limit: parsedLimit });
   })
 );
 
@@ -565,38 +701,151 @@ router.get(
   asyncHandler(async (_req, res) => {
     const memberships = camelMany(
       await many(
-        `SELECT m.*, u.email, u.first_name, u.last_name, p.name AS plan_name, c.name AS club_name
-         FROM memberships m
-         LEFT JOIN users u ON u.id = m.user_id
-         LEFT JOIN clubs c ON c.id = m.club_id
-         LEFT JOIN membership_plans p ON p.id = m.plan_id
-         ORDER BY m.created_at DESC LIMIT 200`
+        `SELECT * FROM (
+           SELECT DISTINCT ON (COALESCE(m.user_id::text, ''), COALESCE(m.club_id::text, ''))
+             m.*, u.email, u.first_name, u.last_name, p.name AS plan_name,
+             p.duration_months, p.is_lifetime, c.name AS club_name, ic.code AS invitation_code,
+             CASE
+               WHEN m.user_id IS NOT NULL THEN (
+                 SELECT MIN(x.starts_at) FROM memberships x WHERE x.user_id = m.user_id
+               )
+               ELSE (
+                 SELECT MIN(x.starts_at) FROM memberships x WHERE x.club_id = m.club_id AND x.user_id IS NULL
+               )
+             END AS member_since
+           FROM memberships m
+           LEFT JOIN users u ON u.id = m.user_id
+           LEFT JOIN clubs c ON c.id = m.club_id
+           LEFT JOIN membership_plans p ON p.id = m.plan_id
+           LEFT JOIN invitation_codes ic ON ic.id = m.invitation_code_id
+           WHERE NOT EXISTS (
+             SELECT 1 FROM user_roles ar WHERE ar.user_id = m.user_id AND ar.role = 'app_admin'
+           )
+           ORDER BY COALESCE(m.user_id::text, ''), COALESCE(m.club_id::text, ''), m.created_at DESC
+         ) latest
+         ORDER BY latest.created_at DESC
+         LIMIT 200`
       )
     );
     res.json({ memberships });
   })
 );
 
+router.get(
+  '/memberships/:id',
+  asyncHandler(async (req, res) => {
+    const membership = await loadMembershipRow(req.params.id);
+    if (!membership) return res.status(404).json({ message: 'Membership not found' });
+    const history = await membershipHistoryRows(membership);
+    const inviteCodes = membership.userId
+      ? camelMany(
+          await many(
+            `SELECT r.redeemed_at, ic.code, ic.type, ic.notes
+             FROM invitation_redemptions r
+             JOIN invitation_codes ic ON ic.id = r.code_id
+             WHERE r.user_id = $1
+             ORDER BY r.redeemed_at DESC`,
+            [membership.userId]
+          )
+        )
+      : [];
+    res.json({
+      membership,
+      history,
+      inviteCodes,
+      memberSince: await memberSinceFor(membership),
+    });
+  })
+);
+
 router.patch(
   '/memberships/:id',
   asyncHandler(async (req, res) => {
-    const { status, expiresAt } = req.body;
-    const membership = camel(
-      await one(
+    const existing = await loadMembershipRow(req.params.id);
+    if (!existing) return res.status(404).json({ message: 'Membership not found' });
+    const { action, status, expiresAt } = req.body;
+    let updatedId = existing.id;
+    let title = 'Membership updated';
+    let body = 'An admin updated your membership.';
+
+    if (action === 'stop') {
+      if (existing.status === 'cancelled') {
+        return res.status(400).json({ message: 'Membership is already stopped' });
+      }
+      await query(
+        `UPDATE memberships SET status = 'cancelled', updated_at = NOW() WHERE id = $1`,
+        [existing.id]
+      );
+      await maybeFreezeClub(existing.clubId);
+      title = 'Membership stopped';
+      body = 'An admin stopped your membership.';
+    } else if (action === 'renew') {
+      const from =
+        existing.expiresAt && new Date(existing.expiresAt) > new Date()
+          ? new Date(existing.expiresAt)
+          : new Date();
+      const nextExpires = planExpiryDate(
+        { duration_months: existing.durationMonths, is_lifetime: existing.isLifetime },
+        from
+      );
+      if (existing.isLifetime) {
+        await query(
+          `UPDATE memberships SET status = 'active', expires_at = NULL, updated_at = NOW() WHERE id = $1`,
+          [existing.id]
+        );
+      } else {
+        await query(
+          `UPDATE memberships
+             SET status = CASE WHEN status IN ('active', 'expiring_soon') THEN 'expired' ELSE status END,
+                 updated_at = NOW()
+           WHERE id = $1`,
+          [existing.id]
+        );
+        const row = await one(
+          `INSERT INTO memberships (user_id, club_id, plan_id, invitation_code_id, status, starts_at, expires_at)
+           VALUES ($1,$2,$3,$4,'active',$5,$6) RETURNING id`,
+          [existing.userId, existing.clubId, existing.planId, existing.invitationCodeId, from, nextExpires]
+        );
+        updatedId = row.id;
+      }
+      await maybeRestoreClub(existing.clubId);
+      title = 'Membership renewed';
+      body = 'An admin renewed your membership.';
+    } else if (action === 'extend') {
+      const day = String(expiresAt || '').slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+        return res.status(400).json({ message: 'Choose a date to extend until' });
+      }
+      const end = new Date(`${day}T23:59:59`);
+      await query(
+        `UPDATE memberships SET expires_at = $1, status = 'active', updated_at = NOW() WHERE id = $2`,
+        [end, existing.id]
+      );
+      await maybeRestoreClub(existing.clubId);
+      title = 'Membership extended';
+      body = `An admin extended your membership until ${end.toLocaleDateString()}.`;
+    } else {
+      await query(
         `UPDATE memberships SET status = COALESCE($1, status), expires_at = COALESCE($2, expires_at), updated_at = NOW()
-         WHERE id = $3 RETURNING *`,
-        [status || null, expiresAt || null, req.params.id]
-      )
-    );
-    if (membership?.userId) {
-      await createNotification({
-        userId: membership.userId,
-        type: 'membership',
-        title: 'Membership updated',
-        body: status ? `An admin set your membership to ${String(status).replace(/_/g, ' ')}.` : 'An admin updated your membership.',
-        data: { membershipId: membership.id, status, expiresAt },
-      });
+         WHERE id = $3`,
+        [status || null, expiresAt || null, existing.id]
+      );
+      if (status) body = `An admin set your membership to ${String(status).replace(/_/g, ' ')}.`;
     }
+
+    await writeAudit({
+      userId: req.user.id,
+      action: `admin_membership_${action || 'update'}`,
+      entityType: 'membership',
+      entityId: updatedId,
+      metadata: { previousId: existing.id, action: action || 'update', status, expiresAt },
+    });
+    await notifyMembershipOwners(existing, {
+      title,
+      body,
+      data: { membershipId: updatedId, action: action || 'update', status, expiresAt },
+    });
+    const membership = await loadMembershipRow(updatedId);
     res.json({ membership });
   })
 );

@@ -320,6 +320,9 @@ CREATE TABLE IF NOT EXISTS activity_reviews (
 CREATE INDEX IF NOT EXISTS idx_reviews_athlete ON activity_reviews (athlete_id);
 CREATE INDEX IF NOT EXISTS idx_reviews_coach ON activity_reviews (coach_id);
 CREATE INDEX IF NOT EXISTS idx_review_requests_coach ON review_requests (coach_id, status);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_review_requests_pending
+  ON review_requests (activity_id, coach_id)
+  WHERE status = 'pending';
 
 -- ---------------------------------------------------------------------------
 -- Goals
