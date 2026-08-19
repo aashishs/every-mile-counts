@@ -178,7 +178,7 @@ export default function Dashboard() {
             <div className="card mb-5 border-accent/40">
               <div className="font-semibold">Strava is not configured</div>
               <p className="text-xs text-muted mt-1">
-                Add STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET, and STRAVA_REDIRECT_URI on the Railway api service, then redeploy.
+                Add STRAVA_CLIENT_ID and STRAVA_CLIENT_SECRET on the Railway api service. Set CLIENT_URL to this site’s public URL (the *.up.railway.app address).
               </p>
             </div>
           )}

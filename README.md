@@ -116,8 +116,7 @@ On **api** → **Variables**, add:
 | --- | --- |
 | `NODE_ENV` | `production` |
 | `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` |
-| `CLIENT_URL` | `https://www.everymilecounts.in` |
-| `CORS_ORIGINS` | `https://everymilecounts.in` |
+| `CLIENT_URL` | `https://${{web.RAILWAY_PUBLIC_DOMAIN}}` |
 | `JWT_SECRET` | a long random string |
 | `ENCRYPTION_KEY` | 64 hex chars (command below) |
 | `ADMIN_EMAIL` | your admin email |
@@ -166,8 +165,8 @@ Login: `ADMIN_EMAIL` / `ADMIN_PASSWORD`. Invite codes: `WELCOME-EMC`, `ATHLETE-B
 
 In [Strava API settings](https://www.strava.com/settings/api):
 
-- Authorization Callback Domain: `www.everymilecounts.in` (host only, no `https`)
-- Redirect: `https://www.everymilecounts.in/api/strava/callback`
+- Authorization Callback Domain: your **web** host only (e.g. `web-production-xxxx.up.railway.app`), no `https`
+- Redirect is `{CLIENT_URL}/api/strava/callback` — do not hardcode a custom domain until you attach one
 
 ### Railway notes
 

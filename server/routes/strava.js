@@ -5,7 +5,7 @@ import { completeStravaOAuth, getStravaConnection, syncStravaActivities } from '
 import { asyncHandler } from '../middleware/error.js';
 import { writeAudit } from '../services/auditService.js';
 import { getUserRoles, isClubOnlyUser } from '../utils/membership.js';
-import { clientUrl, stravaRedirectUri } from '../utils/urls.js';
+import { clientUrl, requestPublicUrl, stravaRedirectUri } from '../utils/urls.js';
 
 const router = express.Router();
 
@@ -31,9 +31,16 @@ router.get(
         message: 'Strava is not configured. Set STRAVA_CLIENT_ID and STRAVA_CLIENT_SECRET on the API service.',
       });
     }
+    const redirectUri = stravaRedirectUri(req);
+    if (!redirectUri) {
+      return res.status(503).json({
+        message:
+          'Set CLIENT_URL on the API service to your public web URL, for example https://web-production-xxxx.up.railway.app',
+      });
+    }
     const params = new URLSearchParams({
       client_id: process.env.STRAVA_CLIENT_ID,
-      redirect_uri: stravaRedirectUri(),
+      redirect_uri: redirectUri,
       response_type: 'code',
       approval_prompt: 'auto',
       scope: 'read,activity:read_all,profile:read_all',
@@ -47,7 +54,10 @@ router.get(
   '/callback',
   asyncHandler(async (req, res) => {
     const { code, state, error } = req.query;
-    const appUrl = clientUrl();
+    const appUrl = requestPublicUrl(req) || clientUrl();
+    if (!appUrl) {
+      return res.status(500).send('Set CLIENT_URL on the API to your public web URL.');
+    }
     if (error) return res.redirect(`${appUrl}/dashboard?strava=error`);
     const roles = state ? await getUserRoles(state) : [];
     if (isClubOnlyUser(roles)) {

@@ -89,7 +89,11 @@ function proxyApi(req, res) {
   }
   const dest = new URL(req.url, `${base}/`);
   const lib = dest.protocol === 'https:' ? https : http;
+  const incomingHost = req.headers['x-forwarded-host'] || req.headers.host;
+  const incomingProto = req.headers['x-forwarded-proto'] || 'https';
   const headers = { ...req.headers, host: dest.host };
+  headers['x-forwarded-host'] = incomingHost;
+  headers['x-forwarded-proto'] = incomingProto;
   delete headers.connection;
   delete headers['keep-alive'];
   delete headers['transfer-encoding'];

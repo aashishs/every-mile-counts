@@ -1,5 +1,3 @@
-const PRODUCTION_SITE = 'https://www.everymilecounts.in';
-
 function isDeployed() {
   return (
     process.env.NODE_ENV === 'production' ||
@@ -19,27 +17,51 @@ function normalizePublicUrl(value, { allowLocal = false } = {}) {
     if (host === 'localhost' || host === '127.0.0.1') {
       return allowLocal ? raw : '';
     }
-    return raw;
+    return `${url.protocol}//${url.host}`;
   } catch {
     return '';
   }
 }
 
 export function publicApiUrl() {
-  const raw =
+  return (
     normalizePublicUrl(process.env.PUBLIC_API_URL) ||
     normalizePublicUrl(process.env.RENDER_EXTERNAL_URL) ||
     normalizePublicUrl(process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : '') ||
-    clientUrl();
-  return raw;
+    clientUrl()
+  );
 }
 
 export function clientUrl() {
   const allowLocal = !isDeployed();
   return (
     normalizePublicUrl(process.env.CLIENT_URL, { allowLocal }) ||
-    (isDeployed() ? PRODUCTION_SITE : 'http://localhost:5173')
+    (allowLocal ? 'http://localhost:5173' : '')
   );
+}
+
+export function requestPublicUrl(req) {
+  if (req) {
+    const xfHost = String(req.get('x-forwarded-host') || '')
+      .split(',')[0]
+      .trim();
+    let originHost = '';
+    try {
+      originHost = req.get('origin') ? new URL(req.get('origin')).host : '';
+    } catch {
+      originHost = '';
+    }
+    const host = xfHost || originHost || String(req.get('host') || '').split(',')[0].trim();
+    if (host && !host.endsWith('.railway.internal') && host !== 'localhost' && host !== '127.0.0.1') {
+      const xfProto = String(req.get('x-forwarded-proto') || '')
+        .split(',')[0]
+        .trim();
+      const proto = host.endsWith('.railway.app') || xfProto === 'https' || isDeployed() ? 'https' : xfProto || 'https';
+      const url = normalizePublicUrl(`${proto}://${host}`);
+      if (url) return url;
+    }
+  }
+  return clientUrl();
 }
 
 export function allowedOrigins() {
@@ -47,7 +69,7 @@ export function allowedOrigins() {
     .split(',')
     .map((s) => s.trim().replace(/\/$/, ''))
     .filter(Boolean);
-  return [...new Set([clientUrl(), PRODUCTION_SITE, 'https://everymilecounts.in', ...extras])];
+  return [...new Set([clientUrl(), ...extras].filter(Boolean))];
 }
 
 export function isAllowedOrigin(origin) {
@@ -57,9 +79,6 @@ export function isAllowedOrigin(origin) {
   try {
     const host = new URL(origin).hostname;
     if (
-      host === 'everymilecounts.in' ||
-      host === 'www.everymilecounts.in' ||
-      host.endsWith('.everymilecounts.in') ||
       host.endsWith('.onrender.com') ||
       host.endsWith('.vercel.app') ||
       host.endsWith('.up.railway.app') ||
@@ -73,18 +92,20 @@ export function isAllowedOrigin(origin) {
   return false;
 }
 
-export function stravaRedirectUri() {
+export function stravaRedirectUri(req) {
   const explicit = normalizePublicUrl(process.env.STRAVA_REDIRECT_URI, { allowLocal: !isDeployed() });
   if (explicit) {
     return explicit.includes('/api/strava/callback') ? explicit : `${explicit}/api/strava/callback`;
   }
-  return `${clientUrl()}/api/strava/callback`;
+  const base = requestPublicUrl(req);
+  return base ? `${base}/api/strava/callback` : '';
 }
 
-export function garminRedirectUri() {
-  const explicit = normalizePublicUrl(process.env.GARMIN_REDIRECT_URI);
+export function garminRedirectUri(req) {
+  const explicit = normalizePublicUrl(process.env.GARMIN_REDIRECT_URI, { allowLocal: !isDeployed() });
   if (explicit) {
     return explicit.includes('/api/garmin/callback') ? explicit : `${explicit}/api/garmin/callback`;
   }
-  return `${clientUrl()}/api/garmin/callback`;
+  const base = requestPublicUrl(req);
+  return base ? `${base}/api/garmin/callback` : '';
 }
