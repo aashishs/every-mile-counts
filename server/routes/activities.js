@@ -3,6 +3,7 @@ import { camel, camelMany, many, one, query } from '../config/db.js';
 import { protect, requireMembership, rejectAppAdmin } from '../middleware/auth.js';
 import { analyzeActivity, athleteDashboard, periodAnalysis } from '../services/analysisService.js';
 import { syncUserActivities } from '../services/syncService.js';
+import { mappedFromFile, mappedFromManual, saveManualActivity } from '../services/activityImportService.js';
 import { asyncHandler } from '../middleware/error.js';
 
 const router = express.Router();
@@ -119,6 +120,31 @@ router.post(
   asyncHandler(async (req, res) => {
     const result = await syncUserActivities(req.user.id, { full: true });
     res.json(result);
+  })
+);
+
+router.post(
+  '/',
+  asyncHandler(async (req, res) => {
+    const mapped = mappedFromManual(req.body || {});
+    const id = await saveManualActivity(req.user.id, mapped);
+    res.status(201).json({ id, source: 'manual' });
+  })
+);
+
+router.post(
+  '/import',
+  asyncHandler(async (req, res) => {
+    const mapped = mappedFromFile(req.body || {});
+    const id = await saveManualActivity(req.user.id, mapped);
+    res.status(201).json({
+      id,
+      source: 'manual',
+      name: mapped.name,
+      type: mapped.type,
+      distance: mapped.distance,
+      movingTime: mapped.movingTime,
+    });
   })
 );
 

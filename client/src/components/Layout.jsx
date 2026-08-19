@@ -4,13 +4,14 @@ import { useAuth } from '../context/AuthContext';
 import { isAppAdminAccount, isClubOnlyAccount } from '../utils/roles';
 import { VersionBadge } from './Badge';
 import { isBeta } from '../utils/appVersion';
+import { GOALS_ENABLED } from '../utils/features';
 
 const athleteLinks = [
   { to: '/dashboard', label: 'Dashboard', icon: '📊' },
   { to: '/activities', label: 'Activities', icon: '⚡' },
   { to: '/analysis', label: 'Analysis', icon: '📈' },
   { to: '/events', label: 'Events', icon: '📅' },
-  { to: '/goals', label: 'Goals', icon: '🎯' },
+  ...(GOALS_ENABLED ? [{ to: '/goals', label: 'Goals', icon: '🎯' }] : []),
 ];
 
 const sharedLinks = [

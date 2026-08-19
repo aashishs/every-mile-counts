@@ -12,6 +12,7 @@ import {
   formatPace,
   getActivityIcon,
 } from '../utils/format';
+import { buildActivityMarkdown, copyText } from '../utils/activityMarkdown';
 
 export default function ActivityDetail() {
   const { id } = useParams();
@@ -30,6 +31,7 @@ export default function ActivityDetail() {
     rating: 5,
   });
   const [message, setMessage] = useState('');
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     api.get(`/activities/${id}`).then((res) => setData(res.data));
@@ -62,6 +64,18 @@ export default function ActivityDetail() {
       setMessage('Review requested');
     } catch (err) {
       setMessage(err.response?.data?.message || 'Request failed');
+    }
+  };
+
+  const copyForAi = async () => {
+    const markdown = buildActivityMarkdown(activity, glance);
+    const ok = await copyText(markdown);
+    if (ok) {
+      setCopied(true);
+      setMessage('Copied as Markdown — paste into ChatGPT, Gemini, or Claude for a review.');
+      window.setTimeout(() => setCopied(false), 2000);
+    } else {
+      setMessage('Could not copy. Long-press and copy the Markdown if it appears.');
     }
   };
 
@@ -163,6 +177,26 @@ export default function ActivityDetail() {
         </section>
       )}
 
+      <div className="card mb-6">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h3 className="section-title mb-1">Ask AI for a review</h3>
+            <p className="text-sm text-muted mb-0">
+              Copies this session as Markdown. Paste it into ChatGPT, Gemini, Claude, or any AI.
+            </p>
+          </div>
+          <button
+            type="button"
+            className="btn-outline btn-sm shrink-0"
+            onClick={copyForAi}
+            title={copied ? 'Copied' : 'Copy Markdown'}
+            aria-label="Copy session as Markdown for an AI review"
+          >
+            {copied ? <CheckIcon /> : <CopyIcon />}
+          </button>
+        </div>
+      </div>
+
       {mine && (
         <div className="card mb-6">
           <h3 className="section-title mb-3">Coach review</h3>
@@ -247,5 +281,22 @@ function Insight({ label, value, hint }) {
       <div className="stat-value text-xl capitalize text-brand">{value}</div>
       {hint && <div className="text-[11px] text-muted mt-1">{hint}</div>}
     </div>
+  );
+}
+
+function CopyIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="9" y="9" width="13" height="13" rx="2" />
+      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+    </svg>
+  );
+}
+
+function CheckIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M20 6 9 17l-5-5" />
+    </svg>
   );
 }

@@ -256,7 +256,7 @@ export default function Profile() {
         <div className="md:col-span-2">
           <p className="text-sm font-medium mb-2">Notifications</p>
           <div className="flex flex-wrap gap-4 text-sm">
-            {['push', 'inApp', ...(clubOnly ? [] : ['sync']), 'reviews', 'events', 'membership', 'goals', 'announcements'].map((k) => (
+            {['push', 'inApp', ...(clubOnly ? [] : ['sync']), 'reviews', 'events', 'membership', 'announcements'].map((k) => (
               <label key={k} className="flex items-center gap-2">
                 <input type="checkbox" className="w-auto" checked={form.notificationPrefs?.[k] !== false} onChange={() => togglePref(k)} />
                 {k}

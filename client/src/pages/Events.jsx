@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import api from '../api/client';
 import Layout from '../components/Layout';
-import MonthCalendar, { DurationPicker, TimePicker, secondsFromTime, ymd } from '../components/MonthCalendar';
+import MonthCalendar, { TimePicker, ymd } from '../components/MonthCalendar';
 import { EVENT_TYPES, formatDate, formatActivityPrimary, formatTime } from '../utils/format';
 
 const emptyForm = {
@@ -10,7 +10,6 @@ const emptyForm = {
   eventTime: '07:00',
   distance: '',
   category: 'run',
-  goalFinish: '',
   notes: '',
   location: '',
 };
@@ -46,7 +45,6 @@ export default function Events() {
 
   const submit = async (ev) => {
     ev.preventDefault();
-    const goalTime = secondsFromTime(form.goalFinish);
     await api.post('/events', {
       name: form.name,
       eventDate: form.eventDate,
@@ -55,7 +53,6 @@ export default function Events() {
       location: form.location,
       notes: form.notes,
       distance: form.distance ? Number(form.distance) * 1000 : null,
-      goalTime,
     });
     setOpen(false);
     setForm(emptyForm);
@@ -142,11 +139,6 @@ export default function Events() {
                 onChange={(eventTime) => setForm({ ...form, eventTime })}
                 label="Start time"
               />
-              <DurationPicker
-                value={form.goalFinish}
-                onChange={(goalFinish) => setForm({ ...form, goalFinish })}
-                label="Goal finish time"
-              />
             </div>
             <select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
               {EVENT_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
@@ -166,6 +158,11 @@ export default function Events() {
 }
 
 function EventCard({ event, when, activities, onMap }) {
+  const eventDay = String(event.eventDate || '').slice(0, 10);
+  const today = ymd(new Date());
+  const upcoming = event.status === 'upcoming' && eventDay > today;
+  const linked = event.mappedActivities || [];
+
   return (
     <div className="card">
       <div className="flex justify-between gap-4">
@@ -173,23 +170,32 @@ function EventCard({ event, when, activities, onMap }) {
           <h3 className="font-semibold">{event.name}</h3>
           <p className="text-sm text-muted">{when} · {event.category} · {event.location || 'TBD'}</p>
         </div>
-        <span className={`badge ${event.status === 'upcoming' ? 'bg-accent/15 text-accent' : 'bg-emerald-500/15 text-emerald-300'}`}>{event.status}</span>
+        <span className={`badge ${upcoming ? 'bg-accent/15 text-accent' : 'bg-emerald-500/15 text-emerald-300'}`}>{event.status}</span>
       </div>
       {event.comparison && (
         <div className="mt-3 text-sm grid grid-cols-2 gap-2">
-          <div>Plan: {event.comparison.formatted.plannedDistance || '—'} / {event.comparison.formatted.plannedTime || '—'}</div>
+          <div>Plan: {event.comparison.formatted.plannedDistance || '—'}</div>
           <div>Actual: {event.comparison.formatted.actualDistance} / {event.comparison.formatted.actualTime}</div>
         </div>
       )}
-      <div className="mt-3">
-        <label className="text-xs">Link an activity</label>
-        <select onChange={(e) => e.target.value && onMap(event.id, e.target.value)} defaultValue="">
-          <option value="">Select activity…</option>
-          {activities.map((a) => (
-            <option key={a.id} value={a.id}>{a.name} · {formatActivityPrimary(a)}</option>
+      {!!linked.length && (
+        <div className="mt-3 text-sm text-muted">
+          {linked.map((a) => (
+            <div key={a.id}>{a.name} · {formatActivityPrimary(a)}</div>
           ))}
-        </select>
-      </div>
+        </div>
+      )}
+      {!upcoming && (
+        <div className="mt-3">
+          <label className="text-xs">Link a completed activity</label>
+          <select onChange={(e) => e.target.value && onMap(event.id, e.target.value)} defaultValue="">
+            <option value="">Select activity…</option>
+            {activities.map((a) => (
+              <option key={a.id} value={a.id}>{a.name} · {formatActivityPrimary(a)}</option>
+            ))}
+          </select>
+        </div>
+      )}
     </div>
   );
 }

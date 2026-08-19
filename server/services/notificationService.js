@@ -27,7 +27,7 @@ function notificationUrl(type, data = {}) {
   if (data.url) return data.url;
   if (type === 'review' && data.activityId) return `/activities/${data.activityId}`;
   if ((type === 'club' || type === 'announcement') && data.clubId) return `/clubs/${data.clubId}`;
-  if (type === 'goal') return '/goals';
+  if (type === 'goal') return '/dashboard';
   if (type === 'sync') return '/activities';
   if (type === 'membership') return '/membership';
   if (type === 'event') return '/events';
