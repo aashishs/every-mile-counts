@@ -1,8 +1,11 @@
 import http from 'node:http';
 import https from 'node:https';
+import dns from 'node:dns';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+dns.setDefaultResultOrder('verbatim');
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const dist = path.join(__dirname, 'dist');
@@ -25,9 +28,9 @@ const MIME = {
   '.webmanifest': 'application/manifest+json',
 };
 
-function apiBase() {
-  let raw = (process.env.API_URL || '').trim();
-  if (!raw) return null;
+function parseOrigin(value) {
+  let raw = String(value || '').trim();
+  if (!raw || raw.includes('${')) return null;
   if (!/^https?:\/\//i.test(raw)) raw = `http://${raw}`;
   raw = raw.replace(/\/$/, '');
   try {
@@ -37,6 +40,20 @@ function apiBase() {
   } catch {
     return null;
   }
+}
+
+function apiBase() {
+  const fromUrl = parseOrigin(process.env.API_URL);
+  if (fromUrl) return fromUrl;
+  const host = (process.env.API_HOST || process.env.API_PRIVATE_DOMAIN || '').trim()
+    .replace(/^https?:\/\//, '')
+    .replace(/\/$/, '');
+  const port = (process.env.API_PORT || '').trim();
+  if (host && port) return parseOrigin(`http://${host}:${port}`);
+  if (process.env.RAILWAY_ENVIRONMENT) {
+    return parseOrigin(`http://api.railway.internal:${port || '8080'}`);
+  }
+  return null;
 }
 
 function sendFile(res, file) {
@@ -74,6 +91,8 @@ function proxyApi(req, res) {
   const lib = dest.protocol === 'https:' ? https : http;
   const headers = { ...req.headers, host: dest.host };
   delete headers.connection;
+  delete headers['keep-alive'];
+  delete headers['transfer-encoding'];
   const upstream = lib.request(
     dest,
     { method: req.method, headers },
@@ -94,7 +113,7 @@ const server = http.createServer((req, res) => {
   const urlPath = (req.url || '/').split('?')[0];
   if (urlPath === '/health') {
     res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ ok: true, api: Boolean(apiBase()) }));
+    res.end(JSON.stringify({ ok: true, api: Boolean(apiBase()), apiUrl: apiBase() }));
     return;
   }
   if (urlPath.startsWith('/api')) {
