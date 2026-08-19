@@ -2,6 +2,7 @@ import express from 'express';
 import { camel, camelMany, many, one, query } from '../config/db.js';
 import { protect, requireRole } from '../middleware/auth.js';
 import { writeAudit } from '../services/auditService.js';
+import { createNotification } from '../services/notificationService.js';
 import { asyncHandler } from '../middleware/error.js';
 
 const router = express.Router();
@@ -35,7 +36,7 @@ router.get(
     const { q, role, status } = req.query;
     const params = [];
     let sql = `SELECT u.id, u.email, u.first_name, u.last_name, u.status, u.created_at, u.last_login_at,
-                 ARRAY_REMOVE(ARRAY_AGG(DISTINCT ur.role), NULL) AS roles,
+                 COALESCE(JSON_AGG(DISTINCT ur.role) FILTER (WHERE ur.role IS NOT NULL), '[]'::json) AS roles,
                  BOOL_OR(oc.connected) AS strava_connected,
                  MAX(oc.last_sync_at) AS last_sync_at,
                  MAX(oc.last_sync_status) AS last_sync_status,
@@ -55,7 +56,7 @@ router.get(
     }
     sql += ' GROUP BY u.id ORDER BY u.created_at DESC LIMIT 200';
     let users = camelMany(await many(sql, params));
-    if (role) users = users.filter((u) => (u.roles || []).includes(role));
+    if (role) users = users.filter((u) => (Array.isArray(u.roles) ? u.roles : []).includes(role));
     res.json({ users });
   })
 );
@@ -64,6 +65,16 @@ router.patch(
   '/users/:id',
   asyncHandler(async (req, res) => {
     const { status, roles } = req.body;
+    const before = camel(await one('SELECT * FROM users WHERE id = $1', [req.params.id]));
+    if (status && before && status === 'suspended' && before.status !== 'suspended') {
+      await createNotification({
+        userId: req.params.id,
+        type: 'membership',
+        title: 'Account suspended',
+        body: 'An admin suspended your account.',
+        data: { status },
+      });
+    }
     if (status) {
       await query(`UPDATE users SET status = $1, updated_at = NOW() WHERE id = $2`, [status, req.params.id]);
     }
@@ -83,6 +94,15 @@ router.patch(
       entityId: req.params.id,
       metadata: { status, roles },
     });
+    if (status && before && status === 'active' && before.status !== 'active') {
+      await createNotification({
+        userId: req.params.id,
+        type: 'membership',
+        title: 'Account restored',
+        body: 'An admin restored your account.',
+        data: { status },
+      });
+    }
     const user = camel(await one('SELECT * FROM users WHERE id = $1', [req.params.id]));
     res.json({ user });
   })
@@ -217,6 +237,13 @@ router.post(
       entityId: club.id,
       metadata: { userId: user.id, role },
     });
+    await createNotification({
+      userId: user.id,
+      type: 'club',
+      title: `Added to ${club.name}`,
+      body: `An admin added you to ${club.name} as ${role === 'coach' ? 'a coach' : role === 'club_admin' ? 'a club admin' : 'an athlete'}.`,
+      data: { clubId: club.id },
+    });
     res.json({ message: `${user.email} added to ${club.name} as ${role}` });
   })
 );
@@ -224,6 +251,7 @@ router.post(
 router.delete(
   '/users/:id/club/:clubId',
   asyncHandler(async (req, res) => {
+    const club = camel(await one('SELECT name FROM clubs WHERE id = $1', [req.params.clubId]));
     await query(
       `UPDATE club_members SET status = 'left' WHERE club_id = $1 AND user_id = $2`,
       [req.params.clubId, req.params.id]
@@ -233,6 +261,13 @@ router.delete(
        WHERE club_id = $1 AND (athlete_id = $2 OR coach_id = $2) AND status = 'active'`,
       [req.params.clubId, req.params.id]
     );
+    await createNotification({
+      userId: req.params.id,
+      type: 'club',
+      title: club ? `Removed from ${club.name}` : 'Removed from club',
+      body: club ? `An admin removed you from ${club.name}.` : 'An admin removed you from a club.',
+      data: { clubId: req.params.clubId },
+    });
     res.json({ message: 'Removed from club' });
   })
 );
@@ -263,6 +298,20 @@ router.post(
       entityId: athleteId,
       metadata: { coachId, clubId },
     });
+    await createNotification({
+      userId: athleteId,
+      type: 'club',
+      title: 'Coach assigned',
+      body: 'An admin assigned a coach to you.',
+      data: { coachId, clubId },
+    });
+    await createNotification({
+      userId: coachId,
+      type: 'club',
+      title: 'New athlete assigned',
+      body: 'An admin assigned an athlete to you.',
+      data: { athleteId, clubId },
+    });
     res.json({ message: 'Coach assigned' });
   })
 );
@@ -270,7 +319,21 @@ router.post(
 router.delete(
   '/assign/:id',
   asyncHandler(async (req, res) => {
-    await query(`UPDATE coach_assignments SET status = 'inactive' WHERE id = $1`, [req.params.id]);
+    const row = camel(
+      await one(
+        `UPDATE coach_assignments SET status = 'inactive' WHERE id = $1 RETURNING athlete_id, coach_id, club_id`,
+        [req.params.id]
+      )
+    );
+    if (row?.athleteId) {
+      await createNotification({
+        userId: row.athleteId,
+        type: 'club',
+        title: 'Coach unassigned',
+        body: 'An admin removed a coach assignment.',
+        data: { coachId: row.coachId, clubId: row.clubId },
+      });
+    }
     res.json({ message: 'Assignment removed' });
   })
 );
@@ -307,11 +370,38 @@ router.get(
     const clubs = camelMany(
       await many(
         `SELECT c.*,
-           (SELECT COUNT(*) FROM club_members cm WHERE cm.club_id = c.id AND cm.status = 'active')::int AS member_count
+           (SELECT COUNT(*) FROM club_members cm WHERE cm.club_id = c.id AND cm.status = 'active')::int AS member_count,
+           (SELECT COUNT(*) FROM club_members cm WHERE cm.club_id = c.id AND cm.status = 'active' AND cm.role = 'member')::int AS athlete_count
          FROM clubs c ORDER BY c.created_at DESC`
       )
     );
     res.json({ clubs });
+  })
+);
+
+router.get(
+  '/clubs/:id',
+  asyncHandler(async (req, res) => {
+    const club = camel(await one('SELECT * FROM clubs WHERE id = $1', [req.params.id]));
+    if (!club) return res.status(404).json({ message: 'Club not found' });
+    const members = camelMany(
+      await many(
+        `SELECT cm.id, cm.role, cm.status, cm.requested_at, cm.approved_at,
+                u.id AS user_id, u.first_name, u.last_name, u.email, u.status AS user_status,
+                COALESCE(ARRAY_AGG(DISTINCT ur.role) FILTER (WHERE ur.role IS NOT NULL), '{}') AS user_roles,
+                BOOL_OR(oc.connected) FILTER (WHERE oc.provider = 'strava') AS strava_connected,
+                (SELECT COUNT(*) FROM activities a WHERE a.athlete_id = u.id)::int AS activity_count
+         FROM club_members cm
+         JOIN users u ON u.id = cm.user_id
+         LEFT JOIN user_roles ur ON ur.user_id = u.id
+         LEFT JOIN oauth_connections oc ON oc.user_id = u.id AND oc.provider = 'strava'
+         WHERE cm.club_id = $1 AND u.status <> 'deleted'
+         GROUP BY cm.id, u.id
+         ORDER BY cm.role, u.last_name, u.first_name`,
+        [req.params.id]
+      )
+    );
+    res.json({ club, members });
   })
 );
 
@@ -364,16 +454,76 @@ router.put(
 );
 
 router.get(
+  '/audit/days',
+  asyncHandler(async (req, res) => {
+    const tz = safeTz(req.query.tz);
+    const days = camelMany(
+      await many(
+        `SELECT (created_at AT TIME ZONE $1)::date AS day, COUNT(*)::int AS count
+         FROM audit_logs
+         GROUP BY 1
+         ORDER BY 1 DESC
+         LIMIT 90`,
+        [tz]
+      )
+    );
+    res.json({
+      tz,
+      days: days.map((d) => ({
+        day: formatDay(d.day),
+        count: d.count,
+      })),
+    });
+  })
+);
+
+router.get(
+  '/audit/slots',
+  asyncHandler(async (req, res) => {
+    const tz = safeTz(req.query.tz);
+    const day = String(req.query.day || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+      return res.status(400).json({ message: 'Pick a day first' });
+    }
+    const rows = camelMany(
+      await many(
+        `SELECT (FLOOR(EXTRACT(HOUR FROM created_at AT TIME ZONE $1) / 4)::int * 4) AS slot,
+                COUNT(*)::int AS count
+         FROM audit_logs
+         WHERE created_at >= ($2::timestamp AT TIME ZONE $1)
+           AND created_at < ((($2::date) + 1)::timestamp AT TIME ZONE $1)
+         GROUP BY 1
+         ORDER BY 1 ASC`,
+        [tz, day]
+      )
+    );
+    const counts = Object.fromEntries(rows.map((r) => [Number(r.slot), r.count]));
+    const slots = [0, 4, 8, 12, 16, 20].map((slot) => ({ slot, count: counts[slot] || 0 }));
+    res.json({ tz, day, slots });
+  })
+);
+
+router.get(
   '/audit',
   asyncHandler(async (req, res) => {
+    const tz = safeTz(req.query.tz);
+    const day = String(req.query.day || '').slice(0, 10);
+    const slot = Number(req.query.slot);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || ![0, 4, 8, 12, 16, 20].includes(slot)) {
+      return res.status(400).json({ message: 'Pick a day and a 4-hour slot first' });
+    }
     const logs = camelMany(
       await many(
         `SELECT a.*, u.email FROM audit_logs a
          LEFT JOIN users u ON u.id = a.user_id
-         ORDER BY a.created_at DESC LIMIT 200`
+         WHERE a.created_at >= (($1::date + ($2::int * INTERVAL '1 hour')) AT TIME ZONE $3)
+           AND a.created_at < (($1::date + (($2::int + 4) * INTERVAL '1 hour')) AT TIME ZONE $3)
+         ORDER BY a.created_at DESC
+         LIMIT 500`,
+        [day, slot, tz]
       )
     );
-    res.json({ logs });
+    res.json({ tz, day, slot, logs });
   })
 );
 
@@ -405,8 +555,29 @@ router.patch(
         [status || null, expiresAt || null, req.params.id]
       )
     );
+    if (membership?.userId) {
+      await createNotification({
+        userId: membership.userId,
+        type: 'membership',
+        title: 'Membership updated',
+        body: status ? `An admin set your membership to ${String(status).replace(/_/g, ' ')}.` : 'An admin updated your membership.',
+        data: { membershipId: membership.id, status, expiresAt },
+      });
+    }
     res.json({ membership });
   })
 );
+
+function safeTz(value) {
+  const tz = String(value || 'UTC');
+  if (!/^[A-Za-z0-9_+\-/]+$/.test(tz) || tz.length > 64) return 'UTC';
+  return tz;
+}
+
+function formatDay(value) {
+  if (!value) return '';
+  if (typeof value === 'string') return value.slice(0, 10);
+  return new Date(value).toISOString().slice(0, 10);
+}
 
 export default router;

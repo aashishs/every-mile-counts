@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect } from 'react';
 import api from '../api/client';
+import { registerPush } from '../utils/push';
 
 const AuthContext = createContext(null);
 
@@ -20,18 +21,36 @@ export function AuthProvider({ children }) {
       .finally(() => setLoading(false));
   }, []);
 
-  const login = async (email, password) => {
-    const { data } = await api.post('/auth/login', { email, password });
+  useEffect(() => {
+    if (user) registerPush(user);
+  }, [user]);
+
+  const finishAuth = (data) => {
     localStorage.setItem('token', data.token);
     setUser(data.user);
     return data.user;
   };
 
+  const login = async (email, password) => {
+    const { data } = await api.post('/auth/login', { email, password });
+    if (data.token && data.user) finishAuth(data);
+    return data;
+  };
+
   const register = async (formData) => {
     const { data } = await api.post('/auth/register', formData);
-    localStorage.setItem('token', data.token);
-    setUser(data.user);
-    return data.user;
+    if (data.token && data.user) finishAuth(data);
+    return data;
+  };
+
+  const verifyOtp = async (challengeId, code) => {
+    const { data } = await api.post('/auth/verify-otp', { challengeId, code });
+    return finishAuth(data);
+  };
+
+  const resendOtp = async (challengeId) => {
+    const { data } = await api.post('/auth/resend-otp', { challengeId });
+    return data;
   };
 
   const logout = () => {
@@ -54,6 +73,8 @@ export function AuthProvider({ children }) {
         loading,
         login,
         register,
+        verifyOtp,
+        resendOtp,
         logout,
         refresh,
         hasRole,

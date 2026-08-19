@@ -7,7 +7,7 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.svg', 'logo.svg', 'logo.png'],
+      includeAssets: ['favicon.svg', 'logo.svg', 'logo.png', 'push-handler.js'],
       manifest: {
         name: 'Every Mile Counts',
         short_name: 'EMC',
@@ -22,6 +22,7 @@ export default defineConfig({
         ],
       },
       workbox: {
+        importScripts: ['push-handler.js'],
         globPatterns: ['**/*.{js,css,html,svg,ico,png,woff2}'],
         navigateFallback: 'index.html',
         navigateFallbackDenylist: [/^\/api\//],

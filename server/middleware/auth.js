@@ -26,6 +26,13 @@ export async function protect(req, res, next) {
   }
 }
 
+export function rejectAppAdmin(req, res, next) {
+  if (req.user.roles.includes('app_admin')) {
+    return res.status(403).json({ message: 'App admins manage the platform only' });
+  }
+  next();
+}
+
 export function requireRole(...roles) {
   return (req, res, next) => {
     const has = roles.some((role) => req.user.roles.includes(role));

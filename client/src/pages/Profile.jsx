@@ -4,13 +4,15 @@ import api from '../api/client';
 import Layout from '../components/Layout';
 import { useAuth } from '../context/AuthContext';
 import { ACTIVITY_TYPE_OPTIONS, DEFAULT_ACTIVITY_TYPE } from '../utils/format';
-import { homePath, isClubOnlyAccount } from '../utils/roles';
+import { homePath, isAppAdminAccount, isClubOnlyAccount } from '../utils/roles';
+import StravaCard from '../components/StravaCard';
 
 export default function Profile() {
   const { user, refresh } = useAuth();
   const navigate = useNavigate();
   const clubOnly = isClubOnlyAccount(user);
-  const athlete = user.roles?.includes('athlete');
+  const appAdmin = isAppAdminAccount(user);
+  const athlete = !appAdmin && user.roles?.includes('athlete');
   const [form, setForm] = useState({
     firstName: user.firstName || '',
     lastName: user.lastName || '',
@@ -60,9 +62,9 @@ export default function Profile() {
   };
 
   useEffect(() => {
-    if (!clubOnly) loadClubs().catch(() => {});
+    if (!clubOnly && !appAdmin) loadClubs().catch(() => {});
     if (athlete) loadCoaches().catch(() => {});
-  }, [clubOnly, athlete]);
+  }, [clubOnly, appAdmin, athlete]);
 
   const save = async (e) => {
     e.preventDefault();
@@ -95,7 +97,13 @@ export default function Profile() {
 
   const searchClubs = async (e) => {
     e?.preventDefault();
-    const { data } = await api.get('/clubs', { params: clubQ ? { q: clubQ } : {} });
+    const query = clubQ.trim();
+    if (query.length < 2) {
+      flash(false, 'Type at least 2 characters to search clubs');
+      setClubResults([]);
+      return;
+    }
+    const { data } = await api.get('/clubs', { params: { q: query } });
     const mineIds = new Set(clubs.map((c) => c.id));
     setClubResults((data.clubs || []).filter((c) => !mineIds.has(c.id)));
   };
@@ -174,9 +182,11 @@ export default function Profile() {
         <div>
           <h2 className="page-title">Profile</h2>
           <p className="page-sub">
-            {clubOnly
+            {appAdmin
               ? 'Edit your details and password'
-              : 'Edit your details, password, club, and coaches'}
+              : clubOnly
+                ? 'Edit your details and password'
+                : 'Edit your details, password, club, and coaches'}
           </p>
         </div>
         <button
@@ -189,6 +199,8 @@ export default function Profile() {
       </div>
       {msg && <div className="card mb-4 text-brand text-sm">{msg}</div>}
       {err && <div className="card mb-4 text-orange-300 text-sm">{err}</div>}
+
+      {!clubOnly && !appAdmin && <StravaCard user={user} />}
 
       <form className="card grid md:grid-cols-2 gap-3 mb-6" onSubmit={save}>
         <h3 className="font-semibold md:col-span-2">Edit profile</h3>
@@ -208,7 +220,7 @@ export default function Profile() {
           <label htmlFor="location">Location</label>
           <input id="location" value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} placeholder="City" />
         </div>
-        {!clubOnly && (
+        {!clubOnly && !appAdmin && (
           <>
             <div>
               <label htmlFor="dateOfBirth">Date of birth</label>
@@ -240,6 +252,7 @@ export default function Profile() {
           <label htmlFor="bio">Bio</label>
           <textarea id="bio" value={form.bio} onChange={(e) => setForm({ ...form, bio: e.target.value })} placeholder="About you" />
         </div>
+        {appAdmin ? null : (
         <div className="md:col-span-2">
           <p className="text-sm font-medium mb-2">Notifications</p>
           <div className="flex flex-wrap gap-4 text-sm">
@@ -251,6 +264,7 @@ export default function Profile() {
             ))}
           </div>
         </div>
+        )}
         <button className="btn-primary md:col-span-2" type="submit">Save profile</button>
       </form>
 
@@ -271,11 +285,11 @@ export default function Profile() {
         <button className="btn-outline" type="submit">Update password</button>
       </form>
 
-      {!clubOnly && (
+      {!clubOnly && !appAdmin && (
         <section className="card space-y-4 mb-6">
           <div className="flex items-center justify-between gap-3">
             <h3 className="font-semibold">Club</h3>
-            <Link to="/clubs" className="text-sm text-brand no-underline">Browse clubs</Link>
+            <Link to="/clubs" className="text-sm text-brand no-underline">Search clubs</Link>
           </div>
           <div className="space-y-2">
             {clubs.map((c) => (

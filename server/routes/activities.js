@@ -1,16 +1,15 @@
 import express from 'express';
 import { camel, camelMany, many, one, query } from '../config/db.js';
-import { protect, requireMembership, requireRole } from '../middleware/auth.js';
+import { protect, requireMembership, requireRole, rejectAppAdmin } from '../middleware/auth.js';
 import { analyzeActivity, athleteDashboard, periodAnalysis } from '../services/analysisService.js';
 import { syncUserActivities } from '../services/syncService.js';
 import { asyncHandler } from '../middleware/error.js';
 
 const router = express.Router();
-router.use(protect, requireMembership);
+router.use(protect, requireMembership, rejectAppAdmin);
 
 async function canViewAthlete(req, athleteId) {
   if (req.user.id === athleteId) return true;
-  if (req.user.roles.includes('app_admin')) return true;
   if (req.user.roles.includes('coach')) {
     const assignment = await one(
       `SELECT id FROM coach_assignments WHERE athlete_id = $1 AND coach_id = $2 AND status = 'active'`,
@@ -113,7 +112,7 @@ router.post(
 
 router.get(
   '/athlete/:athleteId',
-  requireRole('coach', 'app_admin'),
+  requireRole('coach'),
   asyncHandler(async (req, res) => {
     if (!(await canViewAthlete(req, req.params.athleteId))) {
       return res.status(403).json({ message: 'Not assigned to this athlete' });
@@ -168,7 +167,7 @@ router.get(
 
     res.json({
       activity,
-      insights: isCoach || req.user.roles.includes('app_admin') ? insights : undefined,
+      insights: isCoach ? insights : undefined,
       athleteInsights: req.user.id === activity.athleteId ? {
         summary: insights.summary,
         pace: insights.pace,
@@ -178,7 +177,7 @@ router.get(
         elevationImpact: insights.elevationImpact,
         recoveryRecommendation: insights.recoveryRecommendation,
       } : undefined,
-      reviews: req.user.id === activity.athleteId || isCoach || req.user.roles.includes('app_admin') ? reviews : [],
+      reviews: req.user.id === activity.athleteId || isCoach ? reviews : [],
       requests,
     });
   })

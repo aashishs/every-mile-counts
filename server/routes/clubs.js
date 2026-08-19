@@ -1,13 +1,13 @@
 import express from 'express';
 import { camel, camelMany, many, one, query } from '../config/db.js';
-import { protect, requireMembership } from '../middleware/auth.js';
-import { getClubMembership, isMembershipUsable } from '../utils/membership.js';
+import { protect, requireMembership, rejectAppAdmin } from '../middleware/auth.js';
+import { getClubMembership, isMembershipUsable, getUserRoles } from '../utils/membership.js';
 import { createNotification, notifyMany } from '../services/notificationService.js';
 import { slugify } from '../utils/format.js';
 import { asyncHandler } from '../middleware/error.js';
 
 const router = express.Router();
-router.use(protect, requireMembership);
+router.use(protect, requireMembership, rejectAppAdmin);
 
 const MAX_COACHES = 3;
 
@@ -18,6 +18,17 @@ async function membership(userId, clubId) {
       [clubId, userId]
     )
   );
+}
+
+async function isClubCoach(userId, clubId) {
+  const m = await membership(userId, clubId);
+  if (!m || m.status !== 'active') return false;
+  if (m.role === 'coach') return true;
+  if (m.role === 'club_admin') {
+    const roles = await getUserRoles(userId);
+    return roles.includes('coach');
+  }
+  return false;
 }
 
 async function requireClubAdmin(req, clubId) {
@@ -39,16 +50,20 @@ async function clubWritable(clubId) {
 router.get(
   '/',
   asyncHandler(async (req, res) => {
-    const { q } = req.query;
+    const q = String(req.query.q || '').trim();
+    const isAdmin = req.user.roles.includes('app_admin');
+    if (!isAdmin && q.length < 2) {
+      return res.json({ clubs: [] });
+    }
     const params = [];
-    let sql = `SELECT c.*, 
+    let sql = `SELECT c.id, c.name, c.location, c.description, c.is_verified, c.status,
         (SELECT COUNT(*) FROM club_members cm WHERE cm.club_id = c.id AND cm.status = 'active')::int AS member_count
       FROM clubs c WHERE c.status <> 'suspended'`;
     if (q) {
       params.push(`%${q}%`);
       sql += ` AND (c.name ILIKE $1 OR c.location ILIKE $1 OR c.description ILIKE $1)`;
     }
-    sql += ' ORDER BY c.name ASC LIMIT 50';
+    sql += ' ORDER BY c.name ASC LIMIT 20';
     const clubs = camelMany(await many(sql, params));
     res.json({ clubs });
   })
@@ -76,11 +91,36 @@ router.get(
   asyncHandler(async (req, res) => {
     const club = camel(await one('SELECT * FROM clubs WHERE id = $1', [req.params.id]));
     if (!club) return res.status(404).json({ message: 'Club not found' });
+    const myMembership = await membership(req.user.id, club.id);
+    const canSeeRoster =
+      req.user.roles.includes('app_admin') ||
+      (myMembership?.status === 'active' && ['club_admin', 'coach', 'member'].includes(myMembership.role));
+    if (!canSeeRoster) {
+      return res.json({
+        club: {
+          id: club.id,
+          name: club.name,
+          location: club.location,
+          description: club.description,
+          isVerified: club.isVerified,
+          status: club.status,
+        },
+        members: [],
+        announcements: [],
+        assignments: [],
+        myMembership,
+        clubMembership: null,
+      });
+    }
     const members = camelMany(
       await many(
-        `SELECT cm.*, u.first_name, u.last_name, u.email, u.avatar_url
-         FROM club_members cm JOIN users u ON u.id = cm.user_id
+        `SELECT cm.*, u.first_name, u.last_name, u.email, u.avatar_url,
+                COALESCE(ARRAY_AGG(DISTINCT ur.role) FILTER (WHERE ur.role IS NOT NULL), '{}') AS user_roles
+         FROM club_members cm
+         JOIN users u ON u.id = cm.user_id
+         LEFT JOIN user_roles ur ON ur.user_id = u.id
          WHERE cm.club_id = $1
+         GROUP BY cm.id, u.first_name, u.last_name, u.email, u.avatar_url
          ORDER BY cm.role, u.last_name`,
         [club.id]
       )
@@ -106,7 +146,6 @@ router.get(
         [club.id]
       )
     );
-    const myMembership = await membership(req.user.id, club.id);
     const clubMem = await getClubMembership(club.id);
     res.json({
       club,
@@ -150,20 +189,52 @@ router.post(
         [club.id, req.user.id, autoApprove ? 'active' : 'pending', autoApprove ? new Date() : null]
       )
     );
-    const admins = await many(
-      `SELECT user_id FROM club_members WHERE club_id = $1 AND role = 'club_admin' AND status = 'active'`,
-      [club.id]
-    );
-    await notifyMany(
-      admins.map((a) => a.user_id),
-      {
-        type: 'club',
-        title: autoApprove ? 'New club member' : 'Club join request',
-        body: `${req.user.firstName} ${req.user.lastName} ${autoApprove ? 'joined' : 'requested to join'} ${club.name}`,
-        data: { clubId: club.id },
-      }
-    );
     res.status(201).json({ membership: row });
+  })
+);
+
+router.post(
+  '/:id/members',
+  asyncHandler(async (req, res) => {
+    if (!(await requireClubAdmin(req, req.params.id))) {
+      return res.status(403).json({ message: 'Club admin required' });
+    }
+    const writable = await clubWritable(req.params.id);
+    if (!writable.ok) return res.status(writable.status).json({ message: writable.message });
+    const { club } = writable;
+    if (club.status === 'pending_coach') {
+      return res.status(400).json({ message: 'Add at least one coach before adding athletes' });
+    }
+    const { userId, email } = req.body;
+    if (!userId && !email) return res.status(400).json({ message: 'Email is required' });
+    const user = camel(
+      await one(
+        userId ? 'SELECT * FROM users WHERE id = $1 AND status = $2' : 'SELECT * FROM users WHERE email = $1 AND status = $2',
+        [userId || String(email).toLowerCase(), 'active']
+      )
+    );
+    if (!user) return res.status(404).json({ message: 'User not found' });
+    await query(`INSERT INTO user_roles (user_id, role) VALUES ($1, 'athlete') ON CONFLICT DO NOTHING`, [user.id]);
+    await query(
+      `INSERT INTO club_members (club_id, user_id, role, status, approved_at)
+       VALUES ($1, $2, 'member', 'active', NOW())
+       ON CONFLICT (club_id, user_id) DO UPDATE SET
+         status = 'active',
+         approved_at = NOW(),
+         role = CASE
+           WHEN club_members.role IN ('club_admin', 'coach') THEN club_members.role
+           ELSE 'member'
+         END`,
+      [club.id, user.id]
+    );
+    await createNotification({
+      userId: user.id,
+      type: 'club',
+      title: `Added to ${club.name}`,
+      body: `A club admin added you to ${club.name}.`,
+      data: { clubId: club.id },
+    });
+    res.json({ message: `${user.email} added as an athlete` });
   })
 );
 
@@ -258,12 +329,24 @@ router.post(
     await query(
       `INSERT INTO club_members (club_id, user_id, role, status, approved_at)
        VALUES ($1, $2, 'coach', 'active', NOW())
-       ON CONFLICT (club_id, user_id) DO UPDATE SET role = 'coach', status = 'active', approved_at = NOW()`,
+       ON CONFLICT (club_id, user_id) DO UPDATE SET
+         status = 'active',
+         approved_at = NOW(),
+         role = CASE WHEN club_members.role = 'club_admin' THEN 'club_admin' ELSE 'coach' END`,
       [req.params.id, user.id]
     );
     await query(`UPDATE clubs SET status = 'active', updated_at = NOW() WHERE id = $1 AND status = 'pending_coach'`, [
       req.params.id,
     ]);
+    if (user.id !== req.user.id) {
+      await createNotification({
+        userId: user.id,
+        type: 'club',
+        title: `Added as coach at ${writable.club.name}`,
+        body: `A club admin added you as a coach at ${writable.club.name}.`,
+        data: { clubId: req.params.id },
+      });
+    }
     res.json({ message: 'Coach added' });
   })
 );
@@ -276,18 +359,42 @@ router.delete(
     }
     const writable = await clubWritable(req.params.id);
     if (!writable.ok) return res.status(writable.status).json({ message: writable.message });
+    const target = await membership(req.params.userId, req.params.id);
     const remaining = await one(
-      `SELECT COUNT(*)::int AS count FROM club_members
-       WHERE club_id = $1 AND role = 'coach' AND status = 'active' AND user_id <> $2`,
+      `SELECT COUNT(*)::int AS count
+       FROM club_members cm
+       WHERE cm.club_id = $1 AND cm.status = 'active' AND cm.user_id <> $2
+         AND (
+           cm.role = 'coach'
+           OR (cm.role = 'club_admin' AND EXISTS (
+             SELECT 1 FROM user_roles ur WHERE ur.user_id = cm.user_id AND ur.role = 'coach'
+           ))
+         )`,
       [req.params.id, req.params.userId]
     );
     if (remaining.count < 1) {
       return res.status(400).json({ message: 'Club must keep at least one coach' });
     }
-    await query(
-      `UPDATE club_members SET status = 'left' WHERE club_id = $1 AND user_id = $2 AND role = 'coach'`,
-      [req.params.id, req.params.userId]
-    );
+    if (target?.role === 'club_admin') {
+      await query(`DELETE FROM user_roles WHERE user_id = $1 AND role = 'coach'`, [req.params.userId]);
+      await query(
+        `UPDATE coach_assignments SET status = 'inactive'
+         WHERE club_id = $1 AND coach_id = $2 AND status = 'active'`,
+        [req.params.id, req.params.userId]
+      );
+    } else {
+      await query(
+        `UPDATE club_members SET status = 'left' WHERE club_id = $1 AND user_id = $2 AND role = 'coach'`,
+        [req.params.id, req.params.userId]
+      );
+    }
+    await createNotification({
+      userId: req.params.userId,
+      type: 'club',
+      title: `Removed as coach from ${writable.club.name}`,
+      body: `A club admin removed you as a coach from ${writable.club.name}.`,
+      data: { clubId: req.params.id },
+    });
     res.json({ message: 'Coach removed' });
   })
 );
@@ -303,11 +410,10 @@ router.post(
       return res.status(400).json({ message: 'Athlete and coach are required' });
     }
     const athleteMem = await membership(athleteId, req.params.id);
-    const coachMem = await membership(coachId, req.params.id);
     if (!athleteMem || athleteMem.status !== 'active' || athleteMem.role !== 'member') {
       return res.status(400).json({ message: 'Athlete must be an active club athlete' });
     }
-    if (!coachMem || coachMem.status !== 'active' || coachMem.role !== 'coach') {
+    if (!(await isClubCoach(coachId, req.params.id))) {
       return res.status(400).json({ message: 'Coach must belong to this club' });
     }
     const countRow = await one(
@@ -356,6 +462,13 @@ router.post(
        WHERE athlete_id = $1 AND coach_id = $2 AND club_id = $3 AND status = 'active'`,
       [athleteId, coachId, req.params.id]
     );
+    await createNotification({
+      userId: athleteId,
+      type: 'club',
+      title: 'Coach unassigned',
+      body: 'Your club removed a coach assignment.',
+      data: { clubId: req.params.id, coachId },
+    });
     res.json({ message: 'Coach unassigned' });
   })
 );
@@ -377,8 +490,8 @@ router.post(
       )
     );
     const members = await many(
-      `SELECT user_id FROM club_members WHERE club_id = $1 AND status = 'active'`,
-      [req.params.id]
+      `SELECT user_id FROM club_members WHERE club_id = $1 AND status = 'active' AND role <> 'club_admin' AND user_id <> $2`,
+      [req.params.id, req.user.id]
     );
     await notifyMany(
       members.map((m) => m.user_id),
@@ -409,6 +522,19 @@ router.post(
          VALUES ('club', $1, $1, $2, $3, $4, $5, $6, $7) RETURNING *`,
         [req.params.id, name, eventDate, distance || null, category, notes || null, location || null]
       )
+    );
+    const members = await many(
+      `SELECT user_id FROM club_members WHERE club_id = $1 AND status = 'active' AND role <> 'club_admin' AND user_id <> $2`,
+      [req.params.id, req.user.id]
+    );
+    await notifyMany(
+      members.map((m) => m.user_id),
+      {
+        type: 'event',
+        title: `New club event: ${name}`,
+        body: `${writable.club.name} added ${name} on ${eventDate}.`,
+        data: { clubId: req.params.id, eventId: event.id, url: '/events' },
+      }
     );
     res.status(201).json({ event });
   })

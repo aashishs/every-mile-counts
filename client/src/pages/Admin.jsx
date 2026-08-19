@@ -1,9 +1,18 @@
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import Layout from '../components/Layout';
+import Badge, { CodeTypeBadge, RoleBadges, StatusBadge, StravaBadge } from '../components/Badge';
 import { formatActivityPrimary, formatActivitySecondary, formatDate, getActivityIcon } from '../utils/format';
 
-const TABS = ['overview', 'users', 'clubs', 'codes', 'memberships', 'settings', 'audit'];
+const TABS = [
+  { id: 'overview', label: 'Overview' },
+  { id: 'users', label: 'Users' },
+  { id: 'clubs', label: 'Clubs' },
+  { id: 'codes', label: 'Invite codes' },
+  { id: 'memberships', label: 'Memberships' },
+  { id: 'settings', label: 'Settings' },
+  { id: 'audit', label: 'Audit log' },
+];
 
 const CODE_TYPES = [
   { value: 'athlete', label: 'Athlete' },
@@ -23,13 +32,18 @@ const emptyCodeForm = {
   notes: '',
 };
 
+const AUDIT_SLOTS = [0, 4, 8, 12, 16, 20];
+
 function copyText(value) {
   return navigator.clipboard.writeText(value);
 }
 
 function codeStateLabel(state) {
-  if (state === 'used_up') return 'used up';
-  return state || 'active';
+  if (state === 'used_up') return 'Used up';
+  if (state === 'disabled') return 'Revoked';
+  if (state === 'expired') return 'Expired';
+  if (state === 'active') return 'Active';
+  return state || 'Active';
 }
 
 export default function Admin() {
@@ -41,6 +55,11 @@ export default function Admin() {
   const [memberships, setMemberships] = useState([]);
   const [settings, setSettings] = useState({});
   const [audit, setAudit] = useState([]);
+  const [auditDays, setAuditDays] = useState([]);
+  const [auditSlots, setAuditSlots] = useState(AUDIT_SLOTS.map((slot) => ({ slot, count: 0 })));
+  const [auditDay, setAuditDay] = useState(localDayString());
+  const [auditSlot, setAuditSlot] = useState(currentAuditSlot());
+  const auditTz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
   const [plans, setPlans] = useState([]);
   const [codeForm, setCodeForm] = useState(emptyCodeForm);
   const [codeFilter, setCodeFilter] = useState({ type: 'all', status: 'all', q: '' });
@@ -58,6 +77,8 @@ export default function Admin() {
   const [clubPick, setClubPick] = useState('');
   const [clubRole, setClubRole] = useState('member');
   const [coachPick, setCoachPick] = useState('');
+  const [selectedClubId, setSelectedClubId] = useState(null);
+  const [clubDetail, setClubDetail] = useState(null);
 
   const load = async (next = tab) => {
     if (next === 'overview') setOverview((await api.get('/admin/overview')).data);
@@ -78,7 +99,11 @@ export default function Admin() {
     }
     if (next === 'memberships') setMemberships((await api.get('/admin/memberships')).data.memberships);
     if (next === 'settings') setSettings((await api.get('/admin/settings')).data.settings);
-    if (next === 'audit') setAudit((await api.get('/admin/audit')).data.logs);
+    if (next === 'audit') {
+      const day = localDayString();
+      const slot = currentAuditSlot();
+      await loadAudit(day, slot);
+    }
   };
 
   useEffect(() => { load(tab); }, [tab]);
@@ -134,6 +159,29 @@ export default function Admin() {
   const verifyClub = async (id, isVerified) => {
     await api.patch(`/admin/clubs/${id}`, { isVerified });
     load('clubs');
+  };
+
+  const loadAudit = async (day, slot = auditSlot) => {
+    setAuditDay(day);
+    setAuditSlot(slot);
+    const [daysRes, slotsRes, logsRes] = await Promise.all([
+      api.get('/admin/audit/days', { params: { tz: auditTz } }),
+      api.get('/admin/audit/slots', { params: { tz: auditTz, day } }),
+      api.get('/admin/audit', { params: { tz: auditTz, day, slot } }),
+    ]);
+    setAuditDays(daysRes.data.days || []);
+    setAuditSlots(slotsRes.data.slots || AUDIT_SLOTS.map((s) => ({ slot: s, count: 0 })));
+    setAudit(logsRes.data.logs || []);
+  };
+
+  const openClub = async (id) => {
+    if (selectedClubId === id) {
+      setSelectedClubId(null);
+      setClubDetail(null);
+      return;
+    }
+    setSelectedClubId(id);
+    setClubDetail((await api.get(`/admin/clubs/${id}`)).data);
   };
 
   const setUserStatus = async (id, status) => {
@@ -228,11 +276,11 @@ export default function Admin() {
   return (
     <Layout>
       <h2 className="page-title">Platform admin</h2>
-      <p className="page-sub">Generate onboarding codes for athletes, coaches, and clubs</p>
+      <p className="page-sub">Manage users, clubs, invite codes, memberships, and the app</p>
       <div className="flex flex-wrap gap-2 mb-6">
         {TABS.map((t) => (
-          <button key={t} className={tab === t ? 'btn-primary btn-sm' : 'btn-outline btn-sm'} onClick={() => setTab(t)}>
-            {t}
+          <button key={t.id} className={tab === t.id ? 'btn-primary btn-sm' : 'btn-outline btn-sm'} onClick={() => setTab(t.id)}>
+            {t.label}
           </button>
         ))}
       </div>
@@ -276,12 +324,14 @@ export default function Admin() {
               <tbody>
                 {users.map((u) => (
                   <tr key={u.id} className={`border-t border-line ${selectedId === u.id ? 'bg-brand/10' : ''}`}>
-                    <td className="p-2">{u.firstName} {u.lastName}</td>
+                    <td className="p-2">
+                      <div>{u.firstName} {u.lastName}</div>
+                    </td>
                     <td>{u.email}</td>
-                    <td>{(u.roles || []).join(', ')}</td>
-                    <td>{u.stravaConnected ? (u.lastSyncStatus || 'connected') : '—'}</td>
+                    <td className="p-2"><RoleBadges roles={u.roles} /></td>
+                    <td><StravaBadge connected={u.stravaConnected} status={u.lastSyncStatus} /></td>
                     <td>{u.activityCount ?? 0}</td>
-                    <td>{u.status}</td>
+                    <td><StatusBadge value={u.status} /></td>
                     <td className="whitespace-nowrap">
                       <button className="btn-outline btn-sm mr-1" type="button" onClick={() => openUser(u.id)}>View</button>
                       <button
@@ -307,12 +357,18 @@ export default function Admin() {
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <h3 className="section-title">{detail.user.firstName} {detail.user.lastName}</h3>
-                  <p className="text-sm text-muted">{detail.user.email} · {(detail.user.roles || []).join(', ')}</p>
-                  <p className="text-xs text-muted mt-1">
-                    Strava {detail.strava?.connected ? 'connected' : 'not connected'}
-                    {detail.strava?.lastSyncAt ? ` · last sync ${new Date(detail.strava.lastSyncAt).toLocaleString()}` : ''}
-                    {detail.strava?.lastSyncError ? ` · ${detail.strava.lastSyncError}` : ''}
-                  </p>
+                  <p className="text-sm text-muted">{detail.user.email}</p>
+                  <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                    <RoleBadges roles={detail.user.roles} />
+                    <StatusBadge value={detail.user.status} />
+                    <StravaBadge connected={detail.strava?.connected} status={detail.strava?.lastSyncStatus} />
+                  </div>
+                  {(detail.strava?.lastSyncAt || detail.strava?.lastSyncError) && (
+                    <p className="text-xs text-muted mt-1">
+                      {detail.strava?.lastSyncAt ? `Last sync ${new Date(detail.strava.lastSyncAt).toLocaleString()}` : ''}
+                      {detail.strava?.lastSyncError ? ` · ${detail.strava.lastSyncError}` : ''}
+                    </p>
+                  )}
                 </div>
                 <div className="flex gap-2">
                   <button
@@ -391,9 +447,14 @@ export default function Admin() {
                 <button className="btn-outline sm:col-span-3" type="submit">Add to club</button>
               </form>
               {!!detail.clubs?.length && (
-                <p className="text-xs text-muted">
-                  Clubs: {detail.clubs.map((c) => `${c.name} (${c.role})`).join(', ')}
-                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {detail.clubs.map((c) => (
+                    <Badge key={c.id} variant="info">
+                      {c.name} · {c.role === 'club_admin' ? 'Club admin' : c.role === 'coach' ? 'Coach' : 'Athlete'}
+                      {c.status === 'pending' ? ' · pending' : ''}
+                    </Badge>
+                  ))}
+                </div>
               )}
 
               <form className="grid sm:grid-cols-3 gap-2 items-end" onSubmit={assignCoach}>
@@ -429,18 +490,61 @@ export default function Admin() {
       )}
 
       {tab === 'clubs' && (
-        <div className="space-y-2">
-          {clubs.map((c) => (
-            <div key={c.id} className="card flex justify-between items-center">
-              <div>
-                <div className="font-semibold">{c.name}</div>
-                <div className="text-xs text-muted">{c.status} · {c.memberCount} members {c.isVerified ? '· verified' : ''}</div>
+        <div className="space-y-4">
+          <div className="space-y-2">
+            {clubs.map((c) => (
+              <div
+                key={c.id}
+                className={`card flex justify-between items-center gap-3 cursor-pointer ${selectedClubId === c.id ? 'ring-1 ring-brand/40' : ''}`}
+                onClick={() => openClub(c.id)}
+              >
+                <div>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="font-semibold">{c.name}</span>
+                    <StatusBadge value={c.status} />
+                    {c.isVerified && <Badge variant="brand">Verified</Badge>}
+                  </div>
+                  <div className="text-xs text-muted mt-1">
+                    {c.athleteCount ?? 0} {c.athleteCount === 1 ? 'athlete' : 'athletes'}
+                    {' · '}
+                    {c.memberCount} {c.memberCount === 1 ? 'member' : 'members'}
+                  </div>
+                </div>
+                <button
+                  className="btn-outline btn-sm"
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    verifyClub(c.id, !c.isVerified);
+                  }}
+                >
+                  {c.isVerified ? 'Unverify' : 'Verify'}
+                </button>
               </div>
-              <button className="btn-outline btn-sm" onClick={() => verifyClub(c.id, !c.isVerified)}>
-                {c.isVerified ? 'Unverify' : 'Verify'}
-              </button>
+            ))}
+            {!clubs.length && <div className="card text-muted text-sm">No clubs yet.</div>}
+          </div>
+
+          {clubDetail && (
+            <div className="card space-y-3">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <h3 className="section-title">{clubDetail.club.name}</h3>
+                  <p className="text-sm text-muted">{clubDetail.club.location || 'No location'}</p>
+                </div>
+                <button className="btn-outline btn-sm" type="button" onClick={() => { setSelectedClubId(null); setClubDetail(null); }}>
+                  Close
+                </button>
+              </div>
+              <ClubAthletes
+                members={clubDetail.members || []}
+                onViewUser={(userId) => {
+                  setTab('users');
+                  openUser(userId);
+                }}
+              />
             </div>
-          ))}
+          )}
         </div>
       )}
 
@@ -543,10 +647,8 @@ export default function Admin() {
                   <div>
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="font-mono font-semibold">{c.code}</span>
-                      <span className={`badge ${c.state === 'active' ? 'bg-brand/15 text-brand' : 'bg-hover text-muted'}`}>
-                        {codeStateLabel(c.state)}
-                      </span>
-                      <span className="badge bg-accent/15 text-accent normal-case">{c.type}</span>
+                      <StatusBadge value={c.state === 'disabled' ? 'disabled' : c.state} fallback={codeStateLabel(c.state)} />
+                      <CodeTypeBadge type={c.type} />
                     </div>
                     <p className="text-xs text-muted mt-1">
                       {c.activationsUsed}/{c.maxActivations} used
@@ -612,8 +714,8 @@ export default function Admin() {
                 <tr key={m.id} className="border-t border-line">
                   <td className="p-2">{m.email || m.clubName || '—'}</td>
                   <td>{m.planName}</td>
-                  <td>{m.status}</td>
-                  <td>{m.expiresAt ? new Date(m.expiresAt).toLocaleDateString() : 'lifetime'}</td>
+                  <td><StatusBadge value={m.status} /></td>
+                  <td>{m.expiresAt ? new Date(m.expiresAt).toLocaleDateString() : 'Lifetime'}</td>
                 </tr>
               ))}
             </tbody>
@@ -622,31 +724,163 @@ export default function Admin() {
       )}
 
       {tab === 'settings' && (
-        <div className="card space-y-3 max-w-lg">
+        <div className="card space-y-4 max-w-lg">
           <label>App name</label>
           <input value={settings.app_name || ''} onChange={(e) => setSettings({ ...settings, app_name: e.target.value })} />
+          <label className="flex items-start gap-3 font-normal">
+            <input
+              type="checkbox"
+              className="w-auto mt-1"
+              checked={settings.signup_otp_paused !== false}
+              onChange={(e) => setSettings({ ...settings, signup_otp_paused: e.target.checked })}
+            />
+            <span>
+              <span className="block font-medium">Pause email code on sign up</span>
+              <span className="block text-xs text-muted mt-1">
+                New accounts skip the 6-digit email code and sign in immediately. Login also skips the code while this
+                is on. Use this if sign-up or login fails because verification emails cannot be sent. Turn it off after
+                email is working.
+              </span>
+            </span>
+          </label>
           <button className="btn-primary" onClick={saveSettings}>Save</button>
         </div>
       )}
 
       {tab === 'audit' && (
-        <div className="card overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead><tr className="text-left text-muted"><th className="p-2">When</th><th>User</th><th>Action</th></tr></thead>
-            <tbody>
-              {audit.map((a) => (
-                <tr key={a.id} className="border-t border-line">
-                  <td className="p-2">{new Date(a.createdAt).toLocaleString()}</td>
-                  <td>{a.email || 'system'}</td>
-                  <td>{a.action} {a.entityType || ''}</td>
-                </tr>
+        <div className="space-y-4">
+          <div className="card space-y-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <button className="btn-outline btn-sm" type="button" onClick={() => loadAudit(shiftDay(auditDay, -1))}>
+                Prev
+              </button>
+              <button
+                className="btn-outline btn-sm min-w-[7.5rem]"
+                type="button"
+                onClick={() => loadAudit(shiftDay(auditDay, -1))}
+              >
+                {formatAuditDayLabel(shiftDay(auditDay, -1))}
+              </button>
+              <select
+                className="w-auto min-w-[11rem]"
+                value={auditDay}
+                onChange={(e) => loadAudit(e.target.value)}
+              >
+                {auditDropdownDays(auditDays, auditDay).map((day) => (
+                  <option key={day} value={day}>{formatAuditDayLabel(day)}</option>
+                ))}
+              </select>
+              <button
+                className="btn-outline btn-sm min-w-[7.5rem]"
+                type="button"
+                disabled={auditDay >= shiftDay(localDayString(), 1)}
+                onClick={() => loadAudit(shiftDay(auditDay, 1))}
+              >
+                {formatAuditDayLabel(shiftDay(auditDay, 1))}
+              </button>
+              <button
+                className="btn-outline btn-sm"
+                type="button"
+                disabled={auditDay >= shiftDay(localDayString(), 1)}
+                onClick={() => loadAudit(shiftDay(auditDay, 1))}
+              >
+                Next
+              </button>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {(auditSlots.length ? auditSlots : AUDIT_SLOTS.map((slot) => ({ slot, count: 0 }))).map((s) => (
+                <button
+                  key={s.slot}
+                  className={auditSlot === s.slot ? 'btn-primary btn-sm' : 'btn-outline btn-sm'}
+                  type="button"
+                  onClick={() => loadAudit(auditDay, s.slot)}
+                >
+                  {formatSlotRange(s.slot)}
+                  {s.count ? ` · ${s.count}` : ''}
+                </button>
               ))}
-            </tbody>
-          </table>
+            </div>
+          </div>
+
+          <div className="card overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-muted">
+                  <th className="p-2">When</th>
+                  <th>User</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {audit.map((a) => (
+                  <tr key={a.id} className="border-t border-line">
+                    <td className="p-2">{new Date(a.createdAt).toLocaleString()}</td>
+                    <td>{a.email || 'system'}</td>
+                    <td>{a.action} {a.entityType || ''}</td>
+                  </tr>
+                ))}
+                {!audit.length && (
+                  <tr>
+                    <td className="p-2 text-muted" colSpan={3}>No events in this 4-hour slot.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </Layout>
   );
+}
+
+function localDayString(date = new Date()) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function shiftDay(day, delta) {
+  const [y, m, d] = String(day).split('-').map(Number);
+  const date = new Date(y, m - 1, d);
+  date.setDate(date.getDate() + delta);
+  return localDayString(date);
+}
+
+function currentAuditSlot() {
+  return Math.floor(new Date().getHours() / 4) * 4;
+}
+
+function formatSlotRange(slot) {
+  const start = Number(slot);
+  const fmt = (hour) => {
+    const date = new Date();
+    date.setHours(hour, 0, 0, 0);
+    return date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  };
+  return `${fmt(start)} – ${fmt(start + 4)}`;
+}
+
+function auditDropdownDays(activityDays, selected) {
+  const today = localDayString();
+  const days = new Set([today, selected]);
+  (activityDays || []).forEach((d) => days.add(d.day));
+  for (let i = 1; i <= 14; i += 1) days.add(shiftDay(today, -i));
+  if (selected) {
+    days.add(shiftDay(selected, -1));
+    days.add(shiftDay(selected, 1));
+  }
+  return [...days].filter((day) => day <= shiftDay(today, 1)).sort().reverse();
+}
+
+function formatAuditDayLabel(day) {
+  const [y, m, d] = String(day).split('-').map(Number);
+  const date = new Date(y, m - 1, d);
+  const today = localDayString();
+  if (day === today) return 'Today';
+  if (day === shiftDay(today, -1)) return 'Yesterday';
+  if (day === shiftDay(today, 1)) return 'Tomorrow';
+  return date.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
 }
 
 function Tile({ label, value }) {
@@ -654,6 +888,68 @@ function Tile({ label, value }) {
     <div className="stat-card">
       <div className="text-sm text-muted">{label}</div>
       <div className="text-2xl font-bold text-brand">{value}</div>
+    </div>
+  );
+}
+
+function ClubAthletes({ members, onViewUser }) {
+  const athletes = members.filter((m) => m.role === 'member');
+  const staff = members.filter((m) => m.role !== 'member');
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h4 className="font-semibold mb-2">Athletes ({athletes.length})</h4>
+        {!athletes.length ? (
+          <p className="text-sm text-muted">No athletes in this club yet.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-muted">
+                  <th className="p-2">Name</th>
+                  <th>Email</th>
+                  <th>Status</th>
+                  <th>Strava</th>
+                  <th>Activities</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {athletes.map((m) => (
+                  <tr key={m.id} className="border-t border-line">
+                    <td className="p-2">{m.firstName} {m.lastName}</td>
+                    <td>{m.email}</td>
+                    <td><StatusBadge value={m.status} /></td>
+                    <td><StravaBadge connected={m.stravaConnected} /></td>
+                    <td>{m.activityCount ?? 0}</td>
+                    <td>
+                      <button className="btn-outline btn-sm" type="button" onClick={() => onViewUser(m.userId)}>
+                        View
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+      {!!staff.length && (
+        <div>
+          <h4 className="font-semibold mb-2">Coaches and club admins</h4>
+          <div className="flex flex-wrap gap-1.5">
+            {staff.map((m) => (
+              <button key={m.id} className="text-left" type="button" onClick={() => onViewUser(m.userId)}>
+                <Badge variant={m.role === 'coach' ? 'accent' : 'info'}>
+                  {m.firstName} {m.lastName} · {m.role === 'club_admin' ? 'Club admin' : 'Coach'}
+                  {m.status === 'pending' ? ' · pending' : ''}
+                </Badge>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

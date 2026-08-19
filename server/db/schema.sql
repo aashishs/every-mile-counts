@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS users (
   }'::jsonb,
   last_login_at TIMESTAMPTZ,
   default_activity_type TEXT NOT NULL DEFAULT 'Run',
+  email_verified_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -399,6 +400,7 @@ CREATE TABLE IF NOT EXISTS oauth_pending (
 );
 
 ALTER TABLE users ADD COLUMN IF NOT EXISTS default_activity_type TEXT NOT NULL DEFAULT 'Run';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMPTZ;
 ALTER TABLE events ADD COLUMN IF NOT EXISTS event_time TIME;
 
 CREATE TABLE IF NOT EXISTS password_reset_tokens (
@@ -411,3 +413,15 @@ CREATE TABLE IF NOT EXISTS password_reset_tokens (
 );
 CREATE INDEX IF NOT EXISTS idx_password_reset_user ON password_reset_tokens (user_id);
 CREATE INDEX IF NOT EXISTS idx_password_reset_expires ON password_reset_tokens (expires_at);
+
+CREATE TABLE IF NOT EXISTS login_otps (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  code_hash TEXT NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL,
+  used_at TIMESTAMPTZ,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  ip TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_login_otps_user ON login_otps (user_id, created_at DESC);

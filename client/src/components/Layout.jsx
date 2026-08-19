@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { isClubOnlyAccount } from '../utils/roles';
+import { isAppAdminAccount, isClubOnlyAccount } from '../utils/roles';
 
 const athleteLinks = [
   { to: '/dashboard', label: 'Dashboard', icon: '📊' },
@@ -25,21 +25,15 @@ const athleteTabs = [
   { to: '/events', label: 'Events', icon: '📅' },
 ];
 
-const clubTabs = [
-  { to: '/clubs', label: 'Club', icon: '🏅' },
-  { to: '/notifications', label: 'Alerts', icon: '🔔' },
-  { to: '/profile', label: 'Profile', icon: '👤' },
-  { to: '/support', label: 'Help', icon: '💬' },
-];
-
 function pathActive(pathname, to) {
   if (to === '/dashboard') return pathname === '/dashboard';
+  if (to === '/admin') return pathname === '/admin' || pathname.startsWith('/admin/');
   if (to === '/clubs') return pathname === '/clubs' || pathname.startsWith('/clubs/');
   return pathname === to || pathname.startsWith(`${to}/`);
 }
 
 export default function Layout({ children }) {
-  const { user, logout, isAppAdmin } = useAuth();
+  const { user, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [open, setOpen] = useState(false);
@@ -47,14 +41,34 @@ export default function Layout({ children }) {
   const membership = user.membership;
   const expiring = membership?.status === 'expiring_soon';
   const clubOnly = isClubOnlyAccount(user);
-  const tabs = clubOnly ? clubTabs : athleteTabs;
-
-  const links = [
-    ...(!clubOnly ? athleteLinks : []),
-    ...(!clubOnly ? [{ to: '/coaches', label: 'Coaching', icon: '👥' }] : []),
-    ...(clubOnly ? [{ to: '/clubs', label: 'Club', icon: '🏅' }] : []),
-    ...sharedLinks.filter((l) => !(clubOnly && l.to === '/clubs')),
+  const appAdmin = isAppAdminAccount(user);
+  const isAthlete = !appAdmin && (user?.roles?.includes('athlete'));
+  const isCoachUser = !appAdmin && (user?.roles?.includes('coach'));
+  const clubHome = !appAdmin && (clubOnly || (user?.roles?.includes('club_admin') && !isAthlete));
+  const adminTabs = [
+    { to: '/admin', label: 'Admin', icon: '🛡️' },
+    { to: '/support', label: 'Support', icon: '💬' },
+    { to: '/profile', label: 'Profile', icon: '👤' },
   ];
+  const tabs = appAdmin
+    ? adminTabs
+    : clubHome
+      ? [
+          { to: '/clubs', label: 'Club', icon: '🏅' },
+          ...(isCoachUser ? [{ to: '/coaches', label: 'Coach', icon: '👥' }] : [{ to: '/notifications', label: 'Alerts', icon: '🔔' }]),
+          { to: '/profile', label: 'Profile', icon: '👤' },
+          { to: '/support', label: 'Help', icon: '💬' },
+        ]
+      : athleteTabs;
+
+  const links = appAdmin
+    ? adminTabs
+    : [
+        ...(isAthlete && !clubOnly ? athleteLinks : []),
+        ...(isCoachUser && !clubOnly ? [{ to: '/coaches', label: 'Coaching', icon: '👥' }] : []),
+        ...(clubOnly ? [{ to: '/clubs', label: 'Club', icon: '🏅' }] : []),
+        ...sharedLinks.filter((l) => !(clubOnly && l.to === '/clubs')),
+      ];
 
   const tabHit = tabs.some((t) => pathActive(location.pathname, t.to));
 
@@ -85,12 +99,6 @@ export default function Layout({ children }) {
           {l.label}
         </NavLink>
       ))}
-      {isAppAdmin && (
-        <NavLink to="/admin" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-          <span className="text-lg leading-none w-6 text-center">🛡️</span>
-          Admin
-        </NavLink>
-      )}
     </>
   );
 
@@ -111,7 +119,7 @@ export default function Layout({ children }) {
           {user.firstName} {user.lastName}
         </div>
         <div className="text-xs text-muted truncate">
-          {clubOnly ? 'Club admin' : user.roles?.join(' · ')}
+          {appAdmin ? 'App admin' : clubOnly ? 'Club admin' : user.roles?.join(' · ')}
         </div>
       </div>
     </div>
@@ -190,7 +198,7 @@ export default function Layout({ children }) {
         </div>
 
         <main className="p-4 md:p-8 max-w-6xl pb-24 md:pb-8">
-          {expiring && (
+          {expiring && !appAdmin && (
             <div className="mb-4 rounded-xl border border-accent/40 bg-accent/10 text-orange-200 px-4 py-3 text-sm">
               Membership expiring soon
               {membership.expiresAt ? ` on ${new Date(membership.expiresAt).toLocaleDateString()}` : ''}.
@@ -200,7 +208,7 @@ export default function Layout({ children }) {
         </main>
 
         <nav className="md:hidden fixed bottom-0 inset-x-0 z-30 bg-[#0b1118]/90 backdrop-blur-md border-t border-white/5 safe-bottom">
-          <div className={`grid ${clubOnly ? 'grid-cols-4' : 'grid-cols-5'}`}>
+          <div className={`grid ${appAdmin ? 'grid-cols-3' : clubHome ? 'grid-cols-4' : 'grid-cols-5'}`}>
             {tabs.map((tab) => {
               const active = pathActive(location.pathname, tab.to);
               return (
@@ -214,7 +222,7 @@ export default function Layout({ children }) {
                 </NavLink>
               );
             })}
-            {!clubOnly && (
+            {!clubHome && !appAdmin && (
               <button
                 type="button"
                 className={`tab-item ${open || !tabHit ? 'active' : ''}`}

@@ -1,6 +1,7 @@
 import bcrypt from 'bcryptjs';
 import dotenv from 'dotenv';
 import { pool, one } from '../config/db.js';
+import { ensureSchemaPatches } from './ensureSchema.js';
 
 dotenv.config();
 
@@ -17,6 +18,7 @@ const PLANS = [
 ];
 
 async function seed() {
+  await ensureSchemaPatches();
   const email = (process.env.ADMIN_EMAIL || 'admin@everymilecounts.app').toLowerCase();
   const password = process.env.ADMIN_PASSWORD || 'Admin123!';
 
@@ -24,12 +26,12 @@ async function seed() {
   if (!admin) {
     const hash = await bcrypt.hash(password, 12);
     admin = await one(
-      `INSERT INTO users (email, password_hash, first_name, last_name)
-       VALUES ($1, $2, 'Platform', 'Admin') RETURNING *`,
+      `INSERT INTO users (email, password_hash, first_name, last_name, email_verified_at)
+       VALUES ($1, $2, 'Platform', 'Admin', NOW()) RETURNING *`,
       [email, hash]
     );
     await pool.query(
-      `INSERT INTO user_roles (user_id, role) VALUES ($1, 'app_admin'), ($1, 'athlete')
+      `INSERT INTO user_roles (user_id, role) VALUES ($1, 'app_admin')
        ON CONFLICT DO NOTHING`,
       [admin.id]
     );
@@ -40,6 +42,14 @@ async function seed() {
     );
     console.log(`Created admin user ${email}`);
   }
+
+  await pool.query(
+    `DELETE FROM user_roles ur
+     USING user_roles admin_role
+     WHERE admin_role.user_id = ur.user_id
+       AND admin_role.role = 'app_admin'
+       AND ur.role <> 'app_admin'`
+  );
 
   for (const plan of PLANS) {
     const existing = await one('SELECT id FROM membership_plans WHERE name = $1', [plan.name]);
@@ -89,7 +99,8 @@ async function seed() {
     `INSERT INTO app_settings (key, value) VALUES
       ('membership_expiry_windows', '[30,15,7]'::jsonb),
       ('app_name', '"Every Mile Counts"'::jsonb),
-      ('free_beta', 'true'::jsonb)
+      ('free_beta', 'true'::jsonb),
+      ('signup_otp_paused', 'true'::jsonb)
      ON CONFLICT (key) DO NOTHING`
   );
 

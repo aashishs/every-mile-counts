@@ -7,11 +7,12 @@ import { isClubOnlyAccount } from '../utils/roles';
 
 export default function ClubDetail() {
   const { id } = useParams();
-  const { isAppAdmin, user } = useAuth();
+  const { isAppAdmin, user, refresh } = useAuth();
   const clubOnly = isClubOnlyAccount(user);
   const [data, setData] = useState(null);
   const [code, setCode] = useState('');
   const [coachEmail, setCoachEmail] = useState('');
+  const [athleteEmail, setAthleteEmail] = useState('');
   const [profile, setProfile] = useState({ name: '', description: '', location: '', website: '' });
   const [assignPick, setAssignPick] = useState({});
   const [msg, setMsg] = useState('');
@@ -32,10 +33,15 @@ export default function ClubDetail() {
   if (!data) return <Layout><p className="text-muted">Loading…</p></Layout>;
   const { club, members, assignments, myMembership } = data;
   const isAdmin = isAppAdmin || (myMembership?.role === 'club_admin' && myMembership.status === 'active');
-  const coaches = members.filter((m) => m.role === 'coach' && m.status === 'active');
-  const athletes = members.filter((m) => m.role === 'member' && m.status === 'active');
-  const admins = members.filter((m) => m.role === 'club_admin' && m.status === 'active');
-  const pending = members.filter((m) => m.status === 'pending');
+  const isMember = myMembership?.status === 'active';
+  const isClubCoach = (m) =>
+    m.status === 'active' &&
+    (m.role === 'coach' || (m.role === 'club_admin' && (m.userRoles || []).includes('coach')));
+  const coaches = (members || []).filter(isClubCoach);
+  const athletes = (members || []).filter((m) => m.role === 'member' && m.status === 'active');
+  const admins = (members || []).filter((m) => m.role === 'club_admin' && m.status === 'active');
+  const pending = (members || []).filter((m) => m.status === 'pending');
+  const adminIsCoach = (user?.roles || []).includes('coach');
   const assignedFor = (athleteId) => (assignments || []).filter((a) => a.athleteId === athleteId);
 
   const flash = (text) => setMsg(text);
@@ -51,34 +57,70 @@ export default function ClubDetail() {
   };
 
   const approve = async (memberId) => {
-    await api.post(`/clubs/${id}/members/${memberId}/approve`, {});
-    load();
+    try {
+      await api.post(`/clubs/${id}/members/${memberId}/approve`, {});
+      flash('Request approved');
+      load();
+    } catch (err) {
+      flash(err.response?.data?.message || 'Could not approve');
+    }
   };
 
   const addCoach = async (e) => {
     e.preventDefault();
-    await api.post(`/clubs/${id}/coaches`, { email: coachEmail });
-    setCoachEmail('');
-    flash('Coach added');
-    load();
+    try {
+      await api.post(`/clubs/${id}/coaches`, { email: coachEmail });
+      setCoachEmail('');
+      flash('Coach added');
+      load();
+    } catch (err) {
+      flash(err.response?.data?.message || 'Could not add coach');
+    }
+  };
+
+  const addAthlete = async (e) => {
+    e.preventDefault();
+    try {
+      await api.post(`/clubs/${id}/members`, { email: athleteEmail });
+      setAthleteEmail('');
+      flash('Athlete added');
+      load();
+    } catch (err) {
+      flash(err.response?.data?.message || 'Could not add athlete');
+    }
   };
 
   const removeCoach = async (userId) => {
-    await api.delete(`/clubs/${id}/coaches/${userId}`);
-    load();
+    try {
+      await api.delete(`/clubs/${id}/coaches/${userId}`);
+      flash('Coach removed');
+      load();
+    } catch (err) {
+      flash(err.response?.data?.message || 'Could not remove coach');
+    }
   };
 
   const assign = async (athleteId) => {
     const coachId = assignPick[athleteId];
     if (!coachId) return;
-    await api.post(`/clubs/${id}/assign-coach`, { athleteId, coachId });
-    setAssignPick((prev) => ({ ...prev, [athleteId]: '' }));
-    load();
+    try {
+      await api.post(`/clubs/${id}/assign-coach`, { athleteId, coachId });
+      setAssignPick((prev) => ({ ...prev, [athleteId]: '' }));
+      flash('Coach assigned');
+      load();
+    } catch (err) {
+      flash(err.response?.data?.message || 'Could not assign coach');
+    }
   };
 
   const unassign = async (athleteId, coachId) => {
-    await api.post(`/clubs/${id}/unassign-coach`, { athleteId, coachId });
-    load();
+    try {
+      await api.post(`/clubs/${id}/unassign-coach`, { athleteId, coachId });
+      flash('Coach unassigned');
+      load();
+    } catch (err) {
+      flash(err.response?.data?.message || 'Could not unassign coach');
+    }
   };
 
   const saveProfile = async (e) => {
@@ -92,16 +134,24 @@ export default function ClubDetail() {
     <Layout>
       <h2 className="page-title">{club.name} {club.isVerified ? '✓' : ''}</h2>
       <p className="page-sub">
-        {club.location || 'Location TBD'} · organization · {coaches.length} coaches · {athletes.length} athletes
+        {club.location || 'Location TBD'}
+        {isMember || isAdmin ? ` · ${coaches.length} coaches · ${athletes.length} athletes` : ''}
         {isAdmin ? ' · athletes connect Strava on their own accounts' : ''}
       </p>
       {club.description && <p className="text-sm text-muted mb-4">{club.description}</p>}
       {msg && <div className="card mb-4 text-sm">{msg}</div>}
 
+      {myMembership?.status === 'pending' && (
+        <div className="card mb-6 text-sm text-muted">Your join request is waiting for a club admin to approve.</div>
+      )}
+
       {!myMembership && !clubOnly && (
-        <div className="card mb-6 flex flex-col sm:flex-row gap-2">
-          <input placeholder="Invitation code (optional)" value={code} onChange={(e) => setCode(e.target.value)} />
-          <button className="btn-primary" onClick={join}>Request to join</button>
+        <div className="card mb-6">
+          <p className="text-sm text-muted mb-3">Request to join this club. A club admin will approve you.</p>
+          <div className="flex flex-col sm:flex-row gap-2">
+            <input placeholder="Invitation code (optional)" value={code} onChange={(e) => setCode(e.target.value)} />
+            <button className="btn-primary" onClick={join}>Request to join</button>
+          </div>
         </div>
       )}
 
@@ -137,6 +187,7 @@ export default function ClubDetail() {
         </form>
       )}
 
+      {(isMember || isAdmin) && (
       <div className="grid md:grid-cols-2 gap-6 mb-8">
         <section>
           <h3 className="font-semibold mb-3">Coaches</h3>
@@ -144,6 +195,24 @@ export default function ClubDetail() {
             <form className="card space-y-2 mb-3" onSubmit={addCoach}>
               <input placeholder="Coach email" value={coachEmail} onChange={(e) => setCoachEmail(e.target.value)} required />
               <button className="btn-primary">Add coach</button>
+              {isAdmin && !adminIsCoach && (
+                <button
+                  className="btn-outline"
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      await api.post(`/clubs/${id}/coaches`, { email: user.email });
+                      await refresh();
+                      flash('You can now coach athletes in this club');
+                      load();
+                    } catch (err) {
+                      flash(err.response?.data?.message || 'Could not enable coaching');
+                    }
+                  }}
+                >
+                  I also coach at this club
+                </button>
+              )}
               {club.status === 'pending_coach' && (
                 <p className="text-xs text-accent">Add at least one coach before accepting athletes.</p>
               )}
@@ -154,10 +223,15 @@ export default function ClubDetail() {
               <div key={c.id} className="card flex justify-between items-center gap-3">
                 <div>
                   <div className="font-semibold">{c.firstName} {c.lastName}</div>
-                  <div className="text-xs text-muted">{c.email}</div>
+                  <div className="text-xs text-muted">
+                    {c.email}
+                    {c.role === 'club_admin' ? ' · club admin' : ''}
+                  </div>
                 </div>
                 {isAdmin && (
-                  <button className="btn-outline btn-sm" onClick={() => removeCoach(c.userId)}>Remove</button>
+                  <button className="btn-outline btn-sm" onClick={() => removeCoach(c.userId)}>
+                    {c.role === 'club_admin' ? 'Stop coaching' : 'Remove'}
+                  </button>
                 )}
               </div>
             ))}
@@ -177,6 +251,7 @@ export default function ClubDetail() {
           </div>
         </section>
       </div>
+      )}
 
       {isAdmin && (
         <>
@@ -192,6 +267,12 @@ export default function ClubDetail() {
           </div>
 
           <h3 className="font-semibold mb-3">Athletes</h3>
+          {isAdmin && (
+            <form className="card space-y-2 mb-3" onSubmit={addAthlete}>
+              <input placeholder="Athlete email" type="email" value={athleteEmail} onChange={(e) => setAthleteEmail(e.target.value)} required />
+              <button className="btn-primary">Add athlete</button>
+            </form>
+          )}
           <div className="space-y-3">
             {athletes.map((a) => {
               const assigned = assignedFor(a.userId);

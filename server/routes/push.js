@@ -1,27 +1,28 @@
 import express from 'express';
-import webpush from 'web-push';
-import { one, query } from '../config/db.js';
+import { query } from '../config/db.js';
 import { protect } from '../middleware/auth.js';
 import { asyncHandler } from '../middleware/error.js';
+import { isPushConfigured } from '../services/pushService.js';
 
 const router = express.Router();
 
-if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
-  webpush.setVapidDetails(
-    process.env.VAPID_SUBJECT || 'mailto:admin@everymilecounts.app',
-    process.env.VAPID_PUBLIC_KEY,
-    process.env.VAPID_PRIVATE_KEY
-  );
-}
-
 router.get('/vapid-public-key', protect, (_req, res) => {
-  res.json({ key: process.env.VAPID_PUBLIC_KEY || null });
+  res.json({ key: process.env.VAPID_PUBLIC_KEY || null, configured: isPushConfigured() });
 });
 
 router.post(
   '/subscribe',
   protect,
   asyncHandler(async (req, res) => {
+    if (req.user.roles.includes('app_admin')) {
+      return res.status(204).end();
+    }
+    const clubOnly =
+      req.user.roles.includes('club_admin') &&
+      !req.user.roles.includes('athlete') &&
+      !req.user.roles.includes('coach');
+    if (clubOnly) return res.status(204).end();
+
     const { endpoint, keys } = req.body;
     if (!endpoint || !keys) return res.status(400).json({ message: 'Invalid push subscription' });
     await query(
@@ -34,21 +35,5 @@ router.post(
   })
 );
 
-export async function sendPushToUser(userId, payload) {
-  if (!process.env.VAPID_PUBLIC_KEY) return;
-  const { many } = await import('../config/db.js');
-  const subs = await many(`SELECT * FROM push_subscriptions WHERE user_id = $1`, [userId]);
-  await Promise.all(
-    subs.map(async (s) => {
-      try {
-        await webpush.sendNotification({ endpoint: s.endpoint, keys: s.keys }, JSON.stringify(payload));
-      } catch (err) {
-        if (err.statusCode === 410 || err.statusCode === 404) {
-          await query(`DELETE FROM push_subscriptions WHERE id = $1`, [s.id]);
-        }
-      }
-    })
-  );
-}
-
+export { sendPushToUser } from '../services/pushService.js';
 export default router;

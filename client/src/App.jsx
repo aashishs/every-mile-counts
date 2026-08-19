@@ -1,7 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ProtectedRoute, PublicRoute } from './components/ProtectedRoute';
-import { homePath, isClubOnlyAccount } from './utils/roles';
+import { homePath, isAppAdminAccount, isClubOnlyAccount } from './utils/roles';
 import Login from './pages/Login';
 import ForgotPassword from './pages/ForgotPassword';
 import ResetPassword from './pages/ResetPassword';
@@ -35,14 +35,14 @@ export default function App() {
           <Route path="/activities/:id" element={<ProtectedRoute><AthleteRoute><ActivityDetail /></AthleteRoute></ProtectedRoute>} />
           <Route path="/events" element={<ProtectedRoute><AthleteRoute><Events /></AthleteRoute></ProtectedRoute>} />
           <Route path="/analysis" element={<ProtectedRoute><AthleteRoute><Analysis /></AthleteRoute></ProtectedRoute>} />
-          <Route path="/coaches" element={<ProtectedRoute><AthleteRoute><Coaches /></AthleteRoute></ProtectedRoute>} />
+          <Route path="/coaches" element={<ProtectedRoute><NotAppAdmin><Coaches /></NotAppAdmin></ProtectedRoute>} />
           <Route path="/goals" element={<ProtectedRoute><AthleteRoute><Goals /></AthleteRoute></ProtectedRoute>} />
-          <Route path="/clubs" element={<ProtectedRoute><Clubs /></ProtectedRoute>} />
-          <Route path="/clubs/:id" element={<ProtectedRoute><ClubDetail /></ProtectedRoute>} />
-          <Route path="/notifications" element={<ProtectedRoute><Notifications /></ProtectedRoute>} />
+          <Route path="/clubs" element={<ProtectedRoute><NotAppAdmin><Clubs /></NotAppAdmin></ProtectedRoute>} />
+          <Route path="/clubs/:id" element={<ProtectedRoute><NotAppAdmin><ClubDetail /></NotAppAdmin></ProtectedRoute>} />
+          <Route path="/notifications" element={<ProtectedRoute><NotAppAdmin><Notifications /></NotAppAdmin></ProtectedRoute>} />
           <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
           <Route path="/support" element={<ProtectedRoute><Support /></ProtectedRoute>} />
-          <Route path="/membership" element={<ProtectedRoute><Membership /></ProtectedRoute>} />
+          <Route path="/membership" element={<ProtectedRoute><NotAppAdmin><Membership /></NotAppAdmin></ProtectedRoute>} />
           <Route path="/admin" element={<ProtectedRoute roles={['app_admin']}><Admin /></ProtectedRoute>} />
           <Route path="/" element={<HomeRedirect />} />
         </Routes>
@@ -58,8 +58,15 @@ function HomeRedirect() {
   return <Navigate to={homePath(user)} replace />;
 }
 
+function NotAppAdmin({ children }) {
+  const { user } = useAuth();
+  if (isAppAdminAccount(user)) return <Navigate to="/admin" replace />;
+  return children;
+}
+
 function AthleteRoute({ children }) {
   const { user } = useAuth();
+  if (isAppAdminAccount(user)) return <Navigate to="/admin" replace />;
   if (isClubOnlyAccount(user)) return <Navigate to="/clubs" replace />;
   return children;
 }

@@ -1,11 +1,11 @@
 import express from 'express';
 import { camel, camelMany, many, one, query } from '../config/db.js';
-import { protect, requireMembership } from '../middleware/auth.js';
+import { protect, requireMembership, rejectAppAdmin } from '../middleware/auth.js';
 import { asyncHandler } from '../middleware/error.js';
 import { createNotification } from '../services/notificationService.js';
 
 const router = express.Router();
-router.use(protect, requireMembership);
+router.use(protect, requireMembership, rejectAppAdmin);
 
 async function refreshGoalProgress(goal) {
   if (goal.type === 'weekly_mileage' || goal.type === 'distance') {

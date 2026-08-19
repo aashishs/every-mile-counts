@@ -62,6 +62,11 @@ export async function getUserRoles(userId) {
   return rows.map((r) => r.role);
 }
 
+export function isAppAdminUser(userOrRoles) {
+  const roles = Array.isArray(userOrRoles) ? userOrRoles : userOrRoles?.roles || [];
+  return roles.includes('app_admin');
+}
+
 export function isClubOnlyUser(userOrRoles) {
   const roles = Array.isArray(userOrRoles) ? userOrRoles : userOrRoles?.roles || [];
   return roles.includes('club_admin') && !roles.includes('athlete') && !roles.includes('coach') && !roles.includes('app_admin');

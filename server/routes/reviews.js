@@ -1,12 +1,12 @@
 import express from 'express';
 import { camel, camelMany, many, one, query } from '../config/db.js';
-import { protect, requireMembership, requireRole } from '../middleware/auth.js';
+import { protect, requireMembership, requireRole, rejectAppAdmin } from '../middleware/auth.js';
 import { analyzeActivity } from '../services/analysisService.js';
 import { createNotification } from '../services/notificationService.js';
 import { asyncHandler } from '../middleware/error.js';
 
 const router = express.Router();
-router.use(protect, requireMembership);
+router.use(protect, requireMembership, rejectAppAdmin);
 
 async function assigned(coachId, athleteId) {
   return one(
@@ -56,7 +56,7 @@ router.post(
 
 router.get(
   '/inbox',
-  requireRole('coach', 'app_admin'),
+  requireRole('coach'),
   asyncHandler(async (req, res) => {
     const requests = camelMany(
       await many(
@@ -76,7 +76,7 @@ router.get(
 
 router.post(
   '/',
-  requireRole('coach', 'app_admin'),
+  requireRole('coach'),
   asyncHandler(async (req, res) => {
     const {
       activityId,
@@ -94,7 +94,7 @@ router.post(
 
     const activity = camel(await one('SELECT * FROM activities WHERE id = $1', [activityId]));
     if (!activity) return res.status(404).json({ message: 'Activity not found' });
-    if (!(await assigned(req.user.id, activity.athleteId)) && !req.user.roles.includes('app_admin')) {
+    if (!(await assigned(req.user.id, activity.athleteId))) {
       return res.status(403).json({ message: 'Not assigned to this athlete' });
     }
 
@@ -161,11 +161,11 @@ router.post(
 
 router.get(
   '/activity/:activityId/insights',
-  requireRole('coach', 'app_admin'),
+  requireRole('coach'),
   asyncHandler(async (req, res) => {
     const activity = camel(await one('SELECT * FROM activities WHERE id = $1', [req.params.activityId]));
     if (!activity) return res.status(404).json({ message: 'Activity not found' });
-    if (!(await assigned(req.user.id, activity.athleteId)) && !req.user.roles.includes('app_admin')) {
+    if (!(await assigned(req.user.id, activity.athleteId))) {
       return res.status(403).json({ message: 'Not assigned to this athlete' });
     }
     const athlete = camel(await one('SELECT * FROM users WHERE id = $1', [activity.athleteId]));

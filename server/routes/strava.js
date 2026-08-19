@@ -4,13 +4,16 @@ import { protect, requireMembership } from '../middleware/auth.js';
 import { completeStravaOAuth, getStravaConnection, syncStravaActivities } from '../services/stravaService.js';
 import { asyncHandler } from '../middleware/error.js';
 import { writeAudit } from '../services/auditService.js';
-import { getUserRoles, isClubOnlyUser } from '../utils/membership.js';
+import { getUserRoles, isAppAdminUser, isClubOnlyUser } from '../utils/membership.js';
 import { encryptionConfigured } from '../utils/crypto.js';
 import { clientUrl, requestPublicUrl, stravaRedirectUri } from '../utils/urls.js';
 
 const router = express.Router();
 
 function rejectClubAccount(req, res, next) {
+  if (isAppAdminUser(req.user)) {
+    return res.status(400).json({ message: 'App admins do not connect to Strava.' });
+  }
   if (isClubOnlyUser(req.user)) {
     return res.status(400).json({ message: 'Clubs do not connect to Strava. Athletes sync their own activities.' });
   }
@@ -83,6 +86,9 @@ router.get(
     }
     if (error) return res.redirect(`${appUrl}/dashboard?strava=error`);
     const roles = state ? await getUserRoles(state) : [];
+    if (isAppAdminUser(roles)) {
+      return res.redirect(`${appUrl}/admin`);
+    }
     if (isClubOnlyUser(roles)) {
       return res.redirect(`${appUrl}/clubs`);
     }
@@ -131,7 +137,7 @@ router.get(
   '/status',
   protect,
   asyncHandler(async (req, res) => {
-    if (isClubOnlyUser(req.user)) {
+    if (isAppAdminUser(req.user) || isClubOnlyUser(req.user)) {
       return res.json({ connected: false, applicable: false, configured: stravaConfigured() });
     }
     const conn = await getStravaConnection(req.user.id);

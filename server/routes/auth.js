@@ -5,12 +5,13 @@ import rateLimit from 'express-rate-limit';
 import { camel, one, query } from '../config/db.js';
 import { signToken } from '../utils/jwt.js';
 import { loadPublicUser, protect } from '../middleware/auth.js';
-import { planExpiryDate, publicUser, isClubOnlyUser } from '../utils/membership.js';
+import { planExpiryDate, publicUser, isAppAdminUser, isClubOnlyUser } from '../utils/membership.js';
 import { writeAudit } from '../services/auditService.js';
 import { asyncHandler } from '../middleware/error.js';
 import { syncStravaOnLogin } from '../services/stravaService.js';
 import { clientUrl } from '../utils/urls.js';
 import { sendMail } from '../services/mailer.js';
+import { issueLoginOtp, isSignupOtpPaused, verifyLoginOtp } from '../services/otpService.js';
 
 const router = express.Router();
 
@@ -78,7 +79,7 @@ router.post(
     const valid = ['athlete', 'coach', 'club_admin'];
     let userRoles = requested.filter((r) => valid.includes(r));
     if (userRoles.includes('club_admin')) {
-      userRoles = ['club_admin'];
+      userRoles = ['club_admin', ...(requested.includes('coach') ? ['coach'] : [])];
     } else if (!userRoles.length) {
       userRoles = ['athlete'];
     }
@@ -129,6 +130,11 @@ router.post(
          VALUES ($1, $2, 'club_admin', 'active', NOW())`,
         [club.id, user.id]
       );
+      if (userRoles.includes('coach')) {
+        await query(`UPDATE clubs SET status = 'active', updated_at = NOW() WHERE id = $1 AND status = 'pending_coach'`, [
+          club.id,
+        ]);
+      }
     }
 
     const { invite, plan } = await redeemInvitation({
@@ -161,18 +167,49 @@ router.post(
       ip: req.ip,
     });
 
-    const membership = {
-      status: 'active',
-      startsAt: new Date(),
-      expiresAt,
-    };
-    const payload = await publicUser(user, { roles: userRoles, membership });
-    res.status(201).json({ token: signToken(user.id), user: payload, club });
+    const clubPayload = club ? { id: club.id, name: club.name } : null;
+    if (await isSignupOtpPaused()) {
+      await query(
+        `UPDATE users SET email_verified_at = COALESCE(email_verified_at, NOW()), last_login_at = NOW(), updated_at = NOW()
+         WHERE id = $1`,
+        [user.id]
+      );
+      const row = camel(await one('SELECT * FROM users WHERE id = $1', [user.id]));
+      const { getUserRoles, getUserMembership } = await import('../utils/membership.js');
+      const roles = await getUserRoles(row.id);
+      const membership = await getUserMembership(row.id);
+      return res.status(201).json({
+        requiresOtp: false,
+        token: signToken(row.id),
+        user: await publicUser(row, { roles, membership }),
+        club: clubPayload,
+      });
+    }
+
+    try {
+      const otp = await issueLoginOtp({ id: user.id, email: user.email, firstName: user.firstName }, { ip: req.ip });
+      res.status(201).json({ ...otp, club: clubPayload });
+    } catch (err) {
+      err.status = err.status || 503;
+      err.message =
+        err.message ||
+        'Account was created but the verification email could not be sent. An admin can pause sign-up OTP in Settings.';
+      throw err;
+    }
   })
 );
 
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 12,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: 'Too many attempts. Try again in a few minutes.' },
+});
+
 router.post(
   '/login',
+  authLimiter,
   asyncHandler(async (req, res) => {
     const { email, password } = req.body;
     if (!email || !password) {
@@ -189,24 +226,80 @@ router.post(
       return res.status(401).json({ message: 'Invalid email or password' });
     }
 
-    await query('UPDATE users SET last_login_at = NOW() WHERE id = $1', [row.id]);
     const user = camel(row);
+    if (await isSignupOtpPaused()) {
+      await query(
+        `UPDATE users SET email_verified_at = COALESCE(email_verified_at, NOW()), last_login_at = NOW(), updated_at = NOW()
+         WHERE id = $1`,
+        [user.id]
+      );
+      const { getUserRoles, getUserMembership } = await import('../utils/membership.js');
+      const roles = await getUserRoles(user.id);
+      const membership = await getUserMembership(user.id);
+      await writeAudit({ userId: user.id, action: 'login', entityType: 'user', entityId: user.id, ip: req.ip });
+      const payload = {
+        requiresOtp: false,
+        token: signToken(user.id),
+        user: await publicUser(user, { roles, membership }),
+      };
+      res.json(payload);
+      if (!isAppAdminUser(roles) && !isClubOnlyUser(roles)) {
+        syncStravaOnLogin(user.id).catch((err) => {
+          console.error('Login Strava sync:', err.message);
+        });
+      }
+      return;
+    }
+
+    const otp = await issueLoginOtp(user, { ip: req.ip });
+    await writeAudit({ userId: user.id, action: 'login_otp_sent', entityType: 'user', entityId: user.id, ip: req.ip });
+    res.json(otp);
+  })
+);
+
+router.post(
+  '/verify-otp',
+  authLimiter,
+  asyncHandler(async (req, res) => {
+    const userId = await verifyLoginOtp({ challengeId: req.body.challengeId, code: req.body.code });
+    const row = camel(await one('SELECT * FROM users WHERE id = $1', [userId]));
     const { getUserRoles, getUserMembership } = await import('../utils/membership.js');
-    user.roles = await getUserRoles(user.id);
-    const membership = await getUserMembership(user.id);
-
-    await writeAudit({ userId: user.id, action: 'login', entityType: 'user', entityId: user.id, ip: req.ip });
-
+    row.roles = await getUserRoles(row.id);
+    const membership = await getUserMembership(row.id);
+    await writeAudit({ userId: row.id, action: 'login', entityType: 'user', entityId: row.id, ip: req.ip });
     res.json({
-      token: signToken(user.id),
-      user: await publicUser(user, { roles: user.roles, membership }),
+      token: signToken(row.id),
+      user: await publicUser(row, { roles: row.roles, membership }),
     });
-
-    if (!isClubOnlyUser(user.roles)) {
-      syncStravaOnLogin(user.id).catch((err) => {
+    if (!isAppAdminUser(row.roles) && !isClubOnlyUser(row.roles)) {
+      syncStravaOnLogin(row.id).catch((err) => {
         console.error('Login Strava sync:', err.message);
       });
     }
+  })
+);
+
+router.post(
+  '/resend-otp',
+  authLimiter,
+  asyncHandler(async (req, res) => {
+    const { challengeId } = req.body;
+    const pending = camel(
+      await one(
+        `SELECT t.user_id, u.email, u.first_name, u.status
+         FROM login_otps t JOIN users u ON u.id = t.user_id
+         WHERE t.id = $1`,
+        [challengeId]
+      )
+    );
+    if (!pending || pending.status !== 'active') {
+      return res.status(400).json({ message: 'Request a new sign-in to get a code' });
+    }
+    const otp = await issueLoginOtp(
+      { id: pending.userId, email: pending.email, firstName: pending.firstName },
+      { ip: req.ip }
+    );
+    res.json(otp);
   })
 );
 

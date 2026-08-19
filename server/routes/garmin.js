@@ -3,12 +3,15 @@ import { protect, requireMembership } from '../middleware/auth.js';
 import { completeGarminOAuth, getGarminConnection, startGarminOAuth, syncGarminActivities } from '../services/garminService.js';
 import { asyncHandler } from '../middleware/error.js';
 import { writeAudit } from '../services/auditService.js';
-import { isClubOnlyUser } from '../utils/membership.js';
+import { isAppAdminUser, isClubOnlyUser } from '../utils/membership.js';
 import { clientUrl } from '../utils/urls.js';
 
 const router = express.Router();
 
 function rejectClubAccount(req, res, next) {
+  if (isAppAdminUser(req.user)) {
+    return res.status(400).json({ message: 'App admins do not connect activity apps.' });
+  }
   if (isClubOnlyUser(req.user)) {
     return res.status(400).json({ message: 'Clubs do not connect activity apps. Athletes sync their own activities.' });
   }

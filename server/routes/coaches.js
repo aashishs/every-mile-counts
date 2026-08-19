@@ -1,12 +1,12 @@
 import express from 'express';
 import { camel, camelMany, many, one, query } from '../config/db.js';
-import { protect, requireMembership, requireRole } from '../middleware/auth.js';
+import { protect, requireMembership, requireRole, rejectAppAdmin } from '../middleware/auth.js';
 import { asyncHandler } from '../middleware/error.js';
 import { createNotification } from '../services/notificationService.js';
 
 const MAX_COACHES = 3;
 const router = express.Router();
-router.use(protect, requireMembership);
+router.use(protect, requireMembership, rejectAppAdmin);
 
 router.get(
   '/my-coaches',
@@ -33,7 +33,15 @@ router.get(
         `SELECT DISTINCT u.id, u.first_name, u.last_name, u.email, u.avatar_url,
                 c.id AS club_id, c.name AS club_name
          FROM club_members me
-         JOIN club_members cm ON cm.club_id = me.club_id AND cm.role = 'coach' AND cm.status = 'active'
+         JOIN club_members cm ON cm.club_id = me.club_id AND cm.status = 'active'
+           AND (
+             cm.role = 'coach'
+             OR (
+               cm.role = 'club_admin' AND EXISTS (
+                 SELECT 1 FROM user_roles ur WHERE ur.user_id = cm.user_id AND ur.role = 'coach'
+               )
+             )
+           )
          JOIN users u ON u.id = cm.user_id
          JOIN clubs c ON c.id = me.club_id
          WHERE me.user_id = $1 AND me.status = 'active' AND me.role = 'member'
@@ -82,7 +90,15 @@ router.post(
       await one(
         `SELECT me.club_id
          FROM club_members me
-         JOIN club_members cm ON cm.club_id = me.club_id AND cm.user_id = $2 AND cm.role = 'coach' AND cm.status = 'active'
+         JOIN club_members cm ON cm.club_id = me.club_id AND cm.user_id = $2 AND cm.status = 'active'
+           AND (
+             cm.role = 'coach'
+             OR (
+               cm.role = 'club_admin' AND EXISTS (
+                 SELECT 1 FROM user_roles ur WHERE ur.user_id = cm.user_id AND ur.role = 'coach'
+               )
+             )
+           )
          WHERE me.user_id = $1 AND me.status = 'active'
          LIMIT 1`,
         [req.user.id, coach.id]
@@ -107,7 +123,7 @@ router.post(
 
 router.get(
   '/my-athletes',
-  requireRole('coach', 'app_admin'),
+  requireRole('coach'),
   asyncHandler(async (req, res) => {
     const athletes = camelMany(
       await many(

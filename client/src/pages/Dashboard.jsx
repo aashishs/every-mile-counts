@@ -7,6 +7,7 @@ import PersonalRecords from '../components/PersonalRecords';
 import { useAuth } from '../context/AuthContext';
 import { formatDate, formatTime, getActivityIcon, initialActivityType, rememberActivityType } from '../utils/format';
 import { isClubOnlyAccount } from '../utils/roles';
+import StravaCard from '../components/StravaCard';
 
 function greeting() {
   const h = new Date().getHours();
@@ -32,8 +33,6 @@ export default function Dashboard() {
   const { user } = useAuth();
   const clubOnly = isClubOnlyAccount(user);
   const [data, setData] = useState(null);
-  const [strava, setStrava] = useState(null);
-  const [syncing, setSyncing] = useState(false);
   const [searchParams] = useSearchParams();
   const [type, setType] = useState(() => initialActivityType(user, searchParams.get('type')));
   const alertKey = searchParams.get('strava');
@@ -48,40 +47,10 @@ export default function Dashboard() {
 
   const load = async () => {
     try {
-      const [dash, s] = await Promise.all([
-        api.get('/activities/dashboard', { params: { type } }),
-        clubOnly ? Promise.resolve({ data: { applicable: false, connected: false } }) : api.get('/strava/status'),
-      ]);
+      const dash = await api.get('/activities/dashboard', { params: { type } });
       setData(dash.data);
-      setStrava(s.data);
     } catch (err) {
       console.error(err);
-    }
-  };
-
-  const connect = async (provider) => {
-    try {
-      const { data: d } = await api.get(`/${provider}/connect`);
-      if (!d?.url || !String(d.url).startsWith('https://www.strava.com/')) {
-        alert('Strava did not return a valid connect URL. Check CLIENT_URL on the API service.');
-        return;
-      }
-      window.location.assign(d.url);
-    } catch (err) {
-      alert(err.response?.data?.message || 'Could not start Strava connect');
-    }
-  };
-
-  const sync = async () => {
-    setSyncing(true);
-    try {
-      const { data: result } = await api.post('/strava/sync', null, { timeout: 10 * 60 * 1000 });
-      await load();
-      alert(`Imported or updated ${result.synced} Strava activities.`);
-    } catch (err) {
-      alert(err.response?.data?.message || 'Sync failed');
-    } finally {
-      setSyncing(false);
     }
   };
 
@@ -117,6 +86,8 @@ export default function Dashboard() {
           {messages[alertKey].text}
         </div>
       )}
+
+      {!clubOnly && <StravaCard user={user} />}
 
       {data && (
         <>
@@ -186,27 +157,6 @@ export default function Dashboard() {
             </Link>
           )}
 
-          {!clubOnly && strava && (strava.configured === false || strava.missing?.length) && (
-            <div className="card mb-5 border-accent/40">
-              <div className="font-semibold">Strava is not configured</div>
-              <p className="text-xs text-muted mt-1">
-                Add these on Railway → <strong>api</strong> → Variables (not web), then redeploy api:
-                {' '}
-                {(strava.missing || ['STRAVA_CLIENT_ID', 'STRAVA_CLIENT_SECRET']).join(', ')}
-              </p>
-            </div>
-          )}
-
-          {!clubOnly && strava?.configured !== false && !strava?.missing?.length && !strava?.connected && (
-            <div className="card flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5 border-accent/40">
-              <div>
-                <div className="font-semibold">Connect Strava</div>
-                <p className="text-xs text-muted mt-1">Pull in your runs, rides, and swims</p>
-              </div>
-              <button className="btn-accent btn-sm" onClick={() => connect('strava')}>Connect</button>
-            </div>
-          )}
-
           <section className="mb-8">
             <PersonalRecords records={data.personalRecords} sport={type} />
           </section>
@@ -245,15 +195,6 @@ export default function Dashboard() {
               </div>
             )}
           </section>
-
-          {!clubOnly && strava?.connected && (
-            <div className="flex items-center justify-between gap-3 text-xs text-muted mb-4">
-              <span>Strava · last sync {strava.lastSyncAt ? new Date(strava.lastSyncAt).toLocaleString() : '—'}</span>
-              <button className="btn-outline btn-sm" onClick={sync} disabled={syncing}>
-                {syncing || strava.lastSyncStatus === 'running' ? 'Syncing…' : 'Full sync'}
-              </button>
-            </div>
-          )}
         </>
       )}
     </Layout>
