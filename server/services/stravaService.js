@@ -67,24 +67,50 @@ async function saveTokens(userId, { accessToken, refreshToken, expiresAt, provid
   );
 }
 
+export const STRAVA_REAUTH_MESSAGE = 'Strava access expired. Try Reconnect to continue syncing.';
+
+export function isStravaAuthFailure(err) {
+  const status = err?.response?.status || err?.status;
+  const msg = String(err?.message || err?.response?.data?.message || '');
+  return status === 401 || status === 403 || /unauthorized|invalid[_\s-]*token|status code 401/i.test(msg);
+}
+
+export class StravaAuthError extends Error {
+  constructor(message = STRAVA_REAUTH_MESSAGE) {
+    super(message);
+    this.name = 'StravaAuthError';
+    this.status = 409;
+    this.code = 'strava_reauth';
+  }
+}
+
+export function friendlyStravaSyncError(err) {
+  return isStravaAuthFailure(err) ? STRAVA_REAUTH_MESSAGE : err.message || 'Strava sync failed';
+}
+
 export async function refreshStravaToken(conn) {
-  const response = await axios.post(
-    'https://www.strava.com/oauth/token',
-    stravaTokenBody({
-      client_id: String(process.env.STRAVA_CLIENT_ID || '').trim(),
-      client_secret: String(process.env.STRAVA_CLIENT_SECRET || '').trim(),
-      grant_type: 'refresh_token',
-      refresh_token: decrypt(conn.refreshTokenEnc),
-    }),
-    { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
-  );
-  await saveTokens(conn.userId, {
-    accessToken: response.data.access_token,
-    refreshToken: response.data.refresh_token,
-    expiresAt: new Date(response.data.expires_at * 1000),
-    providerUserId: conn.providerUserId,
-  });
-  return response.data.access_token;
+  try {
+    const response = await axios.post(
+      'https://www.strava.com/oauth/token',
+      stravaTokenBody({
+        client_id: String(process.env.STRAVA_CLIENT_ID || '').trim(),
+        client_secret: String(process.env.STRAVA_CLIENT_SECRET || '').trim(),
+        grant_type: 'refresh_token',
+        refresh_token: decrypt(conn.refreshTokenEnc),
+      }),
+      { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+    );
+    await saveTokens(conn.userId, {
+      accessToken: response.data.access_token,
+      refreshToken: response.data.refresh_token,
+      expiresAt: new Date(response.data.expires_at * 1000),
+      providerUserId: conn.providerUserId,
+    });
+    return response.data.access_token;
+  } catch (err) {
+    if (isStravaAuthFailure(err)) throw new StravaAuthError();
+    throw err;
+  }
 }
 
 export async function getValidAccessToken(userId) {
@@ -350,7 +376,6 @@ async function newestStravaTimestamp(userId) {
 }
 
 export async function syncStravaActivities(userId, { full = false, after: afterOverride } = {}) {
-  const accessToken = await getValidAccessToken(userId);
   await query(
     `UPDATE oauth_connections
      SET last_sync_status = 'running', last_sync_error = NULL, updated_at = NOW()
@@ -358,20 +383,21 @@ export async function syncStravaActivities(userId, { full = false, after: afterO
     [userId]
   );
 
-  let page = 1;
-  let synced = 0;
-  const params = { per_page: PER_PAGE };
-  const maxPages = full ? MAX_PAGES : 5;
-  if (!full) {
-    const conn = await getConnection(userId);
-    const after =
-      afterOverride
-      || (await newestStravaTimestamp(userId))
-      || (conn?.lastSyncAt ? Math.floor(new Date(conn.lastSyncAt).getTime() / 1000) : null);
-    if (after) params.after = after;
-  }
-
   try {
+    const accessToken = await getValidAccessToken(userId);
+    let page = 1;
+    let synced = 0;
+    const params = { per_page: PER_PAGE };
+    const maxPages = full ? MAX_PAGES : 5;
+    if (!full) {
+      const conn = await getConnection(userId);
+      const after =
+        afterOverride
+        || (await newestStravaTimestamp(userId))
+        || (conn?.lastSyncAt ? Math.floor(new Date(conn.lastSyncAt).getTime() / 1000) : null);
+      if (after) params.after = after;
+    }
+
     while (page <= maxPages) {
       const { data: activities } = await stravaGet(`${STRAVA_API}/athlete/activities`, accessToken, {
         ...params,
@@ -400,12 +426,16 @@ export async function syncStravaActivities(userId, { full = false, after: afterO
     );
     return synced;
   } catch (err) {
+    const message = friendlyStravaSyncError(err);
     await query(
       `UPDATE oauth_connections
        SET last_sync_status = 'error', last_sync_error = $2, updated_at = NOW()
        WHERE user_id = $1 AND provider = 'strava'`,
-      [userId, err.message]
+      [userId, message]
     );
+    if (isStravaAuthFailure(err) || err instanceof StravaAuthError) {
+      throw err instanceof StravaAuthError ? err : new StravaAuthError();
+    }
     throw err;
   }
 }

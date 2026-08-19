@@ -172,13 +172,20 @@ router.get(
       return res.json({ connected: false, applicable: false, configured: stravaConfigured() });
     }
     const conn = await getStravaConnection(req.user.id);
+    const lastSyncError = conn?.lastSyncError || null;
+    const needsReconnect = /401|unauthorized|status code 401|invalid[_\s-]*token|access expired/i.test(
+      String(lastSyncError || '')
+    );
     res.json({
       configured: stravaConfigured(),
       missing: stravaMissing(),
       connected: Boolean(conn?.connected),
       lastSyncAt: conn?.lastSyncAt,
       lastSyncStatus: conn?.lastSyncStatus,
-      lastSyncError: conn?.lastSyncError,
+      lastSyncError: needsReconnect
+        ? 'Strava access expired. Try Reconnect to continue syncing.'
+        : lastSyncError,
+      needsReconnect,
       providerUserId: conn?.providerUserId,
     });
   })

@@ -15,7 +15,9 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (res) => res,
   (error) => {
-    if (error.response?.status === 401) {
+    const url = String(error.config?.url || '');
+    const stravaCall = url.includes('/strava');
+    if (error.response?.status === 401 && !stravaCall && error.response?.data?.code !== 'strava_reauth') {
       localStorage.removeItem('token');
       const path = window.location.pathname;
       if (!['/login', '/register', '/forgot-password', '/reset-password'].includes(path)) {

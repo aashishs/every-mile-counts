@@ -63,13 +63,24 @@ export default function StravaCard({ user, autoConnect = false }) {
       await load();
       setMsg(`Imported or updated ${data.synced} Strava activities.`);
     } catch (error) {
-      setErr(error.response?.data?.message || 'Sync failed');
+      await load();
+      const data = error.response?.data;
+      if (data?.code === 'strava_reauth' || error.response?.status === 401 || /401|unauthorized/i.test(data?.message || '')) {
+        setErr('Strava access expired. Try Reconnect to continue syncing.');
+      } else {
+        setErr(data?.message || 'Sync failed. Try Reconnect if this keeps happening.');
+      }
     } finally {
       setBusy(false);
     }
   };
 
   if (!strava) return null;
+
+  const needsReconnect = Boolean(strava.needsReconnect) || /401|unauthorized|access expired/i.test(String(strava.lastSyncError || err || ''));
+  const syncError = needsReconnect
+    ? 'Strava access expired. Try Reconnect to continue syncing.'
+    : strava?.lastSyncError;
 
   return (
     <div className={`card mb-5 ${connected ? 'border-accent/40' : 'border-accent/60'}`}>
@@ -81,8 +92,8 @@ export default function StravaCard({ user, autoConnect = false }) {
               ? `Last sync ${strava.lastSyncAt ? new Date(strava.lastSyncAt).toLocaleString() : 'not yet'}`
               : 'Authorize Strava to pull in your runs, rides, and swims automatically. This is the fastest way to fill your log.'}
           </p>
-          {strava?.lastSyncError && connected && (
-            <p className="text-xs text-orange-300 mt-1">{strava.lastSyncError}</p>
+          {syncError && connected && (
+            <p className="text-xs text-orange-300 mt-1">{syncError}</p>
           )}
           {idsMissing && (
             <p className="text-xs text-orange-300 mt-1">
@@ -90,7 +101,7 @@ export default function StravaCard({ user, autoConnect = false }) {
             </p>
           )}
           {msg && <p className="text-xs text-brand mt-1">{msg}</p>}
-          {err && <p className="text-xs text-orange-300 mt-1">{err}</p>}
+          {err && (!syncError || err !== syncError) && <p className="text-xs text-orange-300 mt-1">{err}</p>}
         </div>
         <div className="flex gap-2 shrink-0">
           {connected ? (
@@ -98,7 +109,12 @@ export default function StravaCard({ user, autoConnect = false }) {
               <button className="btn-primary btn-sm" type="button" onClick={sync} disabled={busy}>
                 {busy || strava?.lastSyncStatus === 'running' ? 'Syncing…' : 'Sync Strava'}
               </button>
-              <button className="btn-outline btn-sm" type="button" onClick={connect} disabled={busy}>
+              <button
+                className={`${needsReconnect ? 'btn-accent' : 'btn-outline'} btn-sm`}
+                type="button"
+                onClick={connect}
+                disabled={busy}
+              >
                 Reconnect
               </button>
             </>
