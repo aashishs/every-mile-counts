@@ -1,3 +1,5 @@
+import { isBeta, versionLabel } from '../utils/appVersion';
+
 export default function Badge({ children, variant = 'muted', className = '' }) {
   return <span className={`badge ${VARIANT_CLASS[variant] || VARIANT_CLASS.muted} ${className}`.trim()}>{children}</span>;
 }
@@ -96,6 +98,14 @@ export function StatusBadge({ value, fallback }) {
   return (
     <Badge variant={STATUS_VARIANT[key] || 'muted'}>
       {STATUS_LABEL[key] || fallback || humanize(value)}
+    </Badge>
+  );
+}
+
+export function VersionBadge({ className = '' }) {
+  return (
+    <Badge variant={isBeta ? 'warning' : 'muted'} className={className}>
+      {isBeta ? 'Beta' : versionLabel}
     </Badge>
   );
 }

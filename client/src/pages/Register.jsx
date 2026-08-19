@@ -3,6 +3,8 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { homePath } from '../utils/roles';
 import OtpVerify from '../components/OtpVerify';
+import { VersionBadge } from '../components/Badge';
+import { isBeta } from '../utils/appVersion';
 
 const ACCOUNT_TYPES = [
   { value: 'athlete', label: 'Athlete', hint: 'Sync training and get coached' },
@@ -64,6 +66,11 @@ export default function Register() {
         <h1 className="text-center text-2xl font-bold mb-1">
           Join <span className="text-brand">Every Mile Counts</span>
         </h1>
+        {isBeta && (
+          <div className="flex justify-center mt-2">
+            <VersionBadge />
+          </div>
+        )}
         <p className="text-center text-muted mb-6">
           {otp ? 'Verify your email to finish' : 'Invitation-only beta. Ask an admin for a code.'}
         </p>

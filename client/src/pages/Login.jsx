@@ -3,6 +3,8 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { homePath } from '../utils/roles';
 import OtpVerify from '../components/OtpVerify';
+import { VersionBadge } from '../components/Badge';
+import { isBeta } from '../utils/appVersion';
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -40,6 +42,11 @@ export default function Login() {
         <h1 className="text-center font-display text-4xl font-bold mb-1 tracking-tight">
           Every <span className="text-brand">Mile</span> Counts
         </h1>
+        {isBeta && (
+          <div className="flex justify-center mt-2 mb-1">
+            <VersionBadge />
+          </div>
+        )}
         <p className="text-center text-muted mb-8">{otp ? 'Verify your email' : 'Train. Race. Repeat.'}</p>
         {notice && !otp && <div className="mb-4 rounded-xl border border-brand/40 bg-brand/10 text-slate-100 p-3 text-sm">{notice}</div>}
         {otp ? (

@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { isAppAdminAccount, isClubOnlyAccount } from '../utils/roles';
+import { VersionBadge } from './Badge';
+import { isBeta } from '../utils/appVersion';
 
 const athleteLinks = [
   { to: '/dashboard', label: 'Dashboard', icon: '📊' },
@@ -108,6 +110,7 @@ export default function Layout({ children }) {
       <span className="font-bold leading-tight truncate">
         Every <span className="text-brand">Mile</span> Counts
       </span>
+      {isBeta && <VersionBadge className="shrink-0" />}
     </div>
   );
 
@@ -118,8 +121,11 @@ export default function Layout({ children }) {
         <div className="font-semibold text-sm truncate">
           {user.firstName} {user.lastName}
         </div>
-        <div className="text-xs text-muted truncate">
-          {appAdmin ? 'App admin' : clubOnly ? 'Club admin' : user.roles?.join(' · ')}
+        <div className="flex flex-wrap items-center gap-1 mt-0.5">
+          <span className="text-xs text-muted truncate">
+            {appAdmin ? 'App admin' : clubOnly ? 'Club admin' : user.roles?.join(' · ')}
+          </span>
+          <VersionBadge />
         </div>
       </div>
     </div>
@@ -130,9 +136,12 @@ export default function Layout({ children }) {
       <aside className="hidden md:flex w-64 shrink-0 flex-col bg-card/80 border-r border-white/5 p-6 sticky top-0 h-screen backdrop-blur">
         <div className="flex items-center gap-3 pb-6 mb-4 border-b border-line">
           <img src="/logo.svg" alt="" className="w-11 h-11 rounded-2xl shrink-0" />
-          <h1 className="text-base font-bold leading-tight">
-            Every <span className="text-brand">Mile</span> Counts
-          </h1>
+          <div className="min-w-0">
+            <h1 className="text-base font-bold leading-tight">
+              Every <span className="text-brand">Mile</span> Counts
+            </h1>
+            {isBeta && <div className="mt-1"><VersionBadge /></div>}
+          </div>
         </div>
         <nav className="flex flex-col gap-1 flex-1 overflow-y-auto">{nav}</nav>
         <div className="pt-4 border-t border-line mt-4">
