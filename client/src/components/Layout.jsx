@@ -96,7 +96,7 @@ export default function Layout({ children }) {
 
   const brand = (
     <div className="flex items-center gap-2 min-w-0">
-      <span className="text-xl shrink-0">🏃</span>
+      <img src="/logo.svg" alt="" className="w-9 h-9 rounded-xl shrink-0" />
       <span className="font-bold leading-tight truncate">
         Every <span className="text-brand">Mile</span> Counts
       </span>
@@ -121,7 +121,7 @@ export default function Layout({ children }) {
     <div className="min-h-screen md:flex">
       <aside className="hidden md:flex w-64 shrink-0 flex-col bg-card/80 border-r border-white/5 p-6 sticky top-0 h-screen backdrop-blur">
         <div className="flex items-center gap-3 pb-6 mb-4 border-b border-line">
-          <span className="text-2xl">🏃</span>
+          <img src="/logo.svg" alt="" className="w-11 h-11 rounded-2xl shrink-0" />
           <h1 className="text-base font-bold leading-tight">
             Every <span className="text-brand">Mile</span> Counts
           </h1>

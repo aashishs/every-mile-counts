@@ -28,6 +28,7 @@ export default function ForgotPassword() {
   return (
     <div className="min-h-screen grid place-items-center p-6 bg-gradient-to-br from-ink to-slate-900">
       <div className="w-full max-w-md card p-8">
+        <img src="/logo.svg" alt="Every Mile Counts" className="w-16 h-16 rounded-2xl mx-auto mb-4" />
         <h1 className="text-center text-2xl font-bold mb-1">Forgot password</h1>
         <p className="text-center text-muted mb-8">We’ll send a reset link if that email is registered</p>
         {error && <div className="mb-4 rounded-xl border border-red-500/40 bg-red-500/10 text-red-200 p-3 text-sm">{error}</div>}

@@ -30,6 +30,7 @@ export default function Login() {
   return (
     <div className="min-h-screen grid place-items-center p-6 bg-gradient-to-br from-ink to-slate-900">
       <div className="w-full max-w-md card p-8">
+        <img src="/logo.svg" alt="Every Mile Counts" className="w-20 h-20 rounded-3xl mx-auto mb-4" />
         <h1 className="text-center font-display text-4xl font-bold mb-1 tracking-tight">
           Every <span className="text-brand">Mile</span> Counts
         </h1>

@@ -45,6 +45,7 @@ export default function Register() {
   return (
     <div className="min-h-screen grid place-items-center p-6 bg-gradient-to-br from-ink to-slate-900">
       <div className="w-full max-w-md card p-8">
+        <img src="/logo.svg" alt="Every Mile Counts" className="w-16 h-16 rounded-2xl mx-auto mb-4" />
         <h1 className="text-center text-2xl font-bold mb-1">
           Join <span className="text-brand">Every Mile Counts</span>
         </h1>
