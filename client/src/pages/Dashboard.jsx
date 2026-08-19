@@ -61,8 +61,12 @@ export default function Dashboard() {
   };
 
   const connect = async (provider) => {
-    const { data: d } = await api.get(`/${provider}/connect`);
-    window.location.href = d.url;
+    try {
+      const { data: d } = await api.get(`/${provider}/connect`);
+      window.location.href = d.url;
+    } catch (err) {
+      alert(err.response?.data?.message || 'Could not start Strava connect');
+    }
   };
 
   const sync = async () => {
@@ -170,7 +174,16 @@ export default function Dashboard() {
             </Link>
           )}
 
-          {!clubOnly && !strava?.connected && (
+          {!clubOnly && strava && strava.configured === false && (
+            <div className="card mb-5 border-accent/40">
+              <div className="font-semibold">Strava is not configured</div>
+              <p className="text-xs text-muted mt-1">
+                Add STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET, and STRAVA_REDIRECT_URI on the Railway api service, then redeploy.
+              </p>
+            </div>
+          )}
+
+          {!clubOnly && strava?.configured !== false && !strava?.connected && (
             <div className="card flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5 border-accent/40">
               <div>
                 <div className="font-semibold">Connect Strava</div>

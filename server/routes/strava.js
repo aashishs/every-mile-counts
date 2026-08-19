@@ -16,12 +16,21 @@ function rejectClubAccount(req, res, next) {
   next();
 }
 
+function stravaConfigured() {
+  return Boolean(process.env.STRAVA_CLIENT_ID && process.env.STRAVA_CLIENT_SECRET);
+}
+
 router.get(
   '/connect',
   protect,
   requireMembership,
   rejectClubAccount,
   (req, res) => {
+    if (!stravaConfigured()) {
+      return res.status(503).json({
+        message: 'Strava is not configured. Set STRAVA_CLIENT_ID and STRAVA_CLIENT_SECRET on the API service.',
+      });
+    }
     const params = new URLSearchParams({
       client_id: process.env.STRAVA_CLIENT_ID,
       redirect_uri: stravaRedirectUri(),
@@ -80,10 +89,11 @@ router.get(
   protect,
   asyncHandler(async (req, res) => {
     if (isClubOnlyUser(req.user)) {
-      return res.json({ connected: false, applicable: false });
+      return res.json({ connected: false, applicable: false, configured: stravaConfigured() });
     }
     const conn = await getStravaConnection(req.user.id);
     res.json({
+      configured: stravaConfigured(),
       connected: Boolean(conn?.connected),
       lastSyncAt: conn?.lastSyncAt,
       lastSyncStatus: conn?.lastSyncStatus,

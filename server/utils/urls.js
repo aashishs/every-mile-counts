@@ -44,7 +44,7 @@ export function isAllowedOrigin(origin) {
 }
 
 export function stravaRedirectUri() {
-  return process.env.STRAVA_REDIRECT_URI || `${publicApiUrl()}/api/strava/callback`;
+  return process.env.STRAVA_REDIRECT_URI || `${clientUrl()}/api/strava/callback`;
 }
 
 export function garminRedirectUri() {
