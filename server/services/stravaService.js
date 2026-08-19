@@ -289,7 +289,10 @@ export async function syncStravaOnLogin(userId) {
     return { skipped: 'recent' };
   }
   const newest = await newestStravaTimestamp(userId);
-  if (!newest && !conn.lastSyncAt) return { skipped: 'never_synced' };
+  if (!newest && !conn.lastSyncAt) {
+    const synced = await syncStravaActivities(userId, { full: true });
+    return { synced };
+  }
   const synced = await syncStravaActivities(userId, { full: false });
   return { synced };
 }

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import Layout from '../components/Layout';
+import { formatActivityPrimary, formatActivitySecondary, formatDate, getActivityIcon } from '../utils/format';
 
 const TABS = ['overview', 'users', 'clubs', 'codes', 'memberships', 'settings', 'audit'];
 
@@ -32,7 +33,7 @@ function codeStateLabel(state) {
 }
 
 export default function Admin() {
-  const [tab, setTab] = useState('codes');
+  const [tab, setTab] = useState('users');
   const [overview, setOverview] = useState(null);
   const [users, setUsers] = useState([]);
   const [clubs, setClubs] = useState([]);
@@ -48,10 +49,24 @@ export default function Admin() {
   const [codeErr, setCodeErr] = useState('');
   const [openRedemptions, setOpenRedemptions] = useState(null);
   const [redemptions, setRedemptions] = useState([]);
+  const [userQ, setUserQ] = useState('');
+  const [selectedId, setSelectedId] = useState(null);
+  const [detail, setDetail] = useState(null);
+  const [syncingId, setSyncingId] = useState(null);
+  const [adminMsg, setAdminMsg] = useState('');
+  const [adminErr, setAdminErr] = useState('');
+  const [clubPick, setClubPick] = useState('');
+  const [clubRole, setClubRole] = useState('member');
+  const [coachPick, setCoachPick] = useState('');
 
   const load = async (next = tab) => {
     if (next === 'overview') setOverview((await api.get('/admin/overview')).data);
-    if (next === 'users') setUsers((await api.get('/admin/users')).data.users);
+    if (next === 'users') {
+      const params = {};
+      if (userQ.trim()) params.q = userQ.trim();
+      setUsers((await api.get('/admin/users', { params })).data.users);
+      setClubs((await api.get('/admin/clubs')).data.clubs);
+    }
     if (next === 'clubs') setClubs((await api.get('/admin/clubs')).data.clubs);
     if (next === 'codes') {
       const params = {};
@@ -122,9 +137,88 @@ export default function Admin() {
   };
 
   const setUserStatus = async (id, status) => {
+    setAdminErr('');
     await api.patch(`/admin/users/${id}`, { status });
     load('users');
+    if (selectedId === id) openUser(id);
   };
+
+  const openUser = async (id) => {
+    setSelectedId(id);
+    setAdminErr('');
+    setAdminMsg('');
+    const { data } = await api.get(`/admin/users/${id}`);
+    setDetail(data);
+  };
+
+  const syncUser = async (id) => {
+    setSyncingId(id);
+    setAdminErr('');
+    setAdminMsg('');
+    try {
+      const { data } = await api.post(`/admin/users/${id}/sync`, null, { timeout: 10 * 60 * 1000 });
+      const n = data.total ?? 0;
+      setAdminMsg(`Synced ${n} activit${n === 1 ? 'y' : 'ies'}`);
+      load('users');
+      await openUser(id);
+    } catch (err) {
+      setAdminErr(err.response?.data?.message || 'Sync failed');
+    } finally {
+      setSyncingId(null);
+    }
+  };
+
+  const addToClub = async (e) => {
+    e.preventDefault();
+    if (!selectedId || !clubPick) return;
+    setAdminErr('');
+    try {
+      const { data } = await api.post(`/admin/users/${selectedId}/club`, { clubId: clubPick, role: clubRole });
+      setAdminMsg(data.message);
+      await openUser(selectedId);
+      load('users');
+    } catch (err) {
+      setAdminErr(err.response?.data?.message || 'Could not add to club');
+    }
+  };
+
+  const assignCoach = async (e) => {
+    e.preventDefault();
+    if (!selectedId || !coachPick) return;
+    setAdminErr('');
+    try {
+      const { data } = await api.post('/admin/assign', {
+        athleteId: selectedId,
+        coachId: coachPick,
+        clubId: clubPick || undefined,
+      });
+      setAdminMsg(data.message);
+      await openUser(selectedId);
+    } catch (err) {
+      setAdminErr(err.response?.data?.message || 'Could not assign coach');
+    }
+  };
+
+  const removeAssignment = async (id) => {
+    await api.delete(`/admin/assign/${id}`);
+    await openUser(selectedId);
+  };
+
+  const deleteUser = async (id, email) => {
+    if (!window.confirm(`Delete ${email} and all of their data? This cannot be undone.`)) return;
+    setAdminErr('');
+    try {
+      const { data } = await api.delete(`/admin/users/${id}`);
+      setAdminMsg(data.message);
+      setSelectedId(null);
+      setDetail(null);
+      load('users');
+    } catch (err) {
+      setAdminErr(err.response?.data?.message || 'Could not delete user');
+    }
+  };
+
+  const coaches = users.filter((u) => (u.roles || []).includes('coach'));
 
   const saveSettings = async () => {
     await api.put('/admin/settings', settings);
@@ -153,25 +247,184 @@ export default function Admin() {
       )}
 
       {tab === 'users' && (
-        <div className="card overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead><tr className="text-left text-muted"><th className="p-2">Name</th><th>Email</th><th>Roles</th><th>Status</th><th /></tr></thead>
-            <tbody>
-              {users.map((u) => (
-                <tr key={u.id} className="border-t border-line">
-                  <td className="p-2">{u.firstName} {u.lastName}</td>
-                  <td>{u.email}</td>
-                  <td>{(u.roles || []).join(', ')}</td>
-                  <td>{u.status}</td>
-                  <td>
-                    <button className="btn-outline btn-sm" onClick={() => setUserStatus(u.id, u.status === 'suspended' ? 'active' : 'suspended')}>
-                      {u.status === 'suspended' ? 'Restore' : 'Suspend'}
-                    </button>
-                  </td>
+        <div className="space-y-4">
+          <form
+            className="flex gap-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              load('users');
+            }}
+          >
+            <input value={userQ} onChange={(e) => setUserQ(e.target.value)} placeholder="Search name or email" />
+            <button className="btn-outline shrink-0" type="submit">Search</button>
+          </form>
+          {adminErr && <div className="card text-orange-300 text-sm">{adminErr}</div>}
+          {adminMsg && <div className="card text-brand text-sm">{adminMsg}</div>}
+          <div className="card overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-muted">
+                  <th className="p-2">Name</th>
+                  <th>Email</th>
+                  <th>Roles</th>
+                  <th>Strava</th>
+                  <th>Activities</th>
+                  <th>Status</th>
+                  <th />
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {users.map((u) => (
+                  <tr key={u.id} className={`border-t border-line ${selectedId === u.id ? 'bg-brand/10' : ''}`}>
+                    <td className="p-2">{u.firstName} {u.lastName}</td>
+                    <td>{u.email}</td>
+                    <td>{(u.roles || []).join(', ')}</td>
+                    <td>{u.stravaConnected ? (u.lastSyncStatus || 'connected') : '—'}</td>
+                    <td>{u.activityCount ?? 0}</td>
+                    <td>{u.status}</td>
+                    <td className="whitespace-nowrap">
+                      <button className="btn-outline btn-sm mr-1" type="button" onClick={() => openUser(u.id)}>View</button>
+                      <button
+                        className="btn-outline btn-sm mr-1"
+                        type="button"
+                        disabled={!u.stravaConnected || syncingId === u.id}
+                        onClick={() => syncUser(u.id)}
+                      >
+                        {syncingId === u.id ? 'Syncing…' : 'Sync'}
+                      </button>
+                      <button className="btn-outline btn-sm" type="button" onClick={() => setUserStatus(u.id, u.status === 'suspended' ? 'active' : 'suspended')}>
+                        {u.status === 'suspended' ? 'Restore' : 'Suspend'}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {detail && (
+            <div className="card space-y-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h3 className="section-title">{detail.user.firstName} {detail.user.lastName}</h3>
+                  <p className="text-sm text-muted">{detail.user.email} · {(detail.user.roles || []).join(', ')}</p>
+                  <p className="text-xs text-muted mt-1">
+                    Strava {detail.strava?.connected ? 'connected' : 'not connected'}
+                    {detail.strava?.lastSyncAt ? ` · last sync ${new Date(detail.strava.lastSyncAt).toLocaleString()}` : ''}
+                    {detail.strava?.lastSyncError ? ` · ${detail.strava.lastSyncError}` : ''}
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    className="btn-primary btn-sm"
+                    type="button"
+                    disabled={!detail.strava?.connected || syncingId === detail.user.id}
+                    onClick={() => syncUser(detail.user.id)}
+                  >
+                    {syncingId === detail.user.id ? 'Syncing…' : 'Sync Strava'}
+                  </button>
+                  <button className="btn-outline btn-sm" type="button" onClick={() => setUserStatus(detail.user.id, detail.user.status === 'suspended' ? 'active' : 'suspended')}>
+                    {detail.user.status === 'suspended' ? 'Restore' : 'Suspend'}
+                  </button>
+                  <button className="btn-danger btn-sm" type="button" onClick={() => deleteUser(detail.user.id, detail.user.email)}>
+                    Delete
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-2">
+                <div className="stat-card">
+                  <div className="stat-label">Activities</div>
+                  <div className="stat-value text-xl">{detail.totals?.activities || 0}</div>
+                </div>
+                <div className="stat-card">
+                  <div className="stat-label">Distance</div>
+                  <div className="stat-value text-xl">{((Number(detail.totals?.distanceM) || 0) / 1000).toFixed(1)} km</div>
+                </div>
+                <div className="stat-card">
+                  <div className="stat-label">Last session</div>
+                  <div className="stat-value text-sm mt-2">{detail.totals?.lastActivityAt ? formatDate(detail.totals.lastActivityAt) : '—'}</div>
+                </div>
+              </div>
+
+              <div>
+                <h4 className="font-semibold mb-2">Recent</h4>
+                {!detail.recent?.length ? (
+                  <p className="text-sm text-muted">No activities yet. Sync if Strava is connected.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {detail.recent.map((act) => (
+                      <div key={act.id} className="flex items-center gap-3 border border-line rounded-xl px-3 py-2">
+                        <span className="text-xl">{getActivityIcon(act.type)}</span>
+                        <div className="flex-1 min-w-0">
+                          <div className="font-medium truncate">{act.name}</div>
+                          <div className="text-xs text-muted">{formatDate(act.startDate)}</div>
+                        </div>
+                        <div className="text-right">
+                          <div className="font-display font-bold text-brand">{formatActivityPrimary(act)}</div>
+                          <div className="text-xs text-muted">{formatActivitySecondary(act)}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <form className="grid sm:grid-cols-3 gap-2 items-end" onSubmit={addToClub}>
+                <div className="sm:col-span-2">
+                  <label>Add to club</label>
+                  <select value={clubPick} onChange={(e) => setClubPick(e.target.value)} required>
+                    <option value="">Select club</option>
+                    {clubs.map((c) => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label>As</label>
+                  <select value={clubRole} onChange={(e) => setClubRole(e.target.value)}>
+                    <option value="member">Athlete</option>
+                    <option value="coach">Coach</option>
+                    <option value="club_admin">Club admin</option>
+                  </select>
+                </div>
+                <button className="btn-outline sm:col-span-3" type="submit">Add to club</button>
+              </form>
+              {!!detail.clubs?.length && (
+                <p className="text-xs text-muted">
+                  Clubs: {detail.clubs.map((c) => `${c.name} (${c.role})`).join(', ')}
+                </p>
+              )}
+
+              <form className="grid sm:grid-cols-3 gap-2 items-end" onSubmit={assignCoach}>
+                <div className="sm:col-span-2">
+                  <label>Assign coach to this athlete</label>
+                  <select value={coachPick} onChange={(e) => setCoachPick(e.target.value)} required>
+                    <option value="">Select coach</option>
+                    {coaches.filter((c) => c.id !== detail.user.id).map((c) => (
+                      <option key={c.id} value={c.id}>{c.firstName} {c.lastName} · {c.email}</option>
+                    ))}
+                  </select>
+                </div>
+                <button className="btn-outline" type="submit">Assign coach</button>
+              </form>
+              {!!detail.coaches?.length && (
+                <div className="text-sm space-y-1">
+                  {detail.coaches.map((c) => (
+                    <div key={c.id} className="flex justify-between gap-2">
+                      <span>Coach {c.firstName} {c.lastName}{c.clubName ? ` · ${c.clubName}` : ''}</span>
+                      <button className="btn-outline btn-sm" type="button" onClick={() => removeAssignment(c.id)}>Remove</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {!!detail.athletes?.length && (
+                <p className="text-xs text-muted">
+                  Athletes coached: {detail.athletes.map((a) => `${a.firstName} ${a.lastName}`).join(', ')}
+                </p>
+              )}
+            </div>
+          )}
         </div>
       )}
 
