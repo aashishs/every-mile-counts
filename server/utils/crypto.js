@@ -2,9 +2,14 @@ import crypto from 'crypto';
 
 const ALGO = 'aes-256-gcm';
 
+export function encryptionConfigured() {
+  const hex = process.env.ENCRYPTION_KEY || '';
+  return hex.length >= 64 && /^[0-9a-fA-F]{64}/.test(hex);
+}
+
 function getKey() {
   const hex = process.env.ENCRYPTION_KEY;
-  if (!hex || hex.length < 64) {
+  if (!encryptionConfigured()) {
     throw new Error('ENCRYPTION_KEY must be a 64-character hex string (32 bytes)');
   }
   return Buffer.from(hex.slice(0, 64), 'hex');

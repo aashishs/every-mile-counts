@@ -5,6 +5,7 @@ import { completeStravaOAuth, getStravaConnection, syncStravaActivities } from '
 import { asyncHandler } from '../middleware/error.js';
 import { writeAudit } from '../services/auditService.js';
 import { getUserRoles, isClubOnlyUser } from '../utils/membership.js';
+import { encryptionConfigured } from '../utils/crypto.js';
 import { clientUrl, requestPublicUrl, stravaRedirectUri } from '../utils/urls.js';
 
 const router = express.Router();
@@ -17,7 +18,15 @@ function rejectClubAccount(req, res, next) {
 }
 
 function stravaConfigured() {
-  return Boolean(process.env.STRAVA_CLIENT_ID && process.env.STRAVA_CLIENT_SECRET);
+  return Boolean(process.env.STRAVA_CLIENT_ID && process.env.STRAVA_CLIENT_SECRET && encryptionConfigured());
+}
+
+function oauthFailWhy(err) {
+  const msg = String(err.message || '');
+  if (msg.includes('ENCRYPTION_KEY')) return 'encryption';
+  const status = err.response?.status;
+  if (status === 400 || status === 401) return 'token';
+  return 'save';
 }
 
 router.get(
@@ -28,7 +37,9 @@ router.get(
   (req, res) => {
     if (!stravaConfigured()) {
       return res.status(503).json({
-        message: 'Strava is not configured. Set STRAVA_CLIENT_ID and STRAVA_CLIENT_SECRET on the API service.',
+        message: encryptionConfigured()
+          ? 'Strava is not configured. Set STRAVA_CLIENT_ID and STRAVA_CLIENT_SECRET on the API service.'
+          : 'Set ENCRYPTION_KEY on the API service to a 64-character hex string, then redeploy.',
       });
     }
     const redirectUri = stravaRedirectUri(req);
@@ -64,12 +75,18 @@ router.get(
       return res.redirect(`${appUrl}/clubs`);
     }
     try {
-      const tokenRes = await axios.post('https://www.strava.com/oauth/token', {
-        client_id: process.env.STRAVA_CLIENT_ID,
-        client_secret: process.env.STRAVA_CLIENT_SECRET,
-        code,
-        grant_type: 'authorization_code',
-      });
+      const redirectUri = stravaRedirectUri(req);
+      const tokenRes = await axios.post(
+        'https://www.strava.com/oauth/token',
+        new URLSearchParams({
+          client_id: String(process.env.STRAVA_CLIENT_ID),
+          client_secret: String(process.env.STRAVA_CLIENT_SECRET),
+          code: String(code),
+          grant_type: 'authorization_code',
+          redirect_uri: redirectUri,
+        }),
+        { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+      );
       await completeStravaOAuth(state, tokenRes.data);
       await writeAudit({ userId: state, action: 'strava_connect', entityType: 'oauth' });
       res.redirect(302, `${appUrl}/dashboard?strava=connected`);
@@ -82,7 +99,7 @@ router.get(
       if (conn?.connected) {
         return res.redirect(302, `${appUrl}/dashboard?strava=connected`);
       }
-      res.redirect(302, `${appUrl}/dashboard?strava=error`);
+      res.redirect(302, `${appUrl}/dashboard?strava=error&why=${oauthFailWhy(err)}`);
     }
   })
 );

@@ -11,6 +11,14 @@ const stravaHttp = axios.create({
   timeout: 30000,
 });
 
+function stravaTokenBody(fields) {
+  const body = new URLSearchParams();
+  Object.entries(fields).forEach(([key, value]) => {
+    if (value != null && value !== '') body.set(key, String(value));
+  });
+  return body;
+}
+
 async function sleep(ms) {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -58,12 +66,16 @@ async function saveTokens(userId, { accessToken, refreshToken, expiresAt, provid
 }
 
 export async function refreshStravaToken(conn) {
-  const response = await axios.post('https://www.strava.com/oauth/token', {
-    client_id: process.env.STRAVA_CLIENT_ID,
-    client_secret: process.env.STRAVA_CLIENT_SECRET,
-    grant_type: 'refresh_token',
-    refresh_token: decrypt(conn.refreshTokenEnc),
-  });
+  const response = await axios.post(
+    'https://www.strava.com/oauth/token',
+    stravaTokenBody({
+      client_id: process.env.STRAVA_CLIENT_ID,
+      client_secret: process.env.STRAVA_CLIENT_SECRET,
+      grant_type: 'refresh_token',
+      refresh_token: decrypt(conn.refreshTokenEnc),
+    }),
+    { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+  );
   await saveTokens(conn.userId, {
     accessToken: response.data.access_token,
     refreshToken: response.data.refresh_token,

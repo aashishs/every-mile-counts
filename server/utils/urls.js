@@ -97,7 +97,7 @@ export function stravaRedirectUri(req) {
   if (explicit) {
     return explicit.includes('/api/strava/callback') ? explicit : `${explicit}/api/strava/callback`;
   }
-  const base = requestPublicUrl(req);
+  const base = clientUrl() || requestPublicUrl(req);
   return base ? `${base}/api/strava/callback` : '';
 }
 

@@ -85,9 +85,18 @@ export default function Dashboard() {
     }
   };
 
+  const why = searchParams.get('why');
   const messages = {
     connected: { type: 'success', text: 'Device connected. Activities are syncing.' },
-    error: { type: 'error', text: 'Connection failed. Please try again.' },
+    error: {
+      type: 'error',
+      text:
+        why === 'encryption'
+          ? 'Set ENCRYPTION_KEY on the Railway api service to 64 hex characters, then redeploy and connect again.'
+          : why === 'token'
+            ? 'Strava rejected the login. Check STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET, and the Authorization Callback Domain.'
+            : 'Connection failed. Check the api service logs, then try Connect Strava once more.',
+    },
   };
 
   const sportTotal = (data?.distanceSports || []).find((s) => s.type === type);
