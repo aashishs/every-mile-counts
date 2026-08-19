@@ -2,17 +2,23 @@ import crypto from 'crypto';
 
 const ALGO = 'aes-256-gcm';
 
+function rawEncryptionKey() {
+  return String(process.env.ENCRYPTION_KEY || '').trim().replace(/^['"]|['"]$/g, '');
+}
+
 export function encryptionConfigured() {
-  const hex = process.env.ENCRYPTION_KEY || '';
-  return hex.length >= 64 && /^[0-9a-fA-F]{64}/.test(hex);
+  return rawEncryptionKey().length > 0;
 }
 
 function getKey() {
-  const hex = process.env.ENCRYPTION_KEY;
-  if (!encryptionConfigured()) {
+  const raw = rawEncryptionKey();
+  if (!raw) {
     throw new Error('ENCRYPTION_KEY must be a 64-character hex string (32 bytes)');
   }
-  return Buffer.from(hex.slice(0, 64), 'hex');
+  if (/^[0-9a-fA-F]{64}$/.test(raw)) {
+    return Buffer.from(raw, 'hex');
+  }
+  return crypto.createHash('sha256').update(raw).digest();
 }
 
 export function encrypt(plain) {

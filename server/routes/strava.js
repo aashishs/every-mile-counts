@@ -17,8 +17,20 @@ function rejectClubAccount(req, res, next) {
   next();
 }
 
+function env(name) {
+  return String(process.env[name] || '').trim().replace(/^['"]|['"]$/g, '');
+}
+
 function stravaConfigured() {
-  return Boolean(process.env.STRAVA_CLIENT_ID && process.env.STRAVA_CLIENT_SECRET && encryptionConfigured());
+  return Boolean(env('STRAVA_CLIENT_ID') && env('STRAVA_CLIENT_SECRET'));
+}
+
+function stravaMissing() {
+  const missing = [];
+  if (!env('STRAVA_CLIENT_ID')) missing.push('STRAVA_CLIENT_ID');
+  if (!env('STRAVA_CLIENT_SECRET')) missing.push('STRAVA_CLIENT_SECRET');
+  if (!encryptionConfigured()) missing.push('ENCRYPTION_KEY');
+  return missing;
 }
 
 function oauthFailWhy(err) {
@@ -35,11 +47,11 @@ router.get(
   requireMembership,
   rejectClubAccount,
   (req, res) => {
-    if (!stravaConfigured()) {
+    if (!stravaConfigured() || !encryptionConfigured()) {
+      const missing = stravaMissing();
       return res.status(503).json({
-        message: encryptionConfigured()
-          ? 'Strava is not configured. Set STRAVA_CLIENT_ID and STRAVA_CLIENT_SECRET on the API service.'
-          : 'Set ENCRYPTION_KEY on the API service to a 64-character hex string, then redeploy.',
+        message: `Missing on the API service: ${missing.join(', ')}. Add them under Railway → api → Variables, then redeploy.`,
+        missing,
       });
     }
     const redirectUri = stravaRedirectUri(req);
@@ -50,7 +62,7 @@ router.get(
       });
     }
     const params = new URLSearchParams({
-      client_id: process.env.STRAVA_CLIENT_ID,
+      client_id: env('STRAVA_CLIENT_ID'),
       redirect_uri: redirectUri,
       response_type: 'code',
       approval_prompt: 'auto',
@@ -79,8 +91,8 @@ router.get(
       const tokenRes = await axios.post(
         'https://www.strava.com/oauth/token',
         new URLSearchParams({
-          client_id: String(process.env.STRAVA_CLIENT_ID),
-          client_secret: String(process.env.STRAVA_CLIENT_SECRET),
+          client_id: env('STRAVA_CLIENT_ID'),
+          client_secret: env('STRAVA_CLIENT_SECRET'),
           code: String(code),
           grant_type: 'authorization_code',
           redirect_uri: redirectUri,
@@ -125,6 +137,7 @@ router.get(
     const conn = await getStravaConnection(req.user.id);
     res.json({
       configured: stravaConfigured(),
+      missing: stravaMissing(),
       connected: Boolean(conn?.connected),
       lastSyncAt: conn?.lastSyncAt,
       lastSyncStatus: conn?.lastSyncStatus,

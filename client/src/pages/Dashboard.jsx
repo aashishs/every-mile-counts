@@ -186,16 +186,18 @@ export default function Dashboard() {
             </Link>
           )}
 
-          {!clubOnly && strava && strava.configured === false && (
+          {!clubOnly && strava && (strava.configured === false || strava.missing?.length) && (
             <div className="card mb-5 border-accent/40">
               <div className="font-semibold">Strava is not configured</div>
               <p className="text-xs text-muted mt-1">
-                Add STRAVA_CLIENT_ID and STRAVA_CLIENT_SECRET on the Railway api service. Set CLIENT_URL to this site’s public URL (the *.up.railway.app address).
+                Add these on Railway → <strong>api</strong> → Variables (not web), then redeploy api:
+                {' '}
+                {(strava.missing || ['STRAVA_CLIENT_ID', 'STRAVA_CLIENT_SECRET']).join(', ')}
               </p>
             </div>
           )}
 
-          {!clubOnly && strava?.configured !== false && !strava?.connected && (
+          {!clubOnly && strava?.configured !== false && !strava?.missing?.length && !strava?.connected && (
             <div className="card flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5 border-accent/40">
               <div>
                 <div className="font-semibold">Connect Strava</div>

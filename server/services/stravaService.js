@@ -69,8 +69,8 @@ export async function refreshStravaToken(conn) {
   const response = await axios.post(
     'https://www.strava.com/oauth/token',
     stravaTokenBody({
-      client_id: process.env.STRAVA_CLIENT_ID,
-      client_secret: process.env.STRAVA_CLIENT_SECRET,
+      client_id: String(process.env.STRAVA_CLIENT_ID || '').trim(),
+      client_secret: String(process.env.STRAVA_CLIENT_SECRET || '').trim(),
       grant_type: 'refresh_token',
       refresh_token: decrypt(conn.refreshTokenEnc),
     }),
