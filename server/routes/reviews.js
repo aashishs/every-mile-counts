@@ -73,6 +73,37 @@ router.get(
   '/inbox',
   requireRole('coach'),
   asyncHandler(async (req, res) => {
+    const pageSizes = [10, 20, 50, 100];
+    const parsedLimit = pageSizes.includes(Number(req.query.limit)) ? Number(req.query.limit) : 10;
+    const parsedPage = Math.max(1, Number(req.query.page) || 1);
+    const sortKey = ['requestedAt', 'name'].includes(String(req.query.sort || ''))
+      ? String(req.query.sort)
+      : 'requestedAt';
+    const dirSql = String(req.query.dir).toLowerCase() === 'asc' ? 'ASC' : 'DESC';
+    const orderSql =
+      sortKey === 'name'
+        ? `LOWER(u.last_name) ${dirSql} NULLS LAST, LOWER(u.first_name) ${dirSql}, rr.requested_at DESC`
+        : `rr.requested_at ${dirSql} NULLS LAST`;
+    const where = `rr.coach_id = $1
+           AND rr.status = 'pending'
+           AND NOT EXISTS (
+             SELECT 1 FROM activity_reviews ar
+             WHERE ar.activity_id = rr.activity_id
+               AND ar.coach_id = rr.coach_id
+               AND ar.status = 'published'
+           )`;
+    const count = await one(
+      `SELECT COUNT(*)::int AS total
+       FROM review_requests rr
+       JOIN activities a ON a.id = rr.activity_id
+       JOIN users u ON u.id = rr.athlete_id
+       WHERE ${where}`,
+      [req.user.id]
+    );
+    const total = count.total;
+    const pages = Math.max(1, Math.ceil(total / parsedLimit) || 1);
+    const safePage = Math.min(parsedPage, pages);
+    const offset = (safePage - 1) * parsedLimit;
     const requests = camelMany(
       await many(
         `SELECT rr.*, a.name AS activity_name, a.type, a.distance, a.start_date,
@@ -80,12 +111,21 @@ router.get(
          FROM review_requests rr
          JOIN activities a ON a.id = rr.activity_id
          JOIN users u ON u.id = rr.athlete_id
-         WHERE rr.coach_id = $1 AND rr.status = 'pending'
-         ORDER BY rr.requested_at DESC`,
-        [req.user.id]
+         WHERE ${where}
+         ORDER BY ${orderSql}
+         LIMIT $2 OFFSET $3`,
+        [req.user.id, parsedLimit, offset]
       )
     );
-    res.json({ requests });
+    res.json({
+      requests,
+      total,
+      page: safePage,
+      pages,
+      limit: parsedLimit,
+      sort: sortKey,
+      dir: dirSql.toLowerCase(),
+    });
   })
 );
 
@@ -158,12 +198,12 @@ router.post(
       )
     );
 
-    await query(
-      `UPDATE review_requests SET status = 'completed'
-       WHERE activity_id = $1 AND status = 'pending'`,
-      [activityId]
-    );
     if (status === 'published') {
+      await query(
+        `UPDATE review_requests SET status = 'completed'
+         WHERE activity_id = $1 AND status = 'pending'`,
+        [activityId]
+      );
       await createNotification({
         userId: activity.athleteId,
         type: 'review',

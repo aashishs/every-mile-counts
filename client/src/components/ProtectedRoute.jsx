@@ -1,9 +1,12 @@
-import { Navigate } from 'react-router-dom';
+import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { homePath } from '../utils/roles';
+import { homePath, needsDateOfBirth } from '../utils/roles';
+
+const DOB_EXEMPT = ['/profile', '/support', '/membership'];
 
 export function ProtectedRoute({ children, roles }) {
   const { user, loading } = useAuth();
+  const location = useLocation();
 
   if (loading) {
     return (
@@ -13,6 +16,12 @@ export function ProtectedRoute({ children, roles }) {
   if (!user) return <Navigate to="/login" replace />;
   if (roles?.length && !roles.some((r) => user.roles?.includes(r))) {
     return <Navigate to={homePath(user)} replace />;
+  }
+  if (
+    needsDateOfBirth(user) &&
+    !DOB_EXEMPT.some((p) => location.pathname === p || location.pathname.startsWith(`${p}/`))
+  ) {
+    return <Navigate to="/profile?needDob=1" replace />;
   }
   return children;
 }

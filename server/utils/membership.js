@@ -1,4 +1,5 @@
-import { camel, many, one } from '../config/db.js';
+import { camel, many, one, query } from '../config/db.js';
+import { ageFromDob, mafHeartRate, parseDateOfBirth } from './maf.js';
 
 export function computeMembershipStatus(membership) {
   if (!membership) return null;
@@ -72,9 +73,36 @@ export function isClubOnlyUser(userOrRoles) {
   return roles.includes('club_admin') && !roles.includes('athlete') && !roles.includes('coach') && !roles.includes('app_admin');
 }
 
+export function isAthleteUser(userOrRoles) {
+  const roles = Array.isArray(userOrRoles) ? userOrRoles : userOrRoles?.roles || [];
+  return roles.includes('athlete') && !roles.includes('app_admin');
+}
+
+export async function grantAthleteUnlessClubAdmin(userId) {
+  const roles = await getUserRoles(userId);
+  if (roles.includes('club_admin') || roles.includes('app_admin')) return;
+  await query(
+    `INSERT INTO user_roles (user_id, role) VALUES ($1, 'athlete') ON CONFLICT DO NOTHING`,
+    [userId]
+  );
+}
+
+export async function stripTrainingRolesForClubAdmin(userId) {
+  const roles = await getUserRoles(userId);
+  if (!roles.includes('club_admin') || roles.includes('app_admin')) return;
+  await query(`DELETE FROM user_roles WHERE user_id = $1 AND role IN ('athlete', 'coach')`, [userId]);
+  await query(
+    `UPDATE coach_assignments SET status = 'inactive'
+     WHERE status = 'active' AND (athlete_id = $1 OR coach_id = $1)`,
+    [userId]
+  );
+}
+
 export async function publicUser(user, extras = {}) {
   if (!user) return null;
   const roles = extras.roles || (await getUserRoles(user.id));
+  const dateOfBirth = parseDateOfBirth(user.dateOfBirth ?? user.date_of_birth);
+  const age = ageFromDob(dateOfBirth);
   return {
     id: user.id,
     email: user.email,
@@ -84,7 +112,9 @@ export async function publicUser(user, extras = {}) {
     bio: user.bio,
     location: user.location,
     timezone: user.timezone,
-    dateOfBirth: user.dateOfBirth ?? user.date_of_birth,
+    dateOfBirth,
+    age,
+    mafHeartRate: mafHeartRate(age),
     maxHeartRate: user.maxHeartRate ?? user.max_heart_rate,
     restingHeartRate: user.restingHeartRate ?? user.resting_heart_rate,
     defaultActivityType: user.defaultActivityType ?? user.default_activity_type ?? 'Run',

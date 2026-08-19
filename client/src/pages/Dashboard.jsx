@@ -6,7 +6,7 @@ import ActivityTypeFilter from '../components/ActivityTypeFilter';
 import PersonalRecords from '../components/PersonalRecords';
 import { useAuth } from '../context/AuthContext';
 import { formatDate, formatTime, getActivityIcon, initialActivityType, rememberActivityType } from '../utils/format';
-import { isClubOnlyAccount } from '../utils/roles';
+import { isAthleteAccount } from '../utils/roles';
 import StravaCard from '../components/StravaCard';
 
 function greeting() {
@@ -31,7 +31,7 @@ function daysOut(date) {
 
 export default function Dashboard() {
   const { user } = useAuth();
-  const clubOnly = isClubOnlyAccount(user);
+  const athlete = isAthleteAccount(user);
   const [data, setData] = useState(null);
   const [searchParams] = useSearchParams();
   const [type, setType] = useState(() => initialActivityType(user, searchParams.get('type')));
@@ -96,8 +96,8 @@ export default function Dashboard() {
         </div>
       )}
 
-      {!clubOnly && <StravaCard user={user} autoConnect={searchParams.get('connect') === 'strava'} />}
-      {!clubOnly && (
+      {athlete && <StravaCard user={user} autoConnect={searchParams.get('connect') === 'strava'} />}
+      {athlete && (
         <p className="text-sm text-muted -mt-2 mb-5">
           Or{' '}
           <Link to="/activities?add=1" className="text-brand font-semibold no-underline">

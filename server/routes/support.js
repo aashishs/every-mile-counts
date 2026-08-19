@@ -10,17 +10,55 @@ router.get(
   '/',
   requireMembership,
   asyncHandler(async (req, res) => {
+    const isAdmin = req.user.roles.includes('app_admin');
+    const pageSizes = [10, 20, 50, 100];
+    const parsedLimit = pageSizes.includes(Number(req.query.limit)) ? Number(req.query.limit) : 10;
+    const parsedPage = Math.max(1, Number(req.query.page) || 1);
+    const allowed = isAdmin ? ['date', 'subject', 'status', 'name'] : ['date', 'subject', 'status'];
+    const sortKey = allowed.includes(String(req.query.sort || '')) ? String(req.query.sort) : 'date';
+    const dirSql = String(req.query.dir).toLowerCase() === 'asc' ? 'ASC' : 'DESC';
+    const orderSql = {
+      subject: `LOWER(t.subject) ${dirSql} NULLS LAST, t.created_at DESC`,
+      status: `t.status ${dirSql}, t.created_at DESC`,
+      name: `LOWER(COALESCE(u.last_name,'')) ${dirSql} NULLS LAST, LOWER(COALESCE(u.first_name,'')) ${dirSql}, t.created_at DESC`,
+      date: `t.created_at ${dirSql} NULLS LAST`,
+    }[sortKey];
+
+    const count = await one(
+      isAdmin
+        ? `SELECT COUNT(*)::int AS total FROM support_tickets t`
+        : `SELECT COUNT(*)::int AS total FROM support_tickets t WHERE t.user_id = $1`,
+      isAdmin ? [] : [req.user.id]
+    );
+    const total = count.total;
+    const pages = Math.max(1, Math.ceil(total / parsedLimit) || 1);
+    const safePage = Math.min(parsedPage, pages);
+    const offset = (safePage - 1) * parsedLimit;
     const tickets = camelMany(
       await many(
-        req.user.roles.includes('app_admin')
+        isAdmin
           ? `SELECT t.*, u.email, u.first_name, u.last_name
-             FROM support_tickets t LEFT JOIN users u ON u.id = t.user_id
-             ORDER BY t.created_at DESC LIMIT 100`
-          : `SELECT * FROM support_tickets WHERE user_id = $1 ORDER BY created_at DESC`,
-        req.user.roles.includes('app_admin') ? [] : [req.user.id]
+             FROM support_tickets t
+             LEFT JOIN users u ON u.id = t.user_id
+             ORDER BY ${orderSql}
+             LIMIT $1 OFFSET $2`
+          : `SELECT t.*
+             FROM support_tickets t
+             WHERE t.user_id = $1
+             ORDER BY ${orderSql}
+             LIMIT $2 OFFSET $3`,
+        isAdmin ? [parsedLimit, offset] : [req.user.id, parsedLimit, offset]
       )
     );
-    res.json({ tickets });
+    res.json({
+      tickets,
+      total,
+      page: safePage,
+      pages,
+      limit: parsedLimit,
+      sort: sortKey,
+      dir: dirSql.toLowerCase(),
+    });
   })
 );
 

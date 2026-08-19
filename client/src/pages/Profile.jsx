@@ -1,19 +1,29 @@
 import { useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../api/client';
 import Layout from '../components/Layout';
 import { useAuth } from '../context/AuthContext';
 import { ACTIVITY_TYPE_OPTIONS, DEFAULT_ACTIVITY_TYPE } from '../utils/format';
-import { homePath, isAppAdminAccount, isClubOnlyAccount } from '../utils/roles';
+import { homePath, isAppAdminAccount, isAthleteAccount } from '../utils/roles';
+import { ageFromDob, mafHeartRate, parseDateOfBirth, todayIsoDate } from '../utils/maf';
 import StravaCard from '../components/StravaCard';
 import ConfirmDialog from '../components/ConfirmDialog';
+
+const TAB_DEFS = [
+  { id: 'profile', label: 'Profile', athleteOnly: false },
+  { id: 'password', label: 'Password', athleteOnly: false },
+  { id: 'strava', label: 'Strava', athleteOnly: true },
+  { id: 'club', label: 'Club', athleteOnly: true },
+  { id: 'coaches', label: 'Coaches', athleteOnly: true },
+];
 
 export default function Profile() {
   const { user, refresh } = useAuth();
   const navigate = useNavigate();
-  const clubOnly = isClubOnlyAccount(user);
+  const [searchParams, setSearchParams] = useSearchParams();
   const appAdmin = isAppAdminAccount(user);
-  const athlete = !appAdmin && user.roles?.includes('athlete');
+  const athlete = isAthleteAccount(user);
+  const needDob = athlete && searchParams.get('needDob') === '1';
   const [form, setForm] = useState({
     firstName: user.firstName || '',
     lastName: user.lastName || '',
@@ -22,7 +32,7 @@ export default function Profile() {
     timezone: user.timezone || 'UTC',
     maxHeartRate: user.maxHeartRate || '',
     restingHeartRate: user.restingHeartRate || '',
-    dateOfBirth: user.dateOfBirth ? String(user.dateOfBirth).slice(0, 10) : '',
+    dateOfBirth: parseDateOfBirth(user.dateOfBirth) || '',
     defaultActivityType: user.defaultActivityType || DEFAULT_ACTIVITY_TYPE,
     notificationPrefs: user.notificationPrefs || {},
   });
@@ -44,6 +54,7 @@ export default function Profile() {
   const [confirm, setConfirm] = useState(null);
   const [confirmBusy, setConfirmBusy] = useState(false);
   const [confirmError, setConfirmError] = useState('');
+  const [requestingCoach, setRequestingCoach] = useState(null);
 
   const flash = (ok, text) => {
     setMsg(ok ? text : '');
@@ -66,16 +77,19 @@ export default function Profile() {
   };
 
   useEffect(() => {
-    if (!clubOnly && !appAdmin) loadClubs().catch(() => {});
+    if (athlete) loadClubs().catch(() => {});
     if (athlete) loadCoaches().catch(() => {});
-  }, [clubOnly, appAdmin, athlete]);
+  }, [athlete]);
 
   const save = async (e) => {
     e.preventDefault();
     try {
       await api.patch('/users/me', form);
-      await refresh();
+      const next = await refresh();
       flash(true, 'Profile saved');
+      if (needDob && parseDateOfBirth(next?.dateOfBirth || form.dateOfBirth)) {
+        navigate(homePath(next || user), { replace: true });
+      }
     } catch (ex) {
       flash(false, ex.response?.data?.message || 'Could not save profile');
     }
@@ -127,6 +141,19 @@ export default function Profile() {
   const leaveClub = (club) => {
     setConfirmError('');
     setConfirm({ kind: 'leave-club', club });
+  };
+
+  const requestCoach = async (clubId) => {
+    setRequestingCoach(clubId);
+    try {
+      await api.post(`/clubs/${clubId}/request-coach`);
+      await loadClubs();
+      flash(true, 'Club admin has been asked to assign a coach.');
+    } catch (ex) {
+      flash(false, ex.response?.data?.message || 'Could not send request');
+    } finally {
+      setRequestingCoach(null);
+    }
   };
 
   const removeCoach = (coach) => {
@@ -196,32 +223,72 @@ export default function Profile() {
 
   const canAddCoach = coaches.length < maxCoaches;
 
+  const previewAge = ageFromDob(form.dateOfBirth);
+  const previewMaf = mafHeartRate(previewAge);
+
+  const tabs = TAB_DEFS.filter((t) => !t.athleteOnly || athlete);
+  const requestedTab = searchParams.get('tab');
+  const tab = tabs.some((t) => t.id === requestedTab) ? requestedTab : 'profile';
+
+  const setTab = (id) => {
+    setMsg('');
+    setErr('');
+    const next = new URLSearchParams(searchParams);
+    if (id === 'profile') next.delete('tab');
+    else next.set('tab', id);
+    setSearchParams(next, { replace: true });
+  };
+
+  const tabCopy = {
+    profile: appAdmin ? 'Edit your details' : 'Edit your details and notification preferences',
+    password: 'Change the password you use to sign in',
+    strava: 'Connect Strava to sync activities',
+    club: 'Join or manage your club',
+    coaches: `Assign up to ${maxCoaches} coaches`,
+  };
+
   return (
     <Layout>
       <div className="flex items-start justify-between gap-3 mb-2">
         <div>
           <h2 className="page-title">Profile</h2>
-          <p className="page-sub">
-            {appAdmin
-              ? 'Edit your details and password'
-              : clubOnly
-                ? 'Edit your details and password'
-                : 'Edit your details, password, club, and coaches'}
-          </p>
+          <p className="page-sub">{tabCopy[tab] || 'Manage your account'}</p>
         </div>
         <button
           type="button"
           className="btn-outline btn-sm shrink-0"
           onClick={() => navigate(homePath(user))}
+          disabled={needDob && !form.dateOfBirth}
         >
           Done
         </button>
       </div>
+
+      <div className="chip-row">
+        {tabs.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            className={`btn-sm ${tab === t.id ? 'btn-primary' : 'btn-outline'}`}
+            onClick={() => setTab(t.id)}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
       {msg && <div className="card mb-4 text-brand text-sm">{msg}</div>}
       {err && <div className="card mb-4 text-orange-300 text-sm">{err}</div>}
 
-      {!clubOnly && !appAdmin && <StravaCard user={user} />}
+      {needDob && tab === 'profile' && (
+        <div className="card mb-4 text-sm text-orange-200">
+          Date of birth is required. Age and MAF (180 − age) are calculated from it.
+        </div>
+      )}
 
+      {tab === 'strava' && athlete && <StravaCard user={user} />}
+
+      {tab === 'profile' && (
       <form className="card grid md:grid-cols-2 gap-3 mb-6" onSubmit={save}>
         <h3 className="font-semibold md:col-span-2">Edit profile</h3>
         <div>
@@ -240,11 +307,23 @@ export default function Profile() {
           <label htmlFor="location">Location</label>
           <input id="location" value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} placeholder="City" />
         </div>
-        {!clubOnly && !appAdmin && (
+        {athlete && (
           <>
             <div>
               <label htmlFor="dateOfBirth">Date of birth</label>
-              <input id="dateOfBirth" type="date" value={form.dateOfBirth} onChange={(e) => setForm({ ...form, dateOfBirth: e.target.value })} />
+              <input
+                id="dateOfBirth"
+                type="date"
+                value={form.dateOfBirth}
+                onChange={(e) => setForm({ ...form, dateOfBirth: e.target.value })}
+                required
+                max={todayIsoDate()}
+              />
+              {previewAge != null && previewMaf != null && (
+                <p className="text-xs text-muted mt-1">
+                  Age {previewAge} · MAF {previewMaf} bpm (180 − age)
+                </p>
+              )}
             </div>
             <div>
               <label htmlFor="maxHeartRate">Max HR</label>
@@ -276,7 +355,7 @@ export default function Profile() {
         <div className="md:col-span-2">
           <p className="text-sm font-medium mb-2">Notifications</p>
           <div className="flex flex-wrap gap-4 text-sm">
-            {['push', 'inApp', ...(clubOnly ? [] : ['sync']), 'reviews', 'events', 'membership', 'announcements'].map((k) => (
+            {['push', 'inApp', ...(athlete ? ['sync'] : []), 'reviews', 'events', 'membership', 'announcements'].map((k) => (
               <label key={k} className="flex items-center gap-2">
                 <input type="checkbox" className="w-auto" checked={form.notificationPrefs?.[k] !== false} onChange={() => togglePref(k)} />
                 {k}
@@ -287,7 +366,9 @@ export default function Profile() {
         )}
         <button className="btn-primary md:col-span-2" type="submit">Save profile</button>
       </form>
+      )}
 
+      {tab === 'password' && (
       <form className="card space-y-3 mb-6 max-w-lg" onSubmit={changePw}>
         <h3 className="font-semibold">Change password</h3>
         <div>
@@ -304,8 +385,9 @@ export default function Profile() {
         </div>
         <button className="btn-outline" type="submit">Update password</button>
       </form>
+      )}
 
-      {!clubOnly && !appAdmin && (
+      {tab === 'club' && athlete && (
         <section className="card space-y-4 mb-6">
           <div className="flex items-center justify-between gap-3">
             <h3 className="font-semibold">Club</h3>
@@ -320,12 +402,33 @@ export default function Profile() {
                     {c.role === 'club_admin' ? 'Admin' : c.role === 'coach' ? 'Coach' : 'Athlete'}
                     {c.membershipStatus === 'pending' ? ' · pending approval' : ''}
                   </div>
+                  {c.role === 'member' && c.membershipStatus === 'active' && (
+                    <div className="text-xs text-muted mt-1">
+                      {(c.coaches || []).length
+                        ? `Coach${c.coaches.length === 1 ? '' : 'es'}: ${c.coaches.map((x) => `${x.firstName} ${x.lastName}`).join(', ')}`
+                        : c.coachRequested
+                          ? 'Request sent. Waiting for a club admin to assign a coach.'
+                          : 'No coach assigned'}
+                    </div>
+                  )}
                 </div>
-                {c.role !== 'club_admin' && (
-                  <button type="button" className="btn-outline btn-sm" onClick={() => leaveClub(c)}>
-                    {c.membershipStatus === 'pending' ? 'Cancel request' : 'Leave / change'}
-                  </button>
-                )}
+                <div className="flex flex-wrap gap-2">
+                  {c.role === 'member' && c.membershipStatus === 'active' && !(c.coaches || []).length && !c.coachRequested && (
+                    <button
+                      type="button"
+                      className="btn-outline btn-sm"
+                      disabled={requestingCoach === c.id}
+                      onClick={() => requestCoach(c.id)}
+                    >
+                      {requestingCoach === c.id ? 'Sending…' : 'Request a coach'}
+                    </button>
+                  )}
+                  {c.role !== 'club_admin' && (
+                    <button type="button" className="btn-outline btn-sm" onClick={() => leaveClub(c)}>
+                      {c.membershipStatus === 'pending' ? 'Cancel request' : 'Leave / change'}
+                    </button>
+                  )}
+                </div>
               </div>
             ))}
             {!clubs.length && <p className="text-sm text-muted">You are not in a club yet.</p>}
@@ -354,7 +457,7 @@ export default function Profile() {
         </section>
       )}
 
-      {athlete && (
+      {tab === 'coaches' && athlete && (
         <section className="card space-y-4 mb-6">
           <h3 className="font-semibold">Coaches · {coaches.length}/{maxCoaches}</h3>
           <div className="space-y-2">

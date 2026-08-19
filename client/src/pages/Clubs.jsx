@@ -3,12 +3,13 @@ import { Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import Layout from '../components/Layout';
 import { useAuth } from '../context/AuthContext';
-import { isClubOnlyAccount } from '../utils/roles';
+import { isAthleteAccount } from '../utils/roles';
 
 export default function Clubs() {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const clubOnly = isClubOnlyAccount(user);
+  const athlete = isAthleteAccount(user);
+  const clubHome = user?.roles?.includes('club_admin') && !athlete;
   const [clubs, setClubs] = useState([]);
   const [mine, setMine] = useState([]);
   const [q, setQ] = useState('');
@@ -26,12 +27,12 @@ export default function Clubs() {
   }, []);
 
   useEffect(() => {
-    if (!clubOnly || mine.length !== 1) return;
+    if (!clubHome || mine.length !== 1) return;
     const club = mine[0];
     if (club.role === 'club_admin' && club.membershipStatus === 'active') {
       navigate(`/clubs/${club.id}`, { replace: true });
     }
-  }, [clubOnly, mine, navigate]);
+  }, [clubHome, mine, navigate]);
 
   const search = async (e) => {
     e?.preventDefault();
@@ -44,12 +45,13 @@ export default function Clubs() {
     }
     setMsg('');
     const { data } = await api.get('/clubs', { params: { q: query } });
-    setClubs(data.clubs || []);
+    const mineIdsNow = new Set(mine.map((c) => c.id));
+    setClubs((data.clubs || []).filter((c) => !mineIdsNow.has(c.id)));
     setSearched(true);
   };
 
   const mineIds = new Set(mine.map((c) => c.id));
-  const mineStatus = Object.fromEntries(mine.map((c) => [c.id, c.membershipStatus || c.status]));
+  const visibleClubs = clubs.filter((c) => !mineIds.has(c.id));
 
   const requestJoin = async (clubId) => {
     setJoining(clubId);
@@ -65,11 +67,25 @@ export default function Clubs() {
     }
   };
 
+  const requestCoach = async (clubId) => {
+    setJoining(`coach-${clubId}`);
+    setMsg('');
+    try {
+      await api.post(`/clubs/${clubId}/request-coach`);
+      setMsg('Club admin has been asked to assign a coach.');
+      await loadMine();
+    } catch (err) {
+      setMsg(err.response?.data?.message || 'Could not send request');
+    } finally {
+      setJoining(null);
+    }
+  };
+
   return (
     <Layout>
       <h2 className="page-title">Clubs</h2>
       <p className="page-sub">
-        {clubOnly
+        {clubHome
           ? 'Your club is an organization that adds coaches and assigns them to athletes.'
           : 'Search for a club, then request to join. A club admin must approve you.'}
       </p>
@@ -78,52 +94,69 @@ export default function Clubs() {
         <div className="mb-6">
           <h3 className="font-semibold mb-3">My clubs</h3>
           <div className="grid md:grid-cols-2 gap-3">
-            {mine.map((c) => (
-              <Link key={c.id} to={`/clubs/${c.id}`} className="card text-inherit no-underline hover:border-brand">
-                <div className="font-semibold">{c.name}</div>
-                <div className="text-xs text-muted">
-                  {c.role === 'club_admin' ? 'Admin' : c.role === 'coach' ? 'Coach' : 'Athlete'}
-                  {c.membershipStatus === 'pending' ? ' · pending approval' : ''}
-                  {c.isVerified ? ' · verified' : ''}
+            {mine.map((c) => {
+              const coaches = c.coaches || [];
+              const canRequestCoach = athlete && c.role === 'member' && c.membershipStatus === 'active';
+              return (
+                <div key={c.id} className="card">
+                  <Link to={`/clubs/${c.id}`} className="font-semibold text-inherit no-underline hover:text-brand">
+                    {c.name}
+                  </Link>
+                  <div className="text-xs text-muted mt-1">
+                    {c.role === 'club_admin' ? 'Admin' : c.role === 'coach' ? 'Coach' : 'Athlete'}
+                    {c.membershipStatus === 'pending' ? ' · pending approval' : ''}
+                    {c.isVerified ? ' · verified' : ''}
+                  </div>
+                  {canRequestCoach && (
+                    <div className="mt-3">
+                      {coaches.length ? (
+                        <p className="text-sm text-muted mb-0">
+                          Coach{coaches.length === 1 ? '' : 'es'}: {coaches.map((x) => `${x.firstName} ${x.lastName}`).join(', ')}
+                        </p>
+                      ) : c.coachRequested ? (
+                        <p className="text-sm text-muted mb-0">Request sent. Waiting for a club admin to assign a coach.</p>
+                      ) : (
+                        <button
+                          className="btn-outline btn-sm mt-1"
+                          type="button"
+                          disabled={joining === `coach-${c.id}`}
+                          onClick={() => requestCoach(c.id)}
+                        >
+                          {joining === `coach-${c.id}` ? 'Sending…' : 'Request a coach'}
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
-              </Link>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
-      {!clubOnly && (
+      {athlete && (
         <>
           <form className="flex gap-2 mb-4" onSubmit={search}>
             <input placeholder="Search by club name or city" value={q} onChange={(e) => setQ(e.target.value)} />
             <button className="btn-primary" type="submit">Search</button>
           </form>
           <div className="space-y-3">
-            {clubs.map((c) => {
-              const mineState = mineStatus[c.id];
-              return (
+            {visibleClubs.map((c) => (
                 <div key={c.id} className="card flex justify-between items-center gap-3">
                   <div>
                     <div className="font-semibold">{c.name} {c.isVerified ? '✓' : ''}</div>
                     <div className="text-sm text-muted">{c.location || 'Location TBD'}</div>
                   </div>
-                  {mineIds.has(c.id) ? (
-                    <Link to={`/clubs/${c.id}`} className="btn-outline btn-sm no-underline">
-                      {mineState === 'pending' ? 'Pending' : 'Open'}
-                    </Link>
-                  ) : (
-                    <button
-                      className="btn-primary btn-sm"
-                      type="button"
-                      disabled={joining === c.id || c.status === 'pending_coach'}
-                      onClick={() => requestJoin(c.id)}
-                    >
-                      {c.status === 'pending_coach' ? 'Not open' : joining === c.id ? 'Sending…' : 'Request'}
-                    </button>
-                  )}
+                  <button
+                    className="btn-primary btn-sm"
+                    type="button"
+                    disabled={joining === c.id || c.status === 'pending_coach'}
+                    onClick={() => requestJoin(c.id)}
+                  >
+                    {c.status === 'pending_coach' ? 'Not open' : joining === c.id ? 'Sending…' : 'Request'}
+                  </button>
                 </div>
-              );
-            })}
-            {searched && !clubs.length && (
+              ))}
+            {searched && !visibleClubs.length && (
               <div className="card text-muted text-sm">No clubs match that search.</div>
             )}
             {!searched && (

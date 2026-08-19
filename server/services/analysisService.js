@@ -1,5 +1,6 @@
 import { camelMany, many } from '../config/db.js';
 import { formatDistance, formatDuration, paceFromSpeed, startOfMonth, startOfWeek, startOfYear } from '../utils/format.js';
+import { athleteHrContext } from '../utils/maf.js';
 
 function num(v) {
   return v == null ? 0 : Number(v);
@@ -22,12 +23,38 @@ function hrZones(avgHr, maxHr) {
   return { zone: 5, label: 'VO2 Max', pct };
 }
 
+function mafCheck(avgHr, activityMaxHr, mafHr) {
+  if (!avgHr || !mafHr) return null;
+  const avg = Math.round(avgHr);
+  const maf = Math.round(mafHr);
+  const delta = avg - maf;
+  const relation = delta <= -3 ? 'below' : delta >= 3 ? 'above' : 'at';
+  const max = activityMaxHr ? Math.round(activityMaxHr) : null;
+  return {
+    mafHeartRate: maf,
+    avgHeartrate: avg,
+    maxHeartrate: max,
+    delta,
+    relation,
+    withinMaf: avg <= maf,
+    maxAboveMaf: max != null && max > maf,
+    label:
+      relation === 'below'
+        ? `${Math.abs(delta)} bpm below MAF`
+        : relation === 'above'
+          ? `${delta} bpm above MAF`
+          : 'At MAF',
+  };
+}
+
 export function analyzeActivity(activity, athlete = {}) {
   const distance = num(activity.distance);
   const moving = num(activity.movingTime ?? activity.moving_time);
   const elevation = num(activity.elevationGain ?? activity.elevation_gain);
   const avgHr = num(activity.avgHeartrate ?? activity.avg_heartrate);
-  const maxHr = num(activity.maxHeartrate ?? activity.max_heartrate) || athlete.maxHeartRate || athlete.max_heart_rate;
+  const activityMaxHr = num(activity.maxHeartrate ?? activity.max_heartrate);
+  const profile = athleteHrContext(athlete);
+  const maxHr = activityMaxHr || profile.maxHeartRate;
   const cadence = num(activity.avgCadence ?? activity.avg_cadence);
   const avgSpeed = num(activity.avgSpeed ?? activity.avg_speed);
   const splits = activity.splits || [];
@@ -81,6 +108,7 @@ export function analyzeActivity(activity, athlete = {}) {
     paceCoefficientOfVariation: paceCv,
     splitCount: splitPaces.length,
     heartRateZone: zone,
+    mafCheck: avgHr ? mafCheck(avgHr, activityMaxHr, profile.mafHeartRate) : null,
     cadenceEfficiency,
     elevationPerKm: Math.round(elevPerKm * 10) / 10,
     elevationImpact,
@@ -162,6 +190,10 @@ export async function athleteDashboard(athleteId, athlete = {}, { type } = {}) {
        FROM review_requests rr
        JOIN activities a ON a.id = rr.activity_id
        WHERE rr.athlete_id = $1 AND rr.status = 'pending'
+         AND NOT EXISTS (
+           SELECT 1 FROM activity_reviews ar
+           WHERE ar.activity_id = rr.activity_id AND ar.status = 'published'
+         )
        ORDER BY rr.requested_at DESC
        LIMIT 10`,
       [athleteId]

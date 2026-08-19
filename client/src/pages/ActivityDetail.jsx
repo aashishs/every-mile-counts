@@ -47,6 +47,7 @@ export default function ActivityDetail() {
   const pendingRequests = (requests || []).filter((r) => r.status === 'pending');
   const hasReview = (reviews || []).length > 0;
   const myReview = (reviews || []).find((r) => r.coachId === user.id);
+  const myPendingRequest = (requests || []).find((r) => r.status === 'pending' && r.coachId === user.id);
   const glance = insights || athleteInsights || {};
   const metric = activityMetric(activity.type, activity.sportType, activity.distance);
   const primary = metric === 'swim'
@@ -82,7 +83,12 @@ export default function ActivityDetail() {
   const submitReview = async (e) => {
     e.preventDefault();
     try {
-      await api.post('/reviews', { activityId: activity.id, ...form, status: 'published' });
+      await api.post('/reviews', {
+        activityId: activity.id,
+        requestId: myPendingRequest?.id,
+        ...form,
+        status: 'published',
+      });
       const { data: fresh } = await api.get(`/activities/${id}`);
       setData(fresh);
       setMessage('Review published');
@@ -107,7 +113,15 @@ export default function ActivityDetail() {
   return (
     <Layout>
       <div className="flex justify-end mb-3">
-        <button type="button" className="btn-outline btn-sm" onClick={() => navigate('/activities')}>
+        <button
+          type="button"
+          className="btn-outline btn-sm"
+          onClick={() => navigate(
+            isCoach && !mine
+              ? `/coaches/athletes/${activity.athleteId}`
+              : '/activities'
+          )}
+        >
           Done
         </button>
       </div>
@@ -160,6 +174,18 @@ export default function ActivityDetail() {
             )}
             {glance.heartRateZone?.label && (
               <Insight label="HR zone" value={`Z${glance.heartRateZone.zone}`} hint={glance.heartRateZone.label} />
+            )}
+            {glance.mafCheck && (
+              <Insight
+                label="MAF"
+                value={glance.mafCheck.label}
+                plain
+                hint={
+                  glance.mafCheck.maxAboveMaf
+                    ? `MAF ${glance.mafCheck.mafHeartRate} bpm · max ${glance.mafCheck.maxHeartrate} spiked above`
+                    : `MAF ${glance.mafCheck.mafHeartRate} bpm (180 − age)`
+                }
+              />
             )}
             {glance.trainingLoad != null && (
               <Insight label="Load" value={Math.round(glance.trainingLoad)} />
@@ -275,11 +301,11 @@ export default function ActivityDetail() {
   );
 }
 
-function Insight({ label, value, hint }) {
+function Insight({ label, value, hint, plain }) {
   return (
     <div className="stat-card">
       <div className="stat-label">{label}</div>
-      <div className="stat-value text-xl capitalize text-brand">{value}</div>
+      <div className={`stat-value text-xl text-brand ${plain ? '' : 'capitalize'}`}>{value}</div>
       {hint && <div className="text-[11px] text-muted mt-1">{hint}</div>}
     </div>
   );

@@ -12,7 +12,7 @@ router.get(
   asyncHandler(async (req, res) => {
     const notifications = camelMany(
       await many(
-        `SELECT * FROM notifications WHERE user_id = $1 ORDER BY created_at DESC LIMIT 50`,
+        `SELECT * FROM notifications WHERE user_id = $1 AND read_at IS NULL ORDER BY created_at DESC LIMIT 50`,
         [req.user.id]
       )
     );

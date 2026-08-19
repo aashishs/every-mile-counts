@@ -1,7 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ProtectedRoute, PublicRoute } from './components/ProtectedRoute';
-import { homePath, isAppAdminAccount, isClubOnlyAccount } from './utils/roles';
+import { homePath, isAppAdminAccount, isAthleteAccount } from './utils/roles';
 import { GOALS_ENABLED } from './utils/features';
 import Login from './pages/Login';
 import ForgotPassword from './pages/ForgotPassword';
@@ -14,6 +14,7 @@ import Events from './pages/Events';
 import Analysis from './pages/Analysis';
 import CompareActivities from './pages/CompareActivities';
 import Coaches from './pages/Coaches';
+import CoachAthleteActivities from './pages/CoachAthleteActivities';
 import Goals from './pages/Goals';
 import Clubs from './pages/Clubs';
 import ClubDetail from './pages/ClubDetail';
@@ -39,6 +40,7 @@ export default function App() {
           <Route path="/events" element={<ProtectedRoute><AthleteRoute><Events /></AthleteRoute></ProtectedRoute>} />
           <Route path="/analysis" element={<ProtectedRoute><AthleteRoute><Analysis /></AthleteRoute></ProtectedRoute>} />
           <Route path="/coaches" element={<ProtectedRoute><NotAppAdmin><Coaches /></NotAppAdmin></ProtectedRoute>} />
+          <Route path="/coaches/athletes/:athleteId" element={<ProtectedRoute><NotAppAdmin><CoachAthleteActivities /></NotAppAdmin></ProtectedRoute>} />
           <Route
             path="/goals"
             element={
@@ -77,6 +79,6 @@ function NotAppAdmin({ children }) {
 function AthleteRoute({ children }) {
   const { user } = useAuth();
   if (isAppAdminAccount(user)) return <Navigate to="/admin" replace />;
-  if (isClubOnlyAccount(user)) return <Navigate to="/clubs" replace />;
+  if (!isAthleteAccount(user)) return <Navigate to={homePath(user)} replace />;
   return children;
 }

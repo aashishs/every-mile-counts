@@ -3,7 +3,7 @@ import { protect, requireMembership } from '../middleware/auth.js';
 import { completeGarminOAuth, getGarminConnection, startGarminOAuth, syncGarminActivities } from '../services/garminService.js';
 import { asyncHandler } from '../middleware/error.js';
 import { writeAudit } from '../services/auditService.js';
-import { isAppAdminUser, isClubOnlyUser } from '../utils/membership.js';
+import { isAppAdminUser, isAthleteUser } from '../utils/membership.js';
 import { clientUrl } from '../utils/urls.js';
 
 const router = express.Router();
@@ -12,8 +12,8 @@ function rejectClubAccount(req, res, next) {
   if (isAppAdminUser(req.user)) {
     return res.status(400).json({ message: 'App admins do not connect activity apps.' });
   }
-  if (isClubOnlyUser(req.user)) {
-    return res.status(400).json({ message: 'Clubs do not connect activity apps. Athletes sync their own activities.' });
+  if (!isAthleteUser(req.user)) {
+    return res.status(400).json({ message: 'Only athletes connect activity apps.' });
   }
   next();
 }
@@ -66,7 +66,7 @@ router.get(
   '/status',
   protect,
   asyncHandler(async (req, res) => {
-    if (isClubOnlyUser(req.user)) {
+    if (!isAthleteUser(req.user)) {
       return res.json({ connected: false, applicable: false });
     }
     const conn = await getGarminConnection(req.user.id);

@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import api from '../api/client';
-import { isAppAdminAccount, isClubOnlyAccount } from '../utils/roles';
+import { isAthleteAccount } from '../utils/roles';
 
 export default function StravaCard({ user, autoConnect = false }) {
-  const hidden = isAppAdminAccount(user) || isClubOnlyAccount(user);
+  const hidden = !isAthleteAccount(user);
   const [strava, setStrava] = useState(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');

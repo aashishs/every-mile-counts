@@ -178,6 +178,16 @@ CREATE TABLE IF NOT EXISTS coach_assignments (
 CREATE INDEX IF NOT EXISTS idx_coach_assignments_athlete ON coach_assignments (athlete_id);
 CREATE INDEX IF NOT EXISTS idx_coach_assignments_coach ON coach_assignments (coach_id);
 
+CREATE TABLE IF NOT EXISTS coach_assignment_requests (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  club_id UUID NOT NULL REFERENCES clubs(id) ON DELETE CASCADE,
+  athlete_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'completed', 'cancelled')),
+  requested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (club_id, athlete_id)
+);
+CREATE INDEX IF NOT EXISTS idx_coach_assignment_requests_club ON coach_assignment_requests (club_id, status);
+
 -- ---------------------------------------------------------------------------
 -- OAuth / device connections
 -- ---------------------------------------------------------------------------

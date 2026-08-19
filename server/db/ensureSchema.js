@@ -57,4 +57,91 @@ export async function ensureSchemaPatches() {
      WHERE UPPER(code) IN ('WELCOME-EMC', 'ATHLETE-BETA', 'COACH-BETA', 'CLUB-BETA')
        AND is_disabled = FALSE`
   );
+
+  await pool.query(`
+    INSERT INTO user_roles (user_id, role)
+    SELECT ur.user_id, 'athlete'
+    FROM user_roles ur
+    WHERE ur.role = 'coach'
+      AND NOT EXISTS (
+        SELECT 1 FROM user_roles ca
+        WHERE ca.user_id = ur.user_id AND ca.role IN ('club_admin', 'app_admin')
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM user_roles a
+        WHERE a.user_id = ur.user_id AND a.role = 'athlete'
+      )
+    ON CONFLICT DO NOTHING
+  `);
+
+  await pool.query(`
+    INSERT INTO user_roles (user_id, role)
+    SELECT DISTINCT cm.user_id, 'club_admin'
+    FROM club_members cm
+    WHERE cm.role = 'club_admin' AND cm.status = 'active'
+      AND NOT EXISTS (
+        SELECT 1 FROM user_roles aa
+        WHERE aa.user_id = cm.user_id AND aa.role = 'app_admin'
+      )
+    ON CONFLICT DO NOTHING
+  `);
+
+  await pool.query(`
+    DELETE FROM user_roles ur
+    WHERE ur.role IN ('athlete', 'coach')
+      AND EXISTS (
+        SELECT 1 FROM user_roles ca
+        WHERE ca.user_id = ur.user_id AND ca.role = 'club_admin'
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM user_roles aa
+        WHERE aa.user_id = ur.user_id AND aa.role = 'app_admin'
+      )
+  `);
+
+  await pool.query(`
+    UPDATE coach_assignments ca
+    SET status = 'inactive'
+    WHERE ca.status = 'active'
+      AND (
+        (
+          EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = ca.athlete_id AND ur.role = 'club_admin')
+          AND NOT EXISTS (SELECT 1 FROM user_roles aa WHERE aa.user_id = ca.athlete_id AND aa.role = 'app_admin')
+        )
+        OR (
+          EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = ca.coach_id AND ur.role = 'club_admin')
+          AND NOT EXISTS (SELECT 1 FROM user_roles aa WHERE aa.user_id = ca.coach_id AND aa.role = 'app_admin')
+        )
+      )
+  `);
+
+  await pool.query(`
+    UPDATE clubs c
+    SET status = 'pending_coach', updated_at = NOW()
+    WHERE c.status = 'active'
+      AND NOT EXISTS (
+        SELECT 1 FROM club_members cm
+        WHERE cm.club_id = c.id AND cm.status = 'active' AND cm.role = 'coach'
+      )
+  `);
+
+  await pool.query(`ALTER TABLE review_requests DROP CONSTRAINT IF EXISTS review_requests_status_check`);
+  await pool.query(
+    `ALTER TABLE review_requests ADD CONSTRAINT review_requests_status_check
+     CHECK (status IN ('pending', 'completed', 'cancelled'))`
+  );
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS coach_assignment_requests (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      club_id UUID NOT NULL REFERENCES clubs(id) ON DELETE CASCADE,
+      athlete_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'completed', 'cancelled')),
+      requested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (club_id, athlete_id)
+    )
+  `);
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS idx_coach_assignment_requests_club
+     ON coach_assignment_requests (club_id, status)`
+  );
 }

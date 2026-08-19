@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { isAppAdminAccount, isClubOnlyAccount } from '../utils/roles';
+import { isAppAdminAccount, isAthleteAccount } from '../utils/roles';
 import { VersionBadge } from './Badge';
 import { isBeta } from '../utils/appVersion';
 import { GOALS_ENABLED } from '../utils/features';
@@ -43,11 +43,10 @@ export default function Layout({ children }) {
   const initials = `${user.firstName?.[0] || ''}${user.lastName?.[0] || ''}`.toUpperCase();
   const membership = user.membership;
   const expiring = membership?.status === 'expiring_soon';
-  const clubOnly = isClubOnlyAccount(user);
   const appAdmin = isAppAdminAccount(user);
-  const isAthlete = !appAdmin && (user?.roles?.includes('athlete'));
+  const isAthlete = isAthleteAccount(user);
   const isCoachUser = !appAdmin && (user?.roles?.includes('coach'));
-  const clubHome = !appAdmin && (clubOnly || (user?.roles?.includes('club_admin') && !isAthlete));
+  const clubHome = !appAdmin && user?.roles?.includes('club_admin') && !isAthlete;
   const adminTabs = [
     { to: '/admin', label: 'Admin', icon: '🛡️' },
     { to: '/support', label: 'Support', icon: '💬' },
@@ -67,10 +66,10 @@ export default function Layout({ children }) {
   const links = appAdmin
     ? adminTabs
     : [
-        ...(isAthlete && !clubOnly ? athleteLinks : []),
-        ...(isCoachUser && !clubOnly ? [{ to: '/coaches', label: 'Coaching', icon: '👥' }] : []),
-        ...(clubOnly ? [{ to: '/clubs', label: 'Club', icon: '🏅' }] : []),
-        ...sharedLinks.filter((l) => !(clubOnly && l.to === '/clubs')),
+        ...(isAthlete ? athleteLinks : []),
+        ...(isCoachUser ? [{ to: '/coaches', label: 'Coaching', icon: '👥' }] : []),
+        ...(clubHome ? [{ to: '/clubs', label: 'Club', icon: '🏅' }] : []),
+        ...sharedLinks.filter((l) => !(clubHome && l.to === '/clubs')),
       ];
 
   const tabHit = tabs.some((t) => pathActive(location.pathname, t.to));
@@ -124,7 +123,7 @@ export default function Layout({ children }) {
         </div>
         <div className="flex flex-wrap items-center gap-1 mt-0.5">
           <span className="text-xs text-muted truncate">
-            {appAdmin ? 'App admin' : clubOnly ? 'Club admin' : user.roles?.join(' · ')}
+            {appAdmin ? 'App admin' : clubHome ? 'Club admin' : user.roles?.join(' · ')}
           </span>
           <VersionBadge />
         </div>

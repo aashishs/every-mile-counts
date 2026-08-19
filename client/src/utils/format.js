@@ -67,6 +67,15 @@ export function formatDate(date) {
   });
 }
 
+export function formatDateShort(date) {
+  if (!date) return '';
+  return new Date(date).toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+}
+
 export function formatTime(value) {
   if (!value) return '';
   const text = String(value);

@@ -3,6 +3,7 @@ import { camel, camelMany, many, one, query } from '../config/db.js';
 import { protect, requireRole } from '../middleware/auth.js';
 import { writeAudit } from '../services/auditService.js';
 import { createNotification } from '../services/notificationService.js';
+import { getUserRoles, grantAthleteUnlessClubAdmin, stripTrainingRolesForClubAdmin } from '../utils/membership.js';
 import { asyncHandler } from '../middleware/error.js';
 
 const router = express.Router();
@@ -79,12 +80,19 @@ router.patch(
       await query(`UPDATE users SET status = $1, updated_at = NOW() WHERE id = $2`, [status, req.params.id]);
     }
     if (Array.isArray(roles)) {
+      let nextRoles = roles.filter(Boolean);
+      if (nextRoles.includes('club_admin')) {
+        nextRoles = nextRoles.filter((r) => r !== 'athlete' && r !== 'coach');
+      }
       await query(`DELETE FROM user_roles WHERE user_id = $1`, [req.params.id]);
-      for (const role of roles) {
+      for (const role of nextRoles) {
         await query(`INSERT INTO user_roles (user_id, role) VALUES ($1, $2) ON CONFLICT DO NOTHING`, [
           req.params.id,
           role,
         ]);
+      }
+      if (nextRoles.includes('club_admin')) {
+        await stripTrainingRolesForClubAdmin(req.params.id);
       }
     }
     await writeAudit({
@@ -213,11 +221,23 @@ router.post(
     const user = camel(await one('SELECT * FROM users WHERE id = $1 AND status <> $2', [req.params.id, 'deleted']));
     const club = camel(await one('SELECT * FROM clubs WHERE id = $1', [clubId]));
     if (!user || !club) return res.status(404).json({ message: 'User or club not found' });
+    const userRoles = await getUserRoles(user.id);
+    if (role === 'coach' && userRoles.includes('club_admin')) {
+      return res.status(400).json({ message: 'Club admins cannot also be coaches' });
+    }
+    if (role === 'member' && userRoles.includes('club_admin')) {
+      return res.status(400).json({ message: 'Club admins cannot also be athletes' });
+    }
+    if (role === 'club_admin') {
+      await query(`INSERT INTO user_roles (user_id, role) VALUES ($1, 'club_admin') ON CONFLICT DO NOTHING`, [user.id]);
+      await stripTrainingRolesForClubAdmin(user.id);
+    }
     if (role === 'coach') {
       await query(`INSERT INTO user_roles (user_id, role) VALUES ($1, 'coach') ON CONFLICT DO NOTHING`, [user.id]);
+      await grantAthleteUnlessClubAdmin(user.id);
     }
     if (role === 'member') {
-      await query(`INSERT INTO user_roles (user_id, role) VALUES ($1, 'athlete') ON CONFLICT DO NOTHING`, [user.id]);
+      await grantAthleteUnlessClubAdmin(user.id);
     }
     await query(
       `INSERT INTO club_members (club_id, user_id, role, status, approved_at)
@@ -277,6 +297,14 @@ router.post(
   asyncHandler(async (req, res) => {
     const { athleteId, coachId, clubId } = req.body;
     if (!athleteId || !coachId) return res.status(400).json({ message: 'athleteId and coachId are required' });
+    const athleteRoles = await getUserRoles(athleteId);
+    const coachRoles = await getUserRoles(coachId);
+    if (athleteRoles.includes('club_admin')) {
+      return res.status(400).json({ message: 'Club admins cannot be assigned as athletes' });
+    }
+    if (coachRoles.includes('club_admin')) {
+      return res.status(400).json({ message: 'Club admins cannot be assigned as coaches' });
+    }
     const countRow = await one(
       `SELECT COUNT(*)::int AS count FROM coach_assignments WHERE athlete_id = $1 AND status = 'active' AND coach_id <> $2`,
       [athleteId, coachId]
@@ -285,6 +313,7 @@ router.post(
       return res.status(400).json({ message: 'Maximum of three coaches per athlete' });
     }
     await query(`INSERT INTO user_roles (user_id, role) VALUES ($1, 'coach') ON CONFLICT DO NOTHING`, [coachId]);
+    await grantAthleteUnlessClubAdmin(coachId);
     await query(
       `INSERT INTO coach_assignments (athlete_id, coach_id, club_id, assigned_by, status)
        VALUES ($1,$2,$3,$4,'active')

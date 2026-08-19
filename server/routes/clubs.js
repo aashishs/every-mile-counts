@@ -1,7 +1,7 @@
 import express from 'express';
 import { camel, camelMany, many, one, query } from '../config/db.js';
 import { protect, requireMembership, rejectAppAdmin } from '../middleware/auth.js';
-import { getClubMembership, isMembershipUsable, getUserRoles } from '../utils/membership.js';
+import { getClubMembership, isMembershipUsable, getUserRoles, grantAthleteUnlessClubAdmin } from '../utils/membership.js';
 import { createNotification, notifyMany } from '../services/notificationService.js';
 import { slugify } from '../utils/format.js';
 import { asyncHandler } from '../middleware/error.js';
@@ -22,13 +22,7 @@ async function membership(userId, clubId) {
 
 async function isClubCoach(userId, clubId) {
   const m = await membership(userId, clubId);
-  if (!m || m.status !== 'active') return false;
-  if (m.role === 'coach') return true;
-  if (m.role === 'club_admin') {
-    const roles = await getUserRoles(userId);
-    return roles.includes('coach');
-  }
-  return false;
+  return Boolean(m && m.status === 'active' && m.role === 'coach');
 }
 
 async function requireClubAdmin(req, clubId) {
@@ -63,6 +57,11 @@ router.get(
       params.push(`%${q}%`);
       sql += ` AND (c.name ILIKE $1 OR c.location ILIKE $1 OR c.description ILIKE $1)`;
     }
+    params.push(req.user.id);
+    sql += ` AND NOT EXISTS (
+      SELECT 1 FROM club_members cm
+      WHERE cm.club_id = c.id AND cm.user_id = $${params.length} AND cm.status IN ('active', 'pending')
+    )`;
     sql += ' ORDER BY c.name ASC LIMIT 20';
     const clubs = camelMany(await many(sql, params));
     res.json({ clubs });
@@ -82,7 +81,42 @@ router.get(
         [req.user.id]
       )
     );
-    res.json({ clubs });
+    const ids = clubs.map((c) => c.id);
+    if (!ids.length) return res.json({ clubs });
+    const assigned = camelMany(
+      await many(
+        `SELECT ca.club_id, u.id, u.first_name, u.last_name, u.email
+         FROM coach_assignments ca
+         JOIN users u ON u.id = ca.coach_id
+         WHERE ca.athlete_id = $1 AND ca.status = 'active' AND ca.club_id = ANY($2::uuid[])
+         ORDER BY u.last_name, u.first_name`,
+        [req.user.id, ids]
+      )
+    );
+    const requests = camelMany(
+      await many(
+        `SELECT club_id FROM coach_assignment_requests
+         WHERE athlete_id = $1 AND status = 'pending' AND club_id = ANY($2::uuid[])`,
+        [req.user.id, ids]
+      )
+    );
+    const coachesByClub = {};
+    for (const row of assigned) {
+      (coachesByClub[row.clubId] ||= []).push({
+        id: row.id,
+        firstName: row.firstName,
+        lastName: row.lastName,
+        email: row.email,
+      });
+    }
+    const requested = new Set(requests.map((r) => r.clubId));
+    res.json({
+      clubs: clubs.map((c) => ({
+        ...c,
+        coaches: coachesByClub[c.id] || [],
+        coachRequested: requested.has(c.id),
+      })),
+    });
   })
 );
 
@@ -116,7 +150,12 @@ router.get(
       await many(
         `SELECT cm.*, u.first_name, u.last_name, u.email, u.avatar_url,
                 COALESCE(JSON_AGG(DISTINCT ur.role) FILTER (WHERE ur.role IS NOT NULL), '[]'::json) AS user_roles,
-                (SELECT COUNT(*) FROM activities a WHERE a.athlete_id = u.id)::int AS activity_count
+                (SELECT COUNT(*) FROM activities a WHERE a.athlete_id = u.id)::int AS activity_count,
+                (SELECT MAX(a.start_date) FROM activities a WHERE a.athlete_id = u.id) AS last_activity_at,
+                EXISTS (
+                  SELECT 1 FROM coach_assignment_requests r
+                  WHERE r.club_id = cm.club_id AND r.athlete_id = u.id AND r.status = 'pending'
+                ) AS coach_requested
          FROM club_members cm
          JOIN users u ON u.id = cm.user_id
          LEFT JOIN user_roles ur ON ur.user_id = u.id
@@ -185,7 +224,10 @@ router.post(
       await one(
         `INSERT INTO club_members (club_id, user_id, role, status, approved_at)
          VALUES ($1, $2, 'member', $3, $4)
-         ON CONFLICT (club_id, user_id) DO UPDATE SET status = EXCLUDED.status, requested_at = NOW()
+         ON CONFLICT (club_id, user_id) DO UPDATE SET
+           status = EXCLUDED.status,
+           requested_at = NOW(),
+           approved_at = CASE WHEN EXCLUDED.status = 'pending' THEN NULL ELSE EXCLUDED.approved_at END
          RETURNING *`,
         [club.id, req.user.id, autoApprove ? 'active' : 'pending', autoApprove ? new Date() : null]
       )
@@ -215,7 +257,11 @@ router.post(
       )
     );
     if (!user) return res.status(404).json({ message: 'User not found' });
-    await query(`INSERT INTO user_roles (user_id, role) VALUES ($1, 'athlete') ON CONFLICT DO NOTHING`, [user.id]);
+    const roles = await getUserRoles(user.id);
+    if (roles.includes('club_admin')) {
+      return res.status(400).json({ message: 'Club admins cannot be added as athletes' });
+    }
+    await grantAthleteUnlessClubAdmin(user.id);
     await query(
       `INSERT INTO club_members (club_id, user_id, role, status, approved_at)
        VALUES ($1, $2, 'member', 'active', NOW())
@@ -277,7 +323,7 @@ router.post(
     const member = camel(
       await one(
         `UPDATE club_members SET status = 'active', approved_at = NOW()
-         WHERE id = $1 AND club_id = $2 RETURNING *`,
+         WHERE id = $1 AND club_id = $2 AND status = 'pending' RETURNING *`,
         [req.params.memberId, req.params.id]
       )
     );
@@ -326,14 +372,19 @@ router.post(
       )
     );
     if (!user) return res.status(404).json({ message: 'User not found' });
+    const roles = await getUserRoles(user.id);
+    if (roles.includes('club_admin')) {
+      return res.status(400).json({ message: 'Club admins cannot also be coaches. Add a separate coach account.' });
+    }
     await query(`INSERT INTO user_roles (user_id, role) VALUES ($1, 'coach') ON CONFLICT DO NOTHING`, [user.id]);
+    await grantAthleteUnlessClubAdmin(user.id);
     await query(
       `INSERT INTO club_members (club_id, user_id, role, status, approved_at)
        VALUES ($1, $2, 'coach', 'active', NOW())
        ON CONFLICT (club_id, user_id) DO UPDATE SET
          status = 'active',
          approved_at = NOW(),
-         role = CASE WHEN club_members.role = 'club_admin' THEN 'club_admin' ELSE 'coach' END`,
+         role = 'coach'`,
       [req.params.id, user.id]
     );
     await query(`UPDATE clubs SET status = 'active', updated_at = NOW() WHERE id = $1 AND status = 'pending_coach'`, [
@@ -360,35 +411,19 @@ router.delete(
     }
     const writable = await clubWritable(req.params.id);
     if (!writable.ok) return res.status(writable.status).json({ message: writable.message });
-    const target = await membership(req.params.userId, req.params.id);
     const remaining = await one(
       `SELECT COUNT(*)::int AS count
        FROM club_members cm
-       WHERE cm.club_id = $1 AND cm.status = 'active' AND cm.user_id <> $2
-         AND (
-           cm.role = 'coach'
-           OR (cm.role = 'club_admin' AND EXISTS (
-             SELECT 1 FROM user_roles ur WHERE ur.user_id = cm.user_id AND ur.role = 'coach'
-           ))
-         )`,
+       WHERE cm.club_id = $1 AND cm.status = 'active' AND cm.user_id <> $2 AND cm.role = 'coach'`,
       [req.params.id, req.params.userId]
     );
     if (remaining.count < 1) {
       return res.status(400).json({ message: 'Club must keep at least one coach' });
     }
-    if (target?.role === 'club_admin') {
-      await query(`DELETE FROM user_roles WHERE user_id = $1 AND role = 'coach'`, [req.params.userId]);
-      await query(
-        `UPDATE coach_assignments SET status = 'inactive'
-         WHERE club_id = $1 AND coach_id = $2 AND status = 'active'`,
-        [req.params.id, req.params.userId]
-      );
-    } else {
-      await query(
-        `UPDATE club_members SET status = 'left' WHERE club_id = $1 AND user_id = $2 AND role = 'coach'`,
-        [req.params.id, req.params.userId]
-      );
-    }
+    await query(
+      `UPDATE club_members SET status = 'left' WHERE club_id = $1 AND user_id = $2 AND role = 'coach'`,
+      [req.params.id, req.params.userId]
+    );
     await createNotification({
       userId: req.params.userId,
       type: 'club',
@@ -397,6 +432,57 @@ router.delete(
       data: { clubId: req.params.id },
     });
     res.json({ message: 'Coach removed' });
+  })
+);
+
+router.post(
+  '/:id/request-coach',
+  asyncHandler(async (req, res) => {
+    const clubId = req.params.id;
+    const mem = await membership(req.user.id, clubId);
+    if (!mem || mem.status !== 'active' || mem.role !== 'member') {
+      return res.status(400).json({ message: 'Join this club as an athlete first' });
+    }
+    const assigned = await one(
+      `SELECT id FROM coach_assignments
+       WHERE athlete_id = $1 AND club_id = $2 AND status = 'active' LIMIT 1`,
+      [req.user.id, clubId]
+    );
+    if (assigned) {
+      return res.status(400).json({ message: 'A coach is already assigned in this club' });
+    }
+    const existing = camel(
+      await one(
+        `SELECT * FROM coach_assignment_requests
+         WHERE club_id = $1 AND athlete_id = $2`,
+        [clubId, req.user.id]
+      )
+    );
+    if (existing?.status === 'pending') {
+      return res.status(400).json({ message: 'You already asked the club admin to assign a coach' });
+    }
+    await query(
+      `INSERT INTO coach_assignment_requests (club_id, athlete_id, status, requested_at)
+       VALUES ($1, $2, 'pending', NOW())
+       ON CONFLICT (club_id, athlete_id) DO UPDATE SET status = 'pending', requested_at = NOW()`,
+      [clubId, req.user.id]
+    );
+    const club = camel(await one('SELECT name FROM clubs WHERE id = $1', [clubId]));
+    const admins = await many(
+      `SELECT user_id FROM club_members
+       WHERE club_id = $1 AND role = 'club_admin' AND status = 'active'`,
+      [clubId]
+    );
+    await notifyMany(
+      admins.map((a) => a.user_id),
+      {
+        type: 'club',
+        title: 'Coach assignment requested',
+        body: `${req.user.firstName} ${req.user.lastName} asked you to assign a coach at ${club?.name || 'your club'}.`,
+        data: { clubId, athleteId: req.user.id, url: `/clubs/${clubId}?tab=requests` },
+      }
+    );
+    res.status(201).json({ message: 'Club admin has been asked to assign a coach' });
   })
 );
 
@@ -429,6 +515,11 @@ router.post(
        VALUES ($1,$2,$3,$4,'active')
        ON CONFLICT (athlete_id, coach_id) DO UPDATE SET status = 'active', club_id = EXCLUDED.club_id`,
       [athleteId, coachId, req.params.id, req.user.id]
+    );
+    await query(
+      `UPDATE coach_assignment_requests SET status = 'completed'
+       WHERE club_id = $1 AND athlete_id = $2 AND status = 'pending'`,
+      [req.params.id, athleteId]
     );
     await createNotification({
       userId: athleteId,

@@ -59,6 +59,9 @@ function insightLines(insights) {
       ? `- Pace consistency: ${insights.paceConsistency}`
       : null,
     zone?.label ? `- Heart-rate zone: Z${zone.zone} ${zone.label}` : null,
+    insights.mafCheck
+      ? `- MAF (${insights.mafCheck.mafHeartRate} bpm): avg HR ${insights.mafCheck.avgHeartrate} (${insights.mafCheck.label})`
+      : null,
     insights.trainingLoad != null ? `- Training load: ${Math.round(Number(insights.trainingLoad))}` : null,
     insights.cadenceEfficiency ? `- Cadence: ${insights.cadenceEfficiency}` : null,
     insights.elevationImpact ? `- Terrain: ${insights.elevationImpact}` : null,

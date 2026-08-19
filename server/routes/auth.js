@@ -5,7 +5,8 @@ import rateLimit from 'express-rate-limit';
 import { camel, many, one, query } from '../config/db.js';
 import { signToken } from '../utils/jwt.js';
 import { loadPublicUser, protect } from '../middleware/auth.js';
-import { planExpiryDate, publicUser, isAppAdminUser, isClubOnlyUser } from '../utils/membership.js';
+import { planExpiryDate, publicUser, isAthleteUser } from '../utils/membership.js';
+import { validateDateOfBirth } from '../utils/maf.js';
 import { writeAudit } from '../services/auditService.js';
 import { asyncHandler } from '../middleware/error.js';
 import { syncStravaOnLogin } from '../services/stravaService.js';
@@ -86,7 +87,7 @@ async function abortIncompleteSignup(userId) {
 router.post(
   '/register',
   asyncHandler(async (req, res) => {
-    const { email, password, firstName, lastName, roles, invitationCode, clubName, location } = req.body;
+    const { email, password, firstName, lastName, roles, invitationCode, clubName, location, dateOfBirth } = req.body;
     if (!email || !password || !firstName || !lastName || !invitationCode) {
       return res.status(400).json({ message: 'Name, email, password, and invitation code are required' });
     }
@@ -103,12 +104,20 @@ router.post(
     const valid = ['athlete', 'coach', 'club_admin'];
     let userRoles = requested.filter((r) => valid.includes(r));
     if (userRoles.includes('club_admin')) {
-      userRoles = ['club_admin', ...(requested.includes('coach') ? ['coach'] : [])];
+      userRoles = ['club_admin'];
     } else if (!userRoles.length) {
       userRoles = ['athlete'];
     }
     if (userRoles.includes('club_admin') && !clubName) {
       return res.status(400).json({ message: 'Club name is required for club registration' });
+    }
+
+    const athleteSignup = !userRoles.includes('club_admin');
+    let dob = null;
+    if (athleteSignup) {
+      const dobError = validateDateOfBirth(dateOfBirth);
+      if (dobError) return res.status(400).json({ message: dobError });
+      dob = String(dateOfBirth).slice(0, 10);
     }
 
     const primaryType = userRoles.includes('club_admin')
@@ -123,9 +132,9 @@ router.post(
 
     if (existing && !existing.emailVerifiedAt) {
       await query(
-        `UPDATE users SET password_hash = $1, first_name = $2, last_name = $3, location = $4, updated_at = NOW()
-         WHERE id = $5 AND email_verified_at IS NULL`,
-        [hash, firstName, lastName, location || null, existing.id]
+        `UPDATE users SET password_hash = $1, first_name = $2, last_name = $3, location = $4, date_of_birth = COALESCE($5, date_of_birth), updated_at = NOW()
+         WHERE id = $6 AND email_verified_at IS NULL`,
+        [hash, firstName, lastName, location || null, dob, existing.id]
       );
       if (await isSignupOtpPaused()) {
         await query(
@@ -163,9 +172,9 @@ router.post(
     try {
       user = camel(
         await one(
-          `INSERT INTO users (email, password_hash, first_name, last_name, location)
-           VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-          [email.toLowerCase(), hash, firstName, lastName, location || null]
+          `INSERT INTO users (email, password_hash, first_name, last_name, location, date_of_birth)
+           VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+          [email.toLowerCase(), hash, firstName, lastName, location || null, dob]
         )
       );
 
@@ -194,11 +203,6 @@ router.post(
            VALUES ($1, $2, 'club_admin', 'active', NOW())`,
           [club.id, user.id]
         );
-        if (userRoles.includes('coach')) {
-          await query(`UPDATE clubs SET status = 'active', updated_at = NOW() WHERE id = $1 AND status = 'pending_coach'`, [
-            club.id,
-          ]);
-        }
       }
 
       const invite = await loadInvitation({ code: invitationCode, type: primaryType });
@@ -314,7 +318,7 @@ router.post(
       user: await publicUser(user, { roles, membership }),
     };
     res.json(payload);
-    if (!isAppAdminUser(roles) && !isClubOnlyUser(roles)) {
+    if (isAthleteUser(roles)) {
       syncStravaOnLogin(user.id).catch((err) => {
         console.error('Login Strava sync:', err.message);
       });
@@ -336,7 +340,7 @@ router.post(
       token: signToken(row.id),
       user: await publicUser(row, { roles: row.roles, membership }),
     });
-    if (!isAppAdminUser(row.roles) && !isClubOnlyUser(row.roles)) {
+    if (isAthleteUser(row.roles)) {
       syncStravaOnLogin(row.id).catch((err) => {
         console.error('Login Strava sync:', err.message);
       });

@@ -33,15 +33,7 @@ router.get(
         `SELECT DISTINCT u.id, u.first_name, u.last_name, u.email, u.avatar_url,
                 c.id AS club_id, c.name AS club_name
          FROM club_members me
-         JOIN club_members cm ON cm.club_id = me.club_id AND cm.status = 'active'
-           AND (
-             cm.role = 'coach'
-             OR (
-               cm.role = 'club_admin' AND EXISTS (
-                 SELECT 1 FROM user_roles ur WHERE ur.user_id = cm.user_id AND ur.role = 'coach'
-               )
-             )
-           )
+         JOIN club_members cm ON cm.club_id = me.club_id AND cm.status = 'active' AND cm.role = 'coach'
          JOIN users u ON u.id = cm.user_id
          JOIN clubs c ON c.id = me.club_id
          WHERE me.user_id = $1 AND me.status = 'active' AND me.role = 'member'
@@ -90,15 +82,7 @@ router.post(
       await one(
         `SELECT me.club_id
          FROM club_members me
-         JOIN club_members cm ON cm.club_id = me.club_id AND cm.user_id = $2 AND cm.status = 'active'
-           AND (
-             cm.role = 'coach'
-             OR (
-               cm.role = 'club_admin' AND EXISTS (
-                 SELECT 1 FROM user_roles ur WHERE ur.user_id = cm.user_id AND ur.role = 'coach'
-               )
-             )
-           )
+         JOIN club_members cm ON cm.club_id = me.club_id AND cm.user_id = $2 AND cm.status = 'active' AND cm.role = 'coach'
          WHERE me.user_id = $1 AND me.status = 'active'
          LIMIT 1`,
         [req.user.id, coach.id]
@@ -125,18 +109,69 @@ router.get(
   '/my-athletes',
   requireRole('coach'),
   asyncHandler(async (req, res) => {
+    const pageSizes = [10, 20, 50, 100];
+    const limit = pageSizes.includes(Number(req.query.limit)) ? Number(req.query.limit) : 10;
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const sortKey = ['name', 'lastActivity', 'activities'].includes(String(req.query.sort))
+      ? String(req.query.sort)
+      : 'name';
+    const dir = String(req.query.dir).toLowerCase() === 'desc' ? 'desc' : 'asc';
+    const athleteId = String(req.query.athleteId || '').trim();
+
+    const orderSql = {
+      name: dir === 'desc' ? 'last_name DESC, first_name DESC' : 'last_name ASC, first_name ASC',
+      lastActivity:
+        dir === 'asc'
+          ? 'last_activity_at ASC NULLS LAST, last_name ASC'
+          : 'last_activity_at DESC NULLS LAST, last_name ASC',
+      activities:
+        dir === 'asc' ? 'activity_count ASC, last_name ASC' : 'activity_count DESC, last_name ASC',
+    }[sortKey];
+
+    const where = ['ca.coach_id = $1', `ca.status = 'active'`];
+    const params = [req.user.id];
+    if (athleteId) {
+      where.push(`u.id = $2`);
+      params.push(athleteId);
+    }
+
+    const fromSql = `
+      FROM coach_assignments ca
+      JOIN users u ON u.id = ca.athlete_id
+      WHERE ${where.join(' AND ')}
+    `;
+    const selectSql = `
+      SELECT ca.athlete_id, ca.club_id, u.first_name, u.last_name, u.email, u.avatar_url,
+             (SELECT COUNT(*) FROM activities a WHERE a.athlete_id = u.id)::int AS activity_count,
+             (SELECT MAX(a.start_date) FROM activities a WHERE a.athlete_id = u.id) AS last_activity_at
+      ${fromSql}
+    `;
+
+    if (athleteId) {
+      const row = camel(await one(selectSql, params));
+      return res.json({ athletes: row ? [row] : [], count: row ? 1 : 0 });
+    }
+
+    const count = await one(`SELECT COUNT(*)::int AS total ${fromSql}`, params);
+    const total = count.total;
+    const pages = Math.max(1, Math.ceil(total / limit) || 1);
+    const safePage = Math.min(page, pages);
+    const offset = (safePage - 1) * limit;
     const athletes = camelMany(
       await many(
-        `SELECT ca.*, u.first_name, u.last_name, u.email, u.avatar_url,
-                (SELECT COUNT(*) FROM activities a WHERE a.athlete_id = u.id)::int AS activity_count
-         FROM coach_assignments ca
-         JOIN users u ON u.id = ca.athlete_id
-         WHERE ca.coach_id = $1 AND ca.status = 'active'
-         ORDER BY u.last_name`,
-        [req.user.id]
+        `${selectSql} ORDER BY ${orderSql} LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+        [...params, limit, offset]
       )
     );
-    res.json({ athletes, count: athletes.length });
+    res.json({
+      athletes,
+      total,
+      page: safePage,
+      pages,
+      limit,
+      sort: sortKey,
+      dir,
+    });
   })
 );
 

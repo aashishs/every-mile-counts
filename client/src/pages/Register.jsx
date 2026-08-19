@@ -2,13 +2,14 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { afterJoinPath } from '../utils/roles';
+import { todayIsoDate } from '../utils/maf';
 import OtpVerify from '../components/OtpVerify';
 import { VersionBadge } from '../components/Badge';
 import { isBeta } from '../utils/appVersion';
 
 const ACCOUNT_TYPES = [
   { value: 'athlete', label: 'Athlete', hint: 'Sync training and get coached' },
-  { value: 'coach', label: 'Coach', hint: 'Review assigned athletes' },
+  { value: 'coach', label: 'Coach', hint: 'You train too — dashboard, log, and athlete reviews' },
   { value: 'club', label: 'Club', hint: 'Organization that assigns coaches' },
 ];
 
@@ -21,8 +22,8 @@ export default function Register() {
     invitationCode: '',
     location: '',
     clubName: '',
+    dateOfBirth: '',
     accountType: 'athlete',
-    alsoCoach: false,
   });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -42,10 +43,10 @@ export default function Register() {
     try {
       const roles =
         form.accountType === 'club'
-          ? form.alsoCoach
-            ? ['club_admin', 'coach']
-            : ['club_admin']
-          : [form.accountType];
+          ? ['club_admin']
+          : form.accountType === 'coach'
+            ? ['coach', 'athlete']
+            : ['athlete'];
       const data = await register({ ...form, roles });
       if (data.requiresOtp) {
         setOtp(data);
@@ -114,6 +115,21 @@ export default function Register() {
                 <label htmlFor="password">Password</label>
                 <input id="password" name="password" type="password" value={form.password} onChange={set} required minLength={8} />
               </div>
+              {form.accountType !== 'club' && (
+                <div>
+                  <label htmlFor="dateOfBirth">Date of birth</label>
+                  <input
+                    id="dateOfBirth"
+                    name="dateOfBirth"
+                    type="date"
+                    value={form.dateOfBirth}
+                    onChange={set}
+                    required
+                    max={todayIsoDate()}
+                  />
+                  <p className="text-xs text-muted mt-1">Used to set your age and MAF heart rate (180 − age).</p>
+                </div>
+              )}
               <div>
                 <label htmlFor="invitationCode">Invitation code</label>
                 <input id="invitationCode" name="invitationCode" value={form.invitationCode} onChange={set} required autoComplete="off" />
@@ -150,19 +166,6 @@ export default function Register() {
                     <label htmlFor="clubName">Club name</label>
                     <input id="clubName" name="clubName" value={form.clubName} onChange={set} required />
                   </div>
-                  <label className="flex items-start gap-2 cursor-pointer text-sm">
-                    <input
-                      type="checkbox"
-                      className="w-auto mt-1"
-                      name="alsoCoach"
-                      checked={form.alsoCoach}
-                      onChange={set}
-                    />
-                    <span>
-                      <span className="font-medium">I also coach at this club</span>
-                      <span className="block text-xs text-muted">You can assign yourself to athletes and review their training.</span>
-                    </span>
-                  </label>
                 </>
               )}
               <button type="submit" className="btn-primary w-full" disabled={loading}>

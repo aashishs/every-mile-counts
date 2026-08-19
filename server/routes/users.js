@@ -2,7 +2,8 @@ import express from 'express';
 import bcrypt from 'bcryptjs';
 import { camel, one, query } from '../config/db.js';
 import { protect, requireMembership } from '../middleware/auth.js';
-import { publicUser } from '../utils/membership.js';
+import { publicUser, isAthleteUser } from '../utils/membership.js';
+import { validateDateOfBirth } from '../utils/maf.js';
 import { writeAudit } from '../services/auditService.js';
 import { asyncHandler } from '../middleware/error.js';
 
@@ -46,6 +47,10 @@ router.patch(
     const allowedTypes = ['Run', 'Ride', 'Swim', 'Walk', 'Hike', 'Workout', 'WeightTraining', 'Yoga', 'HIIT'];
     if (req.body.defaultActivityType !== undefined && !allowedTypes.includes(req.body.defaultActivityType)) {
       return res.status(400).json({ message: 'Choose a valid default activity type' });
+    }
+    if (isAthleteUser(req.user) && req.body.dateOfBirth !== undefined) {
+      const dobError = validateDateOfBirth(req.body.dateOfBirth);
+      if (dobError) return res.status(400).json({ message: dobError });
     }
     const sets = [];
     const vals = [];

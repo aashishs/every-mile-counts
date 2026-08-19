@@ -12,11 +12,6 @@ const TYPE_PREF = {
   event: 'events',
 };
 
-function isAdminOnly(roles = []) {
-  if (roles.includes('app_admin')) return true;
-  return roles.includes('club_admin') && !roles.includes('athlete') && !roles.includes('coach');
-}
-
 function typeEnabled(prefs, type) {
   const key = TYPE_PREF[type];
   if (!key) return true;
@@ -34,7 +29,7 @@ function notificationUrl(type, data = {}) {
   return '/notifications';
 }
 
-async function recipient(userId) {
+async function recipient(userId, type) {
   const row = await one(
     `SELECT u.id, u.status, u.notification_prefs,
             ARRAY_REMOVE(ARRAY_AGG(ur.role), NULL) AS roles
@@ -46,13 +41,15 @@ async function recipient(userId) {
   );
   if (!row || row.status !== 'active') return null;
   const roles = row.roles || [];
-  if (isAdminOnly(roles)) return null;
+  if (roles.includes('app_admin')) return null;
+  const clubOnly = roles.includes('club_admin') && !roles.includes('athlete') && !roles.includes('coach');
+  if (clubOnly && !['club', 'announcement', 'membership', 'event'].includes(type)) return null;
   return { prefs: row.notification_prefs || {}, roles };
 }
 
 export async function createNotification({ userId, type, title, body, data = {} }) {
   if (!userId) return null;
-  const dest = await recipient(userId);
+  const dest = await recipient(userId, type);
   if (!dest) return null;
   if (!typeEnabled(dest.prefs, type)) return null;
 
