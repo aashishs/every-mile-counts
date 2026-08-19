@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import api from '../api/client';
 import Layout from '../components/Layout';
 import MonthCalendar, { DurationPicker, TimePicker, secondsFromTime, timeFromSeconds, ymd } from '../components/MonthCalendar';
+import ConfirmDialog from '../components/ConfirmDialog';
 import { EVENT_TYPES, formatDate, formatActivityPrimary, formatTime } from '../utils/format';
 
 const emptyForm = {
@@ -21,6 +22,9 @@ export default function Events() {
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(emptyForm);
   const [formError, setFormError] = useState('');
+  const [confirm, setConfirm] = useState(null);
+  const [confirmBusy, setConfirmBusy] = useState(false);
+  const [confirmError, setConfirmError] = useState('');
   const [monthDate, setMonthDate] = useState(() => new Date());
   const [selected, setSelected] = useState(() => ymd(new Date()));
 
@@ -96,26 +100,39 @@ export default function Events() {
     }
   };
 
-  const deleteEvent = async (event) => {
-    if (!window.confirm(`Delete “${event.name}”? This cannot be undone.`)) return;
-    try {
-      await api.delete(`/events/${event.id}`);
-      load();
-    } catch (err) {
-      window.alert(err.response?.data?.message || 'Could not delete event');
-    }
+  const closeConfirm = () => {
+    if (confirmBusy) return;
+    setConfirm(null);
+    setConfirmError('');
   };
 
-  const mapActivity = async (event, activity) => {
+  const askDelete = (event) => {
+    setConfirmError('');
+    setConfirm({ kind: 'delete', event });
+  };
+
+  const askLink = (event, activity) => {
     if (!activity?.id) return;
-    if (!window.confirm(`Link “${activity.name}” to “${event.name}”? You won’t be able to edit this event after that.`)) {
-      return;
-    }
+    setConfirmError('');
+    setConfirm({ kind: 'link', event, activity });
+  };
+
+  const runConfirm = async () => {
+    if (!confirm || confirmBusy) return;
+    setConfirmBusy(true);
+    setConfirmError('');
     try {
-      await api.post(`/events/${event.id}/map-activities`, { activityIds: [activity.id] });
+      if (confirm.kind === 'link') {
+        await api.post(`/events/${confirm.event.id}/map-activities`, { activityIds: [confirm.activity.id] });
+      } else {
+        await api.delete(`/events/${confirm.event.id}`);
+      }
+      setConfirm(null);
       load();
     } catch (err) {
-      window.alert(err.response?.data?.message || 'Could not link activity');
+      setConfirmError(err.response?.data?.message || (confirm.kind === 'link' ? 'Could not link activity' : 'Could not delete event'));
+    } finally {
+      setConfirmBusy(false);
     }
   };
 
@@ -158,9 +175,9 @@ export default function Events() {
                 event={event}
                 when={when(event)}
                 activities={activities}
-                onMap={mapActivity}
+                onMap={askLink}
                 onEdit={openEdit}
-                onDelete={deleteEvent}
+                onDelete={askDelete}
               />
             ))}
             {!dayEvents.length && (
@@ -178,9 +195,9 @@ export default function Events() {
             event={event}
             when={when(event)}
             activities={activities}
-            onMap={mapActivity}
+            onMap={askLink}
             onEdit={openEdit}
-            onDelete={deleteEvent}
+            onDelete={askDelete}
           />
         ))}
         {!events.length && <div className="card text-muted">No events yet.</div>}
@@ -223,6 +240,38 @@ export default function Events() {
             </div>
           </form>
         </div>
+      )}
+      {confirm?.kind === 'link' && (
+        <ConfirmDialog
+          title="Link this activity?"
+          confirmLabel="Link activity"
+          busy={confirmBusy}
+          error={confirmError}
+          onCancel={closeConfirm}
+          onConfirm={runConfirm}
+        >
+          <p className="mb-0">
+            Link <span className="text-slate-100 font-medium">{confirm.activity.name}</span>
+            {' '}to <span className="text-slate-100 font-medium">{confirm.event.name}</span>.
+          </p>
+          <p className="mb-0">You won’t be able to edit or delete this event after that.</p>
+        </ConfirmDialog>
+      )}
+
+      {confirm?.kind === 'delete' && (
+        <ConfirmDialog
+          title="Delete this event?"
+          confirmLabel="Delete event"
+          danger
+          busy={confirmBusy}
+          error={confirmError}
+          onCancel={closeConfirm}
+          onConfirm={runConfirm}
+        >
+          <p className="mb-0">
+            Delete <span className="text-slate-100 font-medium">{confirm.event.name}</span>? This cannot be undone.
+          </p>
+        </ConfirmDialog>
       )}
     </Layout>
   );

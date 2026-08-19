@@ -72,10 +72,10 @@ export default function ActivityDetail() {
     const ok = await copyText(markdown);
     if (ok) {
       setCopied(true);
-      setMessage('Copied as Markdown — paste into ChatGPT, Gemini, or Claude for a review.');
+      setMessage('Copied — paste into ChatGPT, Gemini, or Claude to get this session reviewed.');
       window.setTimeout(() => setCopied(false), 2000);
     } else {
-      setMessage('Could not copy. Long-press and copy the Markdown if it appears.');
+      setMessage('Could not copy. Try again, or copy from the prompt if it appears.');
     }
   };
 
@@ -178,21 +178,22 @@ export default function ActivityDetail() {
       )}
 
       <div className="card mb-6">
-        <div className="flex items-start justify-between gap-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
             <h3 className="section-title mb-1">Ask AI for a review</h3>
             <p className="text-sm text-muted mb-0">
-              Copies this session as Markdown. Paste it into ChatGPT, Gemini, Claude, or any AI.
+              Copy the AI prompt here and paste it into ChatGPT, Gemini, Claude, or any AI to get this session reviewed.
             </p>
           </div>
           <button
             type="button"
-            className="btn-outline btn-sm shrink-0"
+            className="btn-primary shrink-0 px-5 py-3 text-base"
             onClick={copyForAi}
-            title={copied ? 'Copied' : 'Copy Markdown'}
-            aria-label="Copy session as Markdown for an AI review"
+            title={copied ? 'Copied' : 'Copy AI prompt'}
+            aria-label="Copy AI prompt to get this session reviewed"
           >
-            {copied ? <CheckIcon /> : <CopyIcon />}
+            {copied ? <CheckIcon size={22} /> : <CopyIcon size={22} />}
+            {copied ? 'Copied' : 'Copy AI prompt'}
           </button>
         </div>
       </div>
@@ -284,18 +285,18 @@ function Insight({ label, value, hint }) {
   );
 }
 
-function CopyIcon() {
+function CopyIcon({ size = 16 }) {
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <rect x="9" y="9" width="13" height="13" rx="2" />
       <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
     </svg>
   );
 }
 
-function CheckIcon() {
+function CheckIcon({ size = 16 }) {
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M20 6 9 17l-5-5" />
     </svg>
   );
