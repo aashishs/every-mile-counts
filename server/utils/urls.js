@@ -1,5 +1,13 @@
 const PRODUCTION_SITE = 'https://www.everymilecounts.in';
 
+function isDeployed() {
+  return (
+    process.env.NODE_ENV === 'production' ||
+    Boolean(process.env.RAILWAY_ENVIRONMENT) ||
+    Boolean(process.env.RAILWAY_ENVIRONMENT_ID)
+  );
+}
+
 function normalizePublicUrl(value, { allowLocal = false } = {}) {
   let raw = String(value || '').trim().replace(/\/$/, '');
   if (!raw) return '';
@@ -27,10 +35,10 @@ export function publicApiUrl() {
 }
 
 export function clientUrl() {
-  const allowLocal = process.env.NODE_ENV !== 'production';
+  const allowLocal = !isDeployed();
   return (
     normalizePublicUrl(process.env.CLIENT_URL, { allowLocal }) ||
-    (process.env.NODE_ENV === 'production' ? PRODUCTION_SITE : 'http://localhost:5173')
+    (isDeployed() ? PRODUCTION_SITE : 'http://localhost:5173')
   );
 }
 
@@ -66,7 +74,7 @@ export function isAllowedOrigin(origin) {
 }
 
 export function stravaRedirectUri() {
-  const explicit = normalizePublicUrl(process.env.STRAVA_REDIRECT_URI);
+  const explicit = normalizePublicUrl(process.env.STRAVA_REDIRECT_URI, { allowLocal: !isDeployed() });
   if (explicit) {
     return explicit.includes('/api/strava/callback') ? explicit : `${explicit}/api/strava/callback`;
   }
