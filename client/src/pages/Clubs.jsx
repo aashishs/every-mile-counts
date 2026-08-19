@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import Layout from '../components/Layout';
 import { useAuth } from '../context/AuthContext';
@@ -7,6 +7,7 @@ import { isClubOnlyAccount } from '../utils/roles';
 
 export default function Clubs() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const clubOnly = isClubOnlyAccount(user);
   const [clubs, setClubs] = useState([]);
   const [mine, setMine] = useState([]);
@@ -23,6 +24,14 @@ export default function Clubs() {
   useEffect(() => {
     loadMine();
   }, []);
+
+  useEffect(() => {
+    if (!clubOnly || mine.length !== 1) return;
+    const club = mine[0];
+    if (club.role === 'club_admin' && club.membershipStatus === 'active') {
+      navigate(`/clubs/${club.id}`, { replace: true });
+    }
+  }, [clubOnly, mine, navigate]);
 
   const search = async (e) => {
     e?.preventDefault();

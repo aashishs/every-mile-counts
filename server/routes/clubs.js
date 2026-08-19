@@ -115,12 +115,13 @@ router.get(
     const members = camelMany(
       await many(
         `SELECT cm.*, u.first_name, u.last_name, u.email, u.avatar_url,
-                COALESCE(ARRAY_AGG(DISTINCT ur.role) FILTER (WHERE ur.role IS NOT NULL), '{}') AS user_roles
+                COALESCE(JSON_AGG(DISTINCT ur.role) FILTER (WHERE ur.role IS NOT NULL), '[]'::json) AS user_roles,
+                (SELECT COUNT(*) FROM activities a WHERE a.athlete_id = u.id)::int AS activity_count
          FROM club_members cm
          JOIN users u ON u.id = cm.user_id
          LEFT JOIN user_roles ur ON ur.user_id = u.id
          WHERE cm.club_id = $1
-         GROUP BY cm.id, u.first_name, u.last_name, u.email, u.avatar_url
+         GROUP BY cm.id, u.id
          ORDER BY cm.role, u.last_name`,
         [club.id]
       )

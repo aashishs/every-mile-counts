@@ -32,6 +32,21 @@ router.post(
       return res.status(400).json({ message: 'No assigned coach. Join a club or ask an admin to assign a coach.' });
     }
 
+    const existingReview = await one(
+      `SELECT id FROM activity_reviews WHERE activity_id = $1 AND status = 'published' LIMIT 1`,
+      [activityId]
+    );
+    if (existingReview) {
+      return res.status(400).json({ message: 'This activity already has a coach review' });
+    }
+    const existingRequest = await one(
+      `SELECT id FROM review_requests WHERE activity_id = $1 AND status = 'pending' LIMIT 1`,
+      [activityId]
+    );
+    if (existingRequest) {
+      return res.status(400).json({ message: 'A review has already been requested for this activity' });
+    }
+
     const created = [];
     for (const c of coaches) {
       const ok = await assigned(c.coach_id, req.user.id);
@@ -143,9 +158,11 @@ router.post(
       )
     );
 
-    if (requestId) {
-      await query(`UPDATE review_requests SET status = 'completed' WHERE id = $1`, [requestId]);
-    }
+    await query(
+      `UPDATE review_requests SET status = 'completed'
+       WHERE activity_id = $1 AND status = 'pending'`,
+      [activityId]
+    );
     if (status === 'published') {
       await createNotification({
         userId: activity.athleteId,

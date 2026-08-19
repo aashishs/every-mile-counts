@@ -1,6 +1,6 @@
 import express from 'express';
 import { camel, camelMany, many, one, query } from '../config/db.js';
-import { protect, requireMembership, requireRole, rejectAppAdmin } from '../middleware/auth.js';
+import { protect, requireMembership, rejectAppAdmin } from '../middleware/auth.js';
 import { analyzeActivity, athleteDashboard, periodAnalysis } from '../services/analysisService.js';
 import { syncUserActivities } from '../services/syncService.js';
 import { asyncHandler } from '../middleware/error.js';
@@ -15,7 +15,19 @@ async function canViewAthlete(req, athleteId) {
       `SELECT id FROM coach_assignments WHERE athlete_id = $1 AND coach_id = $2 AND status = 'active'`,
       [athleteId, req.user.id]
     );
-    return Boolean(assignment);
+    if (assignment) return true;
+  }
+  if (req.user.roles.includes('club_admin')) {
+    const inClub = await one(
+      `SELECT 1
+       FROM club_members admin
+       JOIN club_members ath ON ath.club_id = admin.club_id
+       WHERE admin.user_id = $1 AND admin.role = 'club_admin' AND admin.status = 'active'
+         AND ath.user_id = $2 AND ath.status = 'active' AND ath.role = 'member'
+       LIMIT 1`,
+      [req.user.id, athleteId]
+    );
+    if (inClub) return true;
   }
   return false;
 }
@@ -112,10 +124,9 @@ router.post(
 
 router.get(
   '/athlete/:athleteId',
-  requireRole('coach'),
   asyncHandler(async (req, res) => {
     if (!(await canViewAthlete(req, req.params.athleteId))) {
-      return res.status(403).json({ message: 'Not assigned to this athlete' });
+      return res.status(403).json({ message: 'Not authorized to view this athlete' });
     }
     const activities = camelMany(
       await many(
@@ -160,7 +171,11 @@ router.get(
 
     const requests = camelMany(
       await many(
-        `SELECT * FROM review_requests WHERE activity_id = $1 ORDER BY requested_at DESC`,
+        `SELECT rr.*, u.first_name AS coach_first_name, u.last_name AS coach_last_name
+         FROM review_requests rr
+         JOIN users u ON u.id = rr.coach_id
+         WHERE rr.activity_id = $1
+         ORDER BY rr.requested_at DESC`,
         [activity.id]
       )
     );

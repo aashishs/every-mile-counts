@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import api from '../api/client';
 import Layout from '../components/Layout';
 import { useAuth } from '../context/AuthContext';
 import { isClubOnlyAccount } from '../utils/roles';
+import { normalizeRoles } from '../components/Badge';
+import { formatActivityPrimary, formatDate, getActivityIcon } from '../utils/format';
 
 export default function ClubDetail() {
   const { id } = useParams();
@@ -16,6 +18,8 @@ export default function ClubDetail() {
   const [profile, setProfile] = useState({ name: '', description: '', location: '', website: '' });
   const [assignPick, setAssignPick] = useState({});
   const [msg, setMsg] = useState('');
+  const [openAthleteId, setOpenAthleteId] = useState(null);
+  const [athleteActs, setAthleteActs] = useState([]);
 
   const load = () =>
     api.get(`/clubs/${id}`).then((r) => {
@@ -34,9 +38,11 @@ export default function ClubDetail() {
   const { club, members, assignments, myMembership } = data;
   const isAdmin = isAppAdmin || (myMembership?.role === 'club_admin' && myMembership.status === 'active');
   const isMember = myMembership?.status === 'active';
-  const isClubCoach = (m) =>
-    m.status === 'active' &&
-    (m.role === 'coach' || (m.role === 'club_admin' && (m.userRoles || []).includes('coach')));
+  const isClubCoach = (m) => {
+    if (m.status !== 'active') return false;
+    if (m.role === 'coach') return true;
+    return m.role === 'club_admin' && normalizeRoles(m.userRoles).includes('coach');
+  };
   const coaches = (members || []).filter(isClubCoach);
   const athletes = (members || []).filter((m) => m.role === 'member' && m.status === 'active');
   const admins = (members || []).filter((m) => m.role === 'club_admin' && m.status === 'active');
@@ -120,6 +126,22 @@ export default function ClubDetail() {
       load();
     } catch (err) {
       flash(err.response?.data?.message || 'Could not unassign coach');
+    }
+  };
+
+  const viewAthlete = async (userId) => {
+    if (openAthleteId === userId) {
+      setOpenAthleteId(null);
+      setAthleteActs([]);
+      return;
+    }
+    setOpenAthleteId(userId);
+    try {
+      const { data: next } = await api.get(`/activities/athlete/${userId}`);
+      setAthleteActs(next.activities || []);
+    } catch (err) {
+      flash(err.response?.data?.message || 'Could not load athlete activities');
+      setAthleteActs([]);
     }
   };
 
@@ -255,35 +277,30 @@ export default function ClubDetail() {
 
       {isAdmin && (
         <>
-          <div className="card mb-6">
-            <h3 className="font-semibold mb-3">Join requests</h3>
-            {pending.map((m) => (
-              <div key={m.id} className="flex flex-wrap items-center gap-2 py-2 border-b border-line">
-                <span className="flex-1">{m.firstName} {m.lastName} · {m.email}</span>
-                <button className="btn-primary btn-sm" onClick={() => approve(m.id)}>Approve</button>
-              </div>
-            ))}
-            {!pending.length && <p className="text-sm text-muted">No pending requests.</p>}
-          </div>
-
           <h3 className="font-semibold mb-3">Athletes</h3>
-          {isAdmin && (
-            <form className="card space-y-2 mb-3" onSubmit={addAthlete}>
-              <input placeholder="Athlete email" type="email" value={athleteEmail} onChange={(e) => setAthleteEmail(e.target.value)} required />
-              <button className="btn-primary">Add athlete</button>
-            </form>
-          )}
-          <div className="space-y-3">
+          <p className="text-sm text-muted mb-3">View club athletes and assign a coach from this club.</p>
+          <form className="card space-y-2 mb-3" onSubmit={addAthlete}>
+            <input placeholder="Athlete email" type="email" value={athleteEmail} onChange={(e) => setAthleteEmail(e.target.value)} required />
+            <button className="btn-primary">Add athlete</button>
+          </form>
+          <div className="space-y-3 mb-8">
             {athletes.map((a) => {
               const assigned = assignedFor(a.userId);
               const available = coaches.filter((c) => !assigned.some((x) => x.coachId === c.userId));
+              const open = openAthleteId === a.userId;
               return (
                 <div key={a.id} className="card">
                   <div className="flex flex-wrap justify-between gap-2 mb-2">
                     <div>
                       <div className="font-semibold">{a.firstName} {a.lastName}</div>
-                      <div className="text-xs text-muted">{a.email}</div>
+                      <div className="text-xs text-muted">
+                        {a.email}
+                        {a.activityCount != null ? ` · ${a.activityCount} ${a.activityCount === 1 ? 'activity' : 'activities'}` : ''}
+                      </div>
                     </div>
+                    <button className="btn-outline btn-sm" type="button" onClick={() => viewAthlete(a.userId)}>
+                      {open ? 'Hide' : 'View'}
+                    </button>
                   </div>
                   <div className="flex flex-wrap gap-2 mb-2">
                     {assigned.map((x) => (
@@ -300,7 +317,7 @@ export default function ClubDetail() {
                       value={assignPick[a.userId] || ''}
                       onChange={(e) => setAssignPick((prev) => ({ ...prev, [a.userId]: e.target.value }))}
                     >
-                      <option value="">Assign a coach…</option>
+                      <option value="">{coaches.length ? 'Assign a coach…' : 'Add a coach first'}</option>
                       {available.map((c) => (
                         <option key={c.userId} value={c.userId}>{c.firstName} {c.lastName}</option>
                       ))}
@@ -309,10 +326,44 @@ export default function ClubDetail() {
                       Assign
                     </button>
                   </div>
+                  {open && (
+                    <div className="mt-3 space-y-2 border-t border-line pt-3">
+                      {!athleteActs.length ? (
+                        <p className="text-sm text-muted mb-0">No activities yet.</p>
+                      ) : (
+                        athleteActs.slice(0, 12).map((act) => (
+                          <Link
+                            key={act.id}
+                            to={`/activities/${act.id}`}
+                            className="flex items-center justify-between gap-3 text-inherit no-underline text-sm py-1"
+                          >
+                            <span className="flex items-center gap-2 min-w-0">
+                              <span>{getActivityIcon(act.type)}</span>
+                              <span className="truncate">{act.name}</span>
+                            </span>
+                            <span className="text-xs text-muted shrink-0">
+                              {formatActivityPrimary(act)} · {formatDate(act.startDate)}
+                            </span>
+                          </Link>
+                        ))
+                      )}
+                    </div>
+                  )}
                 </div>
               );
             })}
-            {!athletes.length && <div className="card text-muted text-sm">No athletes in this club yet.</div>}
+            {!athletes.length && <div className="card text-muted text-sm">No athletes in this club yet. Add one by email or approve a join request.</div>}
+          </div>
+
+          <div className="card mb-6">
+            <h3 className="font-semibold mb-3">Join requests</h3>
+            {pending.map((m) => (
+              <div key={m.id} className="flex flex-wrap items-center gap-2 py-2 border-b border-line">
+                <span className="flex-1">{m.firstName} {m.lastName} · {m.email}</span>
+                <button className="btn-primary btn-sm" onClick={() => approve(m.id)}>Approve</button>
+              </div>
+            ))}
+            {!pending.length && <p className="text-sm text-muted">No pending requests.</p>}
           </div>
         </>
       )}

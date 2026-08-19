@@ -32,7 +32,7 @@ export default function App() {
           <Route path="/register" element={<PublicRoute><Register /></PublicRoute>} />
           <Route path="/dashboard" element={<ProtectedRoute><AthleteRoute><Dashboard /></AthleteRoute></ProtectedRoute>} />
           <Route path="/activities" element={<ProtectedRoute><AthleteRoute><Activities /></AthleteRoute></ProtectedRoute>} />
-          <Route path="/activities/:id" element={<ProtectedRoute><AthleteRoute><ActivityDetail /></AthleteRoute></ProtectedRoute>} />
+          <Route path="/activities/:id" element={<ProtectedRoute><NotAppAdmin><ActivityDetail /></NotAppAdmin></ProtectedRoute>} />
           <Route path="/events" element={<ProtectedRoute><AthleteRoute><Events /></AthleteRoute></ProtectedRoute>} />
           <Route path="/analysis" element={<ProtectedRoute><AthleteRoute><Analysis /></AthleteRoute></ProtectedRoute>} />
           <Route path="/coaches" element={<ProtectedRoute><NotAppAdmin><Coaches /></NotAppAdmin></ProtectedRoute>} />

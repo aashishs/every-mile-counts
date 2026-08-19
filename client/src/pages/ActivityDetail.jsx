@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import Layout from '../components/Layout';
+import Badge from '../components/Badge';
 import { useAuth } from '../context/AuthContext';
 import {
   activityMetric,
@@ -39,8 +40,11 @@ export default function ActivityDetail() {
     return <Layout><p className="text-muted">Loading…</p></Layout>;
   }
 
-  const { activity, insights, athleteInsights, reviews } = data;
+  const { activity, insights, athleteInsights, reviews, requests } = data;
   const mine = activity.athleteId === user.id;
+  const pendingRequests = (requests || []).filter((r) => r.status === 'pending');
+  const hasReview = (reviews || []).length > 0;
+  const myReview = (reviews || []).find((r) => r.coachId === user.id);
   const glance = insights || athleteInsights || {};
   const metric = activityMetric(activity.type, activity.sportType, activity.distance);
   const primary = metric === 'swim'
@@ -53,6 +57,8 @@ export default function ActivityDetail() {
   const requestReview = async (coachId) => {
     try {
       await api.post('/reviews/request', { activityId: activity.id, coachId });
+      const { data: fresh } = await api.get(`/activities/${id}`);
+      setData(fresh);
       setMessage('Review requested');
     } catch (err) {
       setMessage(err.response?.data?.message || 'Request failed');
@@ -160,13 +166,30 @@ export default function ActivityDetail() {
       {mine && (
         <div className="card mb-6">
           <h3 className="section-title mb-3">Coach review</h3>
-          {!coaches.length ? (
+          {hasReview ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="success">Reviewed</Badge>
+              <span className="text-sm text-muted">A coach has already reviewed this activity.</span>
+            </div>
+          ) : pendingRequests.length ? (
+            <div className="space-y-2">
+              {pendingRequests.map((r) => (
+                <div key={r.id} className="flex flex-wrap items-center gap-2">
+                  <Badge variant="warning">Review requested</Badge>
+                  <span className="text-sm text-muted">
+                    Waiting on {r.coachFirstName} {r.coachLastName}
+                    {r.requestedAt ? ` · ${formatDate(r.requestedAt)}` : ''}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : !coaches.length ? (
             <p className="text-sm text-muted mb-0">No coach yet. Add one from Profile.</p>
           ) : (
             <div className="flex flex-wrap gap-2">
               {coaches.map((c) => (
-                <button key={c.coachId || c.id} className="btn-outline btn-sm" onClick={() => requestReview(c.coachId || c.id)}>
-                  Ask {c.firstName}
+                <button key={c.coachId || c.id} className="btn-outline btn-sm" type="button" onClick={() => requestReview(c.coachId || c.id)}>
+                  Ask {c.firstName} for review
                 </button>
               ))}
             </div>
@@ -195,7 +218,7 @@ export default function ActivityDetail() {
         </section>
       )}
 
-      {isCoach && !mine && (
+      {isCoach && !mine && !myReview && (
         <form className="card space-y-3" onSubmit={submitReview}>
           <h3 className="section-title">Write review</h3>
           {['performanceSummary', 'strengths', 'improvements', 'technique', 'recommendations', 'recoveryAdvice', 'comments'].map((field) => (
