@@ -1,0 +1,110 @@
+import http from 'node:http';
+import https from 'node:https';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const dist = path.join(__dirname, 'dist');
+const port = Number(process.env.PORT || 3000);
+
+const MIME = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.ico': 'image/x-icon',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+  '.txt': 'text/plain; charset=utf-8',
+  '.webmanifest': 'application/manifest+json',
+};
+
+function apiBase() {
+  let raw = (process.env.API_URL || '').trim();
+  if (!raw) return null;
+  if (!/^https?:\/\//i.test(raw)) raw = `http://${raw}`;
+  raw = raw.replace(/\/$/, '');
+  try {
+    const url = new URL(raw);
+    if (!url.hostname) return null;
+    return url.origin;
+  } catch {
+    return null;
+  }
+}
+
+function sendFile(res, file) {
+  const ext = path.extname(file).toLowerCase();
+  res.writeHead(200, { 'content-type': MIME[ext] || 'application/octet-stream' });
+  fs.createReadStream(file).pipe(res);
+}
+
+function serveSpa(req, res) {
+  const index = path.join(dist, 'index.html');
+  if (!fs.existsSync(index)) {
+    res.writeHead(500, { 'content-type': 'text/plain; charset=utf-8' });
+    res.end('Web build missing (dist/index.html). Check the Railway build log for npm run build.');
+    return;
+  }
+  const urlPath = decodeURIComponent((req.url || '/').split('?')[0]);
+  const safe = path.normalize(urlPath).replace(/^(\.\.[/\\])+/, '');
+  let file = path.join(dist, safe);
+  if (!file.startsWith(dist)) file = index;
+  if (fs.existsSync(file) && fs.statSync(file).isFile()) {
+    sendFile(res, file);
+    return;
+  }
+  sendFile(res, index);
+}
+
+function proxyApi(req, res) {
+  const base = apiBase();
+  if (!base) {
+    res.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' });
+    res.end('API_URL is missing or invalid. Set web variable API_URL to http://${{api.RAILWAY_PRIVATE_DOMAIN}}:${{api.PORT}}');
+    return;
+  }
+  const dest = new URL(req.url, `${base}/`);
+  const lib = dest.protocol === 'https:' ? https : http;
+  const headers = { ...req.headers, host: dest.host };
+  delete headers.connection;
+  const upstream = lib.request(
+    dest,
+    { method: req.method, headers },
+    (up) => {
+      res.writeHead(up.statusCode || 502, up.headers);
+      up.pipe(res);
+    }
+  );
+  upstream.on('error', (err) => {
+    console.error('API proxy failed', dest.href, err.message);
+    res.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' });
+    res.end(`Cannot reach API at ${base}`);
+  });
+  req.pipe(upstream);
+}
+
+const server = http.createServer((req, res) => {
+  const urlPath = (req.url || '/').split('?')[0];
+  if (urlPath === '/health') {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, api: Boolean(apiBase()) }));
+    return;
+  }
+  if (urlPath.startsWith('/api')) {
+    proxyApi(req, res);
+    return;
+  }
+  serveSpa(req, res);
+});
+
+server.listen(port, '0.0.0.0', () => {
+  console.log(`Web listening on 0.0.0.0:${port}`);
+  console.log(`API_URL=${apiBase() || '(not set)'}`);
+});

@@ -152,7 +152,9 @@ On **web** → **Variables**:
 | --- | --- |
 | `API_URL` | `http://${{api.RAILWAY_PRIVATE_DOMAIN}}:${{api.PORT}}` |
 
-Do **not** set `VITE_API_URL`. The web app calls `/api` on its own public URL; Caddy proxies that to the private API.
+Do **not** set `VITE_API_URL`. The web app calls `/api` on its own public URL; Node proxies that to the private API.
+
+If the Railway web URL returns **502**, the process was not listening. Redeploy **web** after this Node start command is on `main`. On **web** do not set a health check of `/api/health` — use `/health`. If `${{api.PORT}}` is empty, set `PORT=8080` on **api** and use that port in `API_URL`.
 
 ### 6. Deploy and log in
 
