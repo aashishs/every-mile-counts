@@ -80,6 +80,38 @@ function serveSpa(req, res) {
   sendFile(res, index);
 }
 
+function publicHost(value) {
+  return String(value || '')
+    .split(',')[0]
+    .trim()
+    .replace(/^https?:\/\//, '');
+}
+
+function rewriteLocation(location, forwardedHost, forwardedProto) {
+  const host = publicHost(forwardedHost);
+  if (!host || host.endsWith('.railway.internal')) return location;
+  try {
+    const proto = forwardedProto === 'http' ? 'https' : forwardedProto || 'https';
+    const url = new URL(location, `${proto}://${host}`);
+    if (url.hostname.endsWith('.railway.internal') || url.hostname === 'localhost') {
+      url.protocol = 'https:';
+      url.host = host;
+    }
+    return url.toString();
+  } catch {
+    return location;
+  }
+}
+
+function proxyHeaders(up) {
+  const headers = {};
+  for (const [key, value] of Object.entries(up.headers || {})) {
+    if (['transfer-encoding', 'connection', 'keep-alive'].includes(key.toLowerCase())) continue;
+    headers[key] = value;
+  }
+  return headers;
+}
+
 function proxyApi(req, res) {
   const base = apiBase();
   if (!base) {
@@ -101,7 +133,16 @@ function proxyApi(req, res) {
     dest,
     { method: req.method, headers },
     (up) => {
-      res.writeHead(up.statusCode || 502, up.headers);
+      const outHeaders = proxyHeaders(up);
+      if (outHeaders.location) {
+        outHeaders.location = rewriteLocation(outHeaders.location, incomingHost, incomingProto);
+      }
+      res.writeHead(up.statusCode || 502, outHeaders);
+      if ((up.statusCode || 0) >= 300 && (up.statusCode || 0) < 400) {
+        up.resume();
+        res.end();
+        return;
+      }
       up.pipe(res);
     }
   );
