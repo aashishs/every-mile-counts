@@ -41,7 +41,7 @@ app.use(
     credentials: true,
   })
 );
-app.use(express.json({ limit: '2mb' }));
+app.use(express.json({ limit: '8mb' }));
 app.use(
   rateLimit({
     windowMs: 15 * 60 * 1000,

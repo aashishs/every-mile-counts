@@ -10,7 +10,6 @@ const emptyForm = {
   eventTime: '07:00',
   distance: '',
   category: 'run',
-  goalFinish: '',
   notes: '',
   location: '',
 };
@@ -283,7 +282,7 @@ function EventCard({ event, when, activities, onMap, onEdit, onDelete }) {
       </div>
       {event.comparison && (
         <div className="mt-3 text-sm grid grid-cols-2 gap-2">
-          <div>Plan: {event.comparison.formatted.plannedDistance || '—'} / {event.comparison.formatted.plannedTime || '—'}</div>
+          <div>Plan: {event.comparison.formatted.plannedDistance || '—'}</div>
           <div>Actual: {event.comparison.formatted.actualDistance} / {event.comparison.formatted.actualTime}</div>
         </div>
       )}
