@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../api/client';
 import Layout from '../components/Layout';
 import ActivityTypeFilter from '../components/ActivityTypeFilter';
+import AddActivityModal from '../components/AddActivityModal';
 import { useAuth } from '../context/AuthContext';
 import { formatDate, formatActivityPrimary, formatActivitySecondary, getActivityIcon, initialActivityType, rememberActivityType } from '../utils/format';
 
@@ -16,8 +17,11 @@ const emptyFilters = {
 
 export default function Activities() {
   const { user } = useAuth();
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [activities, setActivities] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [adding, setAdding] = useState(() => searchParams.get('add') === '1');
   const [typeFilter, setTypeFilter] = useState(() => initialActivityType(user));
   const [filters, setFilters] = useState(emptyFilters);
   const [applied, setApplied] = useState(emptyFilters);
@@ -77,10 +81,26 @@ export default function Activities() {
     applied.q.trim() || applied.startDate || applied.endDate || applied.minDistance || applied.maxDistance
   );
 
+  const closeAdd = () => {
+    setAdding(false);
+    if (searchParams.get('add')) {
+      const next = new URLSearchParams(searchParams);
+      next.delete('add');
+      setSearchParams(next, { replace: true });
+    }
+  };
+
   return (
     <Layout>
-      <h2 className="page-title">Log</h2>
-      <p className="page-sub">Search by name, date, or distance</p>
+      <div className="flex flex-col gap-3 sm:flex-row sm:justify-between sm:items-center mb-2">
+        <div>
+          <h2 className="page-title">Log</h2>
+          <p className="text-muted text-sm">Search by name, date, or distance</p>
+        </div>
+        <button className="btn-primary w-full sm:w-auto" type="button" onClick={() => setAdding(true)}>
+          Add activity
+        </button>
+      </div>
       <ActivityTypeFilter
         value={typeFilter}
         onChange={(next) => {
@@ -131,7 +151,12 @@ export default function Activities() {
         <p className="text-muted">Loading…</p>
       ) : !activities.length ? (
         <div className="card text-center text-muted py-12">
-          {hasExtraFilters ? 'No activities match these filters.' : 'No activities yet. Connect Strava from Home.'}
+          {hasExtraFilters ? 'No activities match these filters.' : (
+            <>
+              <p className="mb-4">No activities yet. Add one, import a GPX, or connect Strava from Home.</p>
+              <button className="btn-primary" type="button" onClick={() => setAdding(true)}>Add activity</button>
+            </>
+          )}
         </div>
       ) : (
         <div className="space-y-3">
@@ -155,6 +180,15 @@ export default function Activities() {
           <button className="btn-outline btn-sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>Previous</button>
           <button className="btn-outline btn-sm" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>Next</button>
         </div>
+      )}
+      {adding && (
+        <AddActivityModal
+          onClose={closeAdd}
+          onSaved={(id) => {
+            closeAdd();
+            navigate(`/activities/${id}`);
+          }}
+        />
       )}
     </Layout>
   );

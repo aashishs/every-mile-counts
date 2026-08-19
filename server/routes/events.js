@@ -136,6 +136,13 @@ router.post(
       ])
     );
     if (!event) return res.status(404).json({ message: 'Event not found' });
+    const eventDay = new Date(event.eventDate);
+    eventDay.setHours(0, 0, 0, 0);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    if (eventDay > today) {
+      return res.status(400).json({ message: 'Link an activity after the event has taken place' });
+    }
     for (const activityId of activityIds) {
       const act = await one(`SELECT id FROM activities WHERE id = $1 AND athlete_id = $2`, [activityId, req.user.id]);
       if (!act) return res.status(400).json({ message: 'Some activities not found or not owned by you' });

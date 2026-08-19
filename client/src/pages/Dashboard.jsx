@@ -70,7 +70,6 @@ export default function Dashboard() {
 
   const sportTotal = (data?.distanceSports || []).find((s) => s.type === type);
   const nextEvent = data?.upcomingEvents?.[0];
-  const nextGoal = (data?.goals || []).find((g) => Number(g.completionPct) < 100) || data?.goals?.[0];
 
   return (
     <Layout>
@@ -88,6 +87,15 @@ export default function Dashboard() {
       )}
 
       {!clubOnly && <StravaCard user={user} />}
+      {!clubOnly && (
+        <p className="text-sm text-muted -mt-2 mb-5">
+          Or{' '}
+          <Link to="/activities?add=1" className="text-brand font-semibold no-underline">
+            add a session
+          </Link>
+          {' '}manually or import a GPX / TCX file.
+        </p>
+      )}
 
       {data && (
         <>
@@ -140,19 +148,6 @@ export default function Dashboard() {
               <div className="text-right">
                 <div className="font-display text-3xl font-bold text-accent leading-none">{daysOut(nextEvent.eventDate)}</div>
                 <div className="text-[10px] uppercase tracking-widest text-muted mt-1">out</div>
-              </div>
-            </Link>
-          )}
-
-          {nextGoal && (
-            <Link to="/goals" className="card mb-5 block text-inherit no-underline">
-              <div className="flex justify-between items-center mb-2">
-                <span className="stat-label">Goal</span>
-                <span className="font-display text-xl font-bold text-brand">{nextGoal.completionPct}%</span>
-              </div>
-              <div className="font-semibold mb-2">{nextGoal.title}</div>
-              <div className="h-2.5 bg-ink rounded-full overflow-hidden">
-                <div className="h-full bg-gradient-to-r from-brand to-accent" style={{ width: `${nextGoal.completionPct}%` }} />
               </div>
             </Link>
           )}

@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ProtectedRoute, PublicRoute } from './components/ProtectedRoute';
 import { homePath, isAppAdminAccount, isClubOnlyAccount } from './utils/roles';
+import { GOALS_ENABLED } from './utils/features';
 import Login from './pages/Login';
 import ForgotPassword from './pages/ForgotPassword';
 import ResetPassword from './pages/ResetPassword';
@@ -36,7 +37,14 @@ export default function App() {
           <Route path="/events" element={<ProtectedRoute><AthleteRoute><Events /></AthleteRoute></ProtectedRoute>} />
           <Route path="/analysis" element={<ProtectedRoute><AthleteRoute><Analysis /></AthleteRoute></ProtectedRoute>} />
           <Route path="/coaches" element={<ProtectedRoute><NotAppAdmin><Coaches /></NotAppAdmin></ProtectedRoute>} />
-          <Route path="/goals" element={<ProtectedRoute><AthleteRoute><Goals /></AthleteRoute></ProtectedRoute>} />
+          <Route
+            path="/goals"
+            element={
+              <ProtectedRoute>
+                {GOALS_ENABLED ? <AthleteRoute><Goals /></AthleteRoute> : <Navigate to="/dashboard" replace />}
+              </ProtectedRoute>
+            }
+          />
           <Route path="/clubs" element={<ProtectedRoute><NotAppAdmin><Clubs /></NotAppAdmin></ProtectedRoute>} />
           <Route path="/clubs/:id" element={<ProtectedRoute><NotAppAdmin><ClubDetail /></NotAppAdmin></ProtectedRoute>} />
           <Route path="/notifications" element={<ProtectedRoute><NotAppAdmin><Notifications /></NotAppAdmin></ProtectedRoute>} />
