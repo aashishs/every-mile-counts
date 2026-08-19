@@ -41,6 +41,9 @@ services:
   web:
     build:
       context: ./client
+    environment:
+      PORT: 80
+      API_URL: http://api:5000
     ports:
       - "8080:80"
     depends_on:

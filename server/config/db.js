@@ -1,7 +1,9 @@
 import pg from 'pg';
+import dns from 'node:dns';
 import dotenv from 'dotenv';
 
 dotenv.config();
+dns.setDefaultResultOrder('verbatim');
 
 const { Pool } = pg;
 
