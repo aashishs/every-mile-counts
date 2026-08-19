@@ -29,15 +29,40 @@ router.get(
   '/codes',
   requireRole('app_admin'),
   asyncHandler(async (req, res) => {
-    const codes = camelMany(
-      await many(
-        `SELECT ic.*, p.name AS plan_name, u.email AS created_by_email
-         FROM invitation_codes ic
-         LEFT JOIN membership_plans p ON p.id = ic.plan_id
-         LEFT JOIN users u ON u.id = ic.created_by
-         ORDER BY ic.created_at DESC`
-      )
-    );
+    const { type, status, q } = req.query;
+    const params = [];
+    let sql = `SELECT ic.*, p.name AS plan_name, u.email AS created_by_email,
+                      (SELECT COUNT(*) FROM invitation_redemptions r WHERE r.code_id = ic.id)::int AS redemption_count
+               FROM invitation_codes ic
+               LEFT JOIN membership_plans p ON p.id = ic.plan_id
+               LEFT JOIN users u ON u.id = ic.created_by
+               WHERE 1=1`;
+    if (type && ['athlete', 'coach', 'club', 'universal'].includes(type)) {
+      params.push(type);
+      sql += ` AND ic.type = $${params.length}`;
+    }
+    if (q) {
+      params.push(`%${q}%`);
+      sql += ` AND (ic.code ILIKE $${params.length} OR COALESCE(ic.notes,'') ILIKE $${params.length})`;
+    }
+    sql += ' ORDER BY ic.created_at DESC';
+    let codes = camelMany(await many(sql, params));
+    codes = codes.map((c) => {
+      const expired = c.expiresAt && new Date(c.expiresAt) < new Date();
+      const exhausted = c.activationsUsed >= c.maxActivations;
+      let state = 'active';
+      if (c.isDisabled) state = 'disabled';
+      else if (expired) state = 'expired';
+      else if (exhausted) state = 'used_up';
+      return {
+        ...c,
+        remaining: Math.max(0, Number(c.maxActivations) - Number(c.activationsUsed)),
+        state,
+      };
+    });
+    if (status && status !== 'all') {
+      codes = codes.filter((c) => c.state === status);
+    }
     res.json({ codes });
   })
 );
@@ -55,27 +80,49 @@ router.post(
       expiresAt,
       notes,
       prefix,
+      code: customCode,
     } = req.body;
     if (!['athlete', 'club', 'coach', 'universal'].includes(type)) {
       return res.status(400).json({ message: 'Invalid code type' });
     }
+    const uses = Math.max(1, Number(maxActivations) || 1);
     const created = [];
-    const n = Math.min(Number(count) || 1, 200);
-    for (let i = 0; i < n; i += 1) {
-      const code = generateCode((prefix || type.slice(0, 3)).toUpperCase());
+
+    if (customCode) {
+      const value = String(customCode).trim().toUpperCase().replace(/\s+/g, '-');
+      if (value.length < 4) {
+        return res.status(400).json({ message: 'Custom code must be at least 4 characters' });
+      }
+      const existing = await one(
+        `SELECT id FROM invitation_codes WHERE UPPER(code) = $1`,
+        [value]
+      );
+      if (existing) return res.status(400).json({ message: 'That code already exists' });
       const row = await one(
         `INSERT INTO invitation_codes
           (code, type, plan_id, max_activations, valid_from, expires_at, created_by, notes)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-        [code, type, planId || null, maxActivations, validFrom || new Date(), expiresAt || null, req.user.id, notes || null]
+        [value, type, planId || null, uses, validFrom || new Date(), expiresAt || null, req.user.id, notes || null]
       );
       created.push(camel(row));
+    } else {
+      const n = Math.min(Math.max(Number(count) || 1, 1), 50);
+      for (let i = 0; i < n; i += 1) {
+        const code = generateCode((prefix || type.slice(0, 3)).toUpperCase());
+        const row = await one(
+          `INSERT INTO invitation_codes
+            (code, type, plan_id, max_activations, valid_from, expires_at, created_by, notes)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+          [code, type, planId || null, uses, validFrom || new Date(), expiresAt || null, req.user.id, notes || null]
+        );
+        created.push(camel(row));
+      }
     }
     await writeAudit({
       userId: req.user.id,
       action: 'generate_invitation_codes',
       entityType: 'invitation_code',
-      metadata: { count: n, type },
+      metadata: { count: created.length, type },
     });
     res.status(201).json({ codes: created });
   })

@@ -22,6 +22,7 @@
     "helmet": "^8.0.0",
     "jsonwebtoken": "^9.0.2",
     "node-cron": "^3.0.3",
+    "nodemailer": "^6.10.1",
     "oauth-1.0a": "^2.2.6",
     "pg": "^8.13.1",
     "web-push": "^3.6.7"

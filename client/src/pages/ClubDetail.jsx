@@ -99,9 +99,30 @@ export default function ClubDetail() {
       {msg && <div className="card mb-4 text-sm">{msg}</div>}
 
       {!myMembership && !clubOnly && (
-        <div className="card mb-6 flex gap-2">
+        <div className="card mb-6 flex flex-col sm:flex-row gap-2">
           <input placeholder="Invitation code (optional)" value={code} onChange={(e) => setCode(e.target.value)} />
           <button className="btn-primary" onClick={join}>Request to join</button>
+        </div>
+      )}
+
+      {myMembership && myMembership.status === 'active' && myMembership.role !== 'club_admin' && !clubOnly && (
+        <div className="card mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <p className="text-sm text-muted m-0">You are a {myMembership.role} of this club.</p>
+          <button
+            className="btn-outline btn-sm"
+            type="button"
+            onClick={async () => {
+              try {
+                await api.post(`/clubs/${id}/leave`);
+                flash('You left this club');
+                load();
+              } catch (err) {
+                flash(err.response?.data?.message || 'Could not leave');
+              }
+            }}
+          >
+            Leave club
+          </button>
         </div>
       )}
 

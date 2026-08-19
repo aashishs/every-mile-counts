@@ -24,7 +24,7 @@ async function canViewAthlete(req, athleteId) {
 router.get(
   '/',
   asyncHandler(async (req, res) => {
-    const { type, startDate, endDate, page = 1, limit = 20, athleteId } = req.query;
+    const { type, startDate, endDate, q, minDistance, maxDistance, page = 1, limit = 20, athleteId } = req.query;
     const ownerId = athleteId || req.user.id;
     if (!(await canViewAthlete(req, ownerId))) {
       return res.status(403).json({ message: 'Not authorized' });
@@ -42,13 +42,27 @@ router.get(
         filters.push(family.clause);
       }
     }
+    if (q && String(q).trim()) {
+      filters.push(`name ILIKE $${i++}`);
+      params.push(`%${String(q).trim()}%`);
+    }
     if (startDate) {
-      filters.push(`start_date >= $${i++}`);
+      filters.push(`start_date >= $${i++}::date`);
       params.push(startDate);
     }
     if (endDate) {
-      filters.push(`start_date <= $${i++}`);
+      filters.push(`start_date < ($${i++}::date + INTERVAL '1 day')`);
       params.push(endDate);
+    }
+    const minKm = Number(minDistance);
+    const maxKm = Number(maxDistance);
+    if (minDistance && !Number.isNaN(minKm)) {
+      filters.push(`distance >= $${i++}`);
+      params.push(minKm * 1000);
+    }
+    if (maxDistance && !Number.isNaN(maxKm)) {
+      filters.push(`distance <= $${i++}`);
+      params.push(maxKm * 1000);
     }
     const where = filters.join(' AND ');
     const offset = (Number(page) - 1) * Number(limit);
@@ -84,7 +98,7 @@ router.get(
 router.get(
   '/analysis',
   asyncHandler(async (req, res) => {
-    const data = await periodAnalysis(req.user.id, req.query.period || 30, { type: req.query.type });
+    const data = await periodAnalysis(req.user.id, req.query.period || '90', { type: req.query.type });
     res.json(data);
   })
 );
@@ -158,6 +172,10 @@ router.get(
       athleteInsights: req.user.id === activity.athleteId ? {
         summary: insights.summary,
         pace: insights.pace,
+        paceConsistency: insights.paceConsistency,
+        heartRateZone: insights.heartRateZone,
+        trainingLoad: insights.trainingLoad,
+        elevationImpact: insights.elevationImpact,
         recoveryRecommendation: insights.recoveryRecommendation,
       } : undefined,
       reviews: req.user.id === activity.athleteId || isCoach || req.user.roles.includes('app_admin') ? reviews : [],

@@ -1,7 +1,6 @@
 import { many } from '../config/db.js';
 import { createNotification } from './notificationService.js';
 import { syncStravaActivities } from './stravaService.js';
-import { refreshMembershipStatuses } from './membershipJob.js';
 
 export async function syncUserActivities(userId, { full = false, notify = true } = {}) {
   const connections = await many(
@@ -32,27 +31,4 @@ export async function syncUserActivities(userId, { full = false, notify = true }
     });
   }
   return { total, results };
-}
-
-export async function dailySyncAll() {
-  const users = await many(
-    `SELECT DISTINCT oc.user_id
-     FROM oauth_connections oc
-     WHERE oc.connected = TRUE AND oc.provider = 'strava'
-       AND EXISTS (
-         SELECT 1 FROM user_roles ur
-         WHERE ur.user_id = oc.user_id AND ur.role IN ('athlete', 'coach', 'app_admin')
-       )`
-  );
-  const summary = { users: users.length, ok: 0, failed: 0, synced: 0 };
-  for (const row of users) {
-    try {
-      const result = await syncUserActivities(row.user_id, { full: false, notify: true });
-      summary.ok += 1;
-      summary.synced += result.total || 0;
-    } catch {
-      summary.failed += 1;
-    }
-  }
-  return summary;
 }

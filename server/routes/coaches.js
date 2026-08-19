@@ -2,6 +2,7 @@ import express from 'express';
 import { camel, camelMany, many, one, query } from '../config/db.js';
 import { protect, requireMembership, requireRole } from '../middleware/auth.js';
 import { asyncHandler } from '../middleware/error.js';
+import { createNotification } from '../services/notificationService.js';
 
 const MAX_COACHES = 3;
 const router = express.Router();
@@ -21,6 +22,86 @@ router.get(
       )
     );
     res.json({ coaches: assignments, count: assignments.length, max: MAX_COACHES });
+  })
+);
+
+router.get(
+  '/available',
+  asyncHandler(async (req, res) => {
+    const coaches = camelMany(
+      await many(
+        `SELECT DISTINCT u.id, u.first_name, u.last_name, u.email, u.avatar_url,
+                c.id AS club_id, c.name AS club_name
+         FROM club_members me
+         JOIN club_members cm ON cm.club_id = me.club_id AND cm.role = 'coach' AND cm.status = 'active'
+         JOIN users u ON u.id = cm.user_id
+         JOIN clubs c ON c.id = me.club_id
+         WHERE me.user_id = $1 AND me.status = 'active' AND me.role = 'member'
+           AND u.id <> $1
+           AND NOT EXISTS (
+             SELECT 1 FROM coach_assignments ca
+             WHERE ca.athlete_id = $1 AND ca.coach_id = u.id AND ca.status = 'active'
+           )
+         ORDER BY u.last_name, u.first_name`,
+        [req.user.id]
+      )
+    );
+    res.json({ coaches });
+  })
+);
+
+router.post(
+  '/add',
+  asyncHandler(async (req, res) => {
+    const { coachId, email } = req.body;
+    if (!coachId && !email) {
+      return res.status(400).json({ message: 'Choose a coach or enter their email' });
+    }
+    const coach = camel(
+      await one(
+        coachId
+          ? `SELECT u.* FROM users u JOIN user_roles ur ON ur.user_id = u.id
+             WHERE u.id = $1 AND ur.role = 'coach' AND u.status = 'active'`
+          : `SELECT u.* FROM users u JOIN user_roles ur ON ur.user_id = u.id
+             WHERE LOWER(u.email) = LOWER($1) AND ur.role = 'coach' AND u.status = 'active'`,
+        [coachId || email]
+      )
+    );
+    if (!coach) return res.status(404).json({ message: 'Coach not found' });
+    if (coach.id === req.user.id) {
+      return res.status(400).json({ message: 'You cannot add yourself as a coach' });
+    }
+    const countRow = await one(
+      `SELECT COUNT(*)::int AS count FROM coach_assignments WHERE athlete_id = $1 AND status = 'active'`,
+      [req.user.id]
+    );
+    if (countRow.count >= MAX_COACHES) {
+      return res.status(400).json({ message: 'You can have at most three coaches' });
+    }
+    const sharedClub = camel(
+      await one(
+        `SELECT me.club_id
+         FROM club_members me
+         JOIN club_members cm ON cm.club_id = me.club_id AND cm.user_id = $2 AND cm.role = 'coach' AND cm.status = 'active'
+         WHERE me.user_id = $1 AND me.status = 'active'
+         LIMIT 1`,
+        [req.user.id, coach.id]
+      )
+    );
+    await query(
+      `INSERT INTO coach_assignments (athlete_id, coach_id, club_id, assigned_by, status)
+       VALUES ($1,$2,$3,$4,'active')
+       ON CONFLICT (athlete_id, coach_id) DO UPDATE SET status = 'active', club_id = EXCLUDED.club_id, assigned_by = EXCLUDED.assigned_by`,
+      [req.user.id, coach.id, sharedClub?.clubId || null, req.user.id]
+    );
+    await createNotification({
+      userId: coach.id,
+      type: 'club',
+      title: 'New athlete',
+      body: `${req.user.firstName} ${req.user.lastName} added you as their coach.`,
+      data: { athleteId: req.user.id },
+    });
+    res.json({ message: 'Coach added' });
   })
 );
 

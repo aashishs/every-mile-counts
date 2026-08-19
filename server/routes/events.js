@@ -61,16 +61,17 @@ function compare(event, activities) {
 router.post(
   '/',
   asyncHandler(async (req, res) => {
-    const { name, eventDate, distance, category = 'run', goalTime, goalPace, notes, location } = req.body;
+    const { name, eventDate, eventTime, distance, category = 'run', goalTime, goalPace, notes, location } = req.body;
     if (!name || !eventDate) {
       return res.status(400).json({ message: 'Name and date are required' });
     }
-    const status = new Date(eventDate) < new Date() ? 'completed' : 'upcoming';
+    const start = eventTime ? new Date(`${eventDate}T${eventTime}`) : new Date(eventDate);
+    const status = start < new Date() ? 'completed' : 'upcoming';
     const event = camel(
       await one(
-        `INSERT INTO events (owner_type, owner_id, name, event_date, distance, category, goal_time, goal_pace, notes, location, status)
-         VALUES ('athlete', $1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
-        [req.user.id, name, eventDate, distance || null, category, goalTime || null, goalPace || null, notes || null, location || null, status]
+        `INSERT INTO events (owner_type, owner_id, name, event_date, event_time, distance, category, goal_time, goal_pace, notes, location, status)
+         VALUES ('athlete', $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
+        [req.user.id, name, eventDate, eventTime || null, distance || null, category, goalTime || null, goalPace || null, notes || null, location || null, status]
       )
     );
     res.status(201).json({ event });
@@ -85,22 +86,23 @@ router.put(
       req.user.id,
     ]);
     if (!existing) return res.status(404).json({ message: 'Event not found' });
-    const { name, eventDate, distance, category, goalTime, goalPace, notes, location, status } = req.body;
+    const { name, eventDate, eventTime, distance, category, goalTime, goalPace, notes, location, status } = req.body;
     const event = camel(
       await one(
         `UPDATE events SET
            name = COALESCE($1, name),
            event_date = COALESCE($2, event_date),
-           distance = COALESCE($3, distance),
-           category = COALESCE($4, category),
-           goal_time = COALESCE($5, goal_time),
-           goal_pace = COALESCE($6, goal_pace),
-           notes = COALESCE($7, notes),
-           location = COALESCE($8, location),
-           status = COALESCE($9, status),
+           event_time = COALESCE($3, event_time),
+           distance = COALESCE($4, distance),
+           category = COALESCE($5, category),
+           goal_time = COALESCE($6, goal_time),
+           goal_pace = COALESCE($7, goal_pace),
+           notes = COALESCE($8, notes),
+           location = COALESCE($9, location),
+           status = COALESCE($10, status),
            updated_at = NOW()
-         WHERE id = $10 RETURNING *`,
-        [name, eventDate, distance, category, goalTime, goalPace, notes, location, status, req.params.id]
+         WHERE id = $11 RETURNING *`,
+        [name, eventDate, eventTime, distance, category, goalTime, goalPace, notes, location, status, req.params.id]
       )
     );
     res.json({ event });

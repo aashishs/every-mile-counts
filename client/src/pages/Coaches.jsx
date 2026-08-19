@@ -42,9 +42,15 @@ export default function Coaches() {
           <div key={c.id || c.coachId} className="card">
             <div className="font-semibold">{c.firstName} {c.lastName}</div>
             <div className="text-xs text-muted">{c.email} {c.clubName ? `· ${c.clubName}` : ''}</div>
+            <button className="btn-outline btn-sm mt-3" type="button" onClick={async () => {
+              await api.delete(`/coaches/remove/${c.coachId || c.id}`);
+              load();
+            }}>
+              Remove
+            </button>
           </div>
         ))}
-        {!coaches.length && <div className="card text-muted text-sm">No coaches assigned yet. Join a club to get matched.</div>}
+        {!coaches.length && <div className="card text-muted text-sm">No coaches assigned yet. Add one from Profile, or join a club.</div>}
       </div>
 
       {isCoach && (

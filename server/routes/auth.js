@@ -1,11 +1,16 @@
 import express from 'express';
 import bcrypt from 'bcryptjs';
+import crypto from 'crypto';
+import rateLimit from 'express-rate-limit';
 import { camel, one, query } from '../config/db.js';
 import { signToken } from '../utils/jwt.js';
 import { loadPublicUser, protect } from '../middleware/auth.js';
-import { planExpiryDate, publicUser } from '../utils/membership.js';
+import { planExpiryDate, publicUser, isClubOnlyUser } from '../utils/membership.js';
 import { writeAudit } from '../services/auditService.js';
 import { asyncHandler } from '../middleware/error.js';
+import { syncStravaOnLogin } from '../services/stravaService.js';
+import { clientUrl } from '../utils/urls.js';
+import { sendMail } from '../services/mailer.js';
 
 const router = express.Router();
 
@@ -196,6 +201,107 @@ router.post(
       token: signToken(user.id),
       user: await publicUser(user, { roles: user.roles, membership }),
     });
+
+    if (!isClubOnlyUser(user.roles)) {
+      syncStravaOnLogin(user.id).catch((err) => {
+        console.error('Login Strava sync:', err.message);
+      });
+    }
+  })
+);
+
+const forgotLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 8,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: 'Too many reset requests. Try again in a few minutes.' },
+});
+
+function hashResetToken(token) {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
+
+router.post(
+  '/forgot-password',
+  forgotLimiter,
+  asyncHandler(async (req, res) => {
+    const email = String(req.body.email || '').trim().toLowerCase();
+    const generic = { message: 'If that email is registered, we sent a reset link.' };
+    if (!email) return res.json(generic);
+
+    const user = camel(await one(
+      `SELECT id, email, first_name, status FROM users WHERE email = $1`,
+      [email]
+    ));
+    if (!user || user.status === 'deleted') {
+      return res.json(generic);
+    }
+    if (user.status === 'suspended') {
+      return res.json(generic);
+    }
+
+    await query(
+      `UPDATE password_reset_tokens SET used_at = NOW()
+       WHERE user_id = $1 AND used_at IS NULL AND expires_at > NOW()`,
+      [user.id]
+    );
+
+    const token = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
+    await query(
+      `INSERT INTO password_reset_tokens (user_id, token_hash, expires_at)
+       VALUES ($1, $2, $3)`,
+      [user.id, hashResetToken(token), expiresAt]
+    );
+
+    const resetUrl = `${clientUrl()}/reset-password?token=${token}`;
+    const { sent } = await sendMail({
+      to: user.email,
+      subject: 'Reset your Every Mile Counts password',
+      text: `Hi ${user.firstName || ''},\n\nReset your password using this link (valid for 1 hour):\n${resetUrl}\n\nIf you did not request this, you can ignore this email.`,
+      html: `<p>Hi ${user.firstName || ''},</p><p>Reset your password using this link (valid for 1 hour):</p><p><a href="${resetUrl}">${resetUrl}</a></p><p>If you did not request this, you can ignore this email.</p>`,
+    });
+
+    await writeAudit({ userId: user.id, action: 'forgot_password', entityType: 'user', entityId: user.id, ip: req.ip });
+
+    if (!sent && process.env.NODE_ENV !== 'production') {
+      return res.json({ ...generic, resetUrl });
+    }
+    res.json(generic);
+  })
+);
+
+router.post(
+  '/reset-password',
+  forgotLimiter,
+  asyncHandler(async (req, res) => {
+    const { token, newPassword } = req.body;
+    if (!token || !newPassword || String(newPassword).length < 8) {
+      return res.status(400).json({ message: 'Reset link and a new password (8+ characters) are required' });
+    }
+    const row = camel(
+      await one(
+        `SELECT t.id, t.user_id, t.expires_at, t.used_at, u.status
+         FROM password_reset_tokens t
+         JOIN users u ON u.id = t.user_id
+         WHERE t.token_hash = $1`,
+        [hashResetToken(String(token))]
+      )
+    );
+    if (!row || row.usedAt || new Date(row.expiresAt) < new Date() || row.status !== 'active') {
+      return res.status(400).json({ message: 'This reset link is invalid or has expired' });
+    }
+
+    const hash = await bcrypt.hash(String(newPassword), 12);
+    await query(`UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2`, [hash, row.userId]);
+    await query(`UPDATE password_reset_tokens SET used_at = NOW() WHERE id = $1`, [row.id]);
+    await query(
+      `UPDATE password_reset_tokens SET used_at = NOW() WHERE user_id = $1 AND used_at IS NULL`,
+      [row.userId]
+    );
+    await writeAudit({ userId: row.userId, action: 'reset_password', entityType: 'user', entityId: row.userId, ip: req.ip });
+    res.json({ message: 'Password updated. You can sign in now.' });
   })
 );
 

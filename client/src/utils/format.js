@@ -67,6 +67,12 @@ export function formatDate(date) {
   });
 }
 
+export function formatTime(value) {
+  if (!value) return '';
+  const text = String(value);
+  return text.slice(0, 5);
+}
+
 export function formatDateTime(date) {
   if (!date) return '';
   return new Date(date).toLocaleString('en-US', {
@@ -109,6 +115,30 @@ export const ACTIVITY_TYPE_OPTIONS = [
 ];
 
 export const DEFAULT_ACTIVITY_TYPE = 'Run';
+
+const ACTIVITY_TYPE_STORAGE_KEY = 'emcActivityType';
+
+export function rememberActivityType(type) {
+  if (!type || type === 'all') return;
+  try {
+    sessionStorage.setItem(ACTIVITY_TYPE_STORAGE_KEY, type);
+  } catch {
+    /* ignore */
+  }
+}
+
+export function initialActivityType(user, queryType) {
+  const fallback = user?.defaultActivityType || DEFAULT_ACTIVITY_TYPE;
+  const allowed = ACTIVITY_TYPE_OPTIONS.map((o) => o.value);
+  if (queryType && allowed.includes(queryType)) return queryType;
+  try {
+    const stored = sessionStorage.getItem(ACTIVITY_TYPE_STORAGE_KEY);
+    if (stored && allowed.includes(stored)) return stored;
+  } catch {
+    /* ignore */
+  }
+  return fallback;
+}
 
 export const EVENT_TYPES = [
   { value: 'run', label: 'Run' },

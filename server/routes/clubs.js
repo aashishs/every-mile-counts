@@ -170,8 +170,20 @@ router.post(
 router.post(
   '/:id/leave',
   asyncHandler(async (req, res) => {
+    const mem = await membership(req.user.id, req.params.id);
+    if (!mem || !['active', 'pending'].includes(mem.status)) {
+      return res.status(400).json({ message: 'You are not a member of this club' });
+    }
+    if (mem.role === 'club_admin') {
+      return res.status(400).json({ message: 'Club admins cannot leave from here' });
+    }
     await query(
       `UPDATE club_members SET status = 'left' WHERE club_id = $1 AND user_id = $2`,
+      [req.params.id, req.user.id]
+    );
+    await query(
+      `UPDATE coach_assignments SET status = 'inactive'
+       WHERE club_id = $1 AND (athlete_id = $2 OR coach_id = $2) AND status = 'active'`,
       [req.params.id, req.user.id]
     );
     res.json({ message: 'Left club' });

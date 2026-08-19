@@ -3,6 +3,8 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import { ProtectedRoute, PublicRoute } from './components/ProtectedRoute';
 import { homePath, isClubOnlyAccount } from './utils/roles';
 import Login from './pages/Login';
+import ForgotPassword from './pages/ForgotPassword';
+import ResetPassword from './pages/ResetPassword';
 import Register from './pages/Register';
 import Dashboard from './pages/Dashboard';
 import Activities from './pages/Activities';
@@ -25,6 +27,8 @@ export default function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
+          <Route path="/forgot-password" element={<PublicRoute><ForgotPassword /></PublicRoute>} />
+          <Route path="/reset-password" element={<PublicRoute><ResetPassword /></PublicRoute>} />
           <Route path="/register" element={<PublicRoute><Register /></PublicRoute>} />
           <Route path="/dashboard" element={<ProtectedRoute><AthleteRoute><Dashboard /></AthleteRoute></ProtectedRoute>} />
           <Route path="/activities" element={<ProtectedRoute><AthleteRoute><Activities /></AthleteRoute></ProtectedRoute>} />

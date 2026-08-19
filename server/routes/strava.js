@@ -90,14 +90,6 @@ router.get(
       lastSyncError: conn?.lastSyncError,
       providerUserId: conn?.providerUserId,
     });
-    if (conn?.connected && conn.lastSyncStatus !== 'running') {
-      const stale = !conn.lastSyncAt || Date.now() - new Date(conn.lastSyncAt).getTime() > 10 * 60 * 1000;
-      if (stale) {
-        syncStravaActivities(req.user.id, { full: false }).catch((err) => {
-          console.error('Background Strava sync:', err.message);
-        });
-      }
-    }
   })
 );
 

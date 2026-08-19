@@ -6,14 +6,14 @@ export default function ActivityTypeFilter({ value, onChange, showAll = true }) 
     : ACTIVITY_TYPE_OPTIONS;
 
   return (
-    <div className="flex flex-wrap gap-2 mb-6">
+    <div className="chip-row">
       {options.map((opt) => {
         const active = value === opt.value;
         return (
           <button
             key={opt.value}
             type="button"
-            className={`${active ? 'btn-primary' : 'btn-outline'} btn-sm`}
+            className={`${active ? 'chip-active' : 'chip'}`}
             onClick={() => onChange(opt.value)}
           >
             {opt.value !== 'all' ? `${getActivityIcon(opt.value)} ` : ''}

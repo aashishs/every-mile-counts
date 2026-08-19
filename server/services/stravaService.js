@@ -220,13 +220,16 @@ export async function syncStravaActivities(userId, { full = false } = {}) {
   let page = 1;
   let synced = 0;
   const params = { per_page: PER_PAGE };
+  const maxPages = full ? MAX_PAGES : 5;
   if (!full) {
-    const after = await newestStravaTimestamp(userId);
-    if (after) params.after = after - 2 * 24 * 3600;
+    const conn = await getConnection(userId);
+    const after = await newestStravaTimestamp(userId)
+      || (conn?.lastSyncAt ? Math.floor(new Date(conn.lastSyncAt).getTime() / 1000) : null);
+    if (after) params.after = after;
   }
 
   try {
-    while (page <= MAX_PAGES) {
+    while (page <= maxPages) {
       const { data: activities } = await stravaGet(`${STRAVA_API}/athlete/activities`, accessToken, {
         ...params,
         page,
@@ -262,6 +265,21 @@ export async function syncStravaActivities(userId, { full = false } = {}) {
     );
     throw err;
   }
+}
+
+const LOGIN_SYNC_COOLDOWN_MS = 2 * 60 * 1000;
+
+export async function syncStravaOnLogin(userId) {
+  const conn = await getConnection(userId);
+  if (!conn?.connected) return { skipped: 'not_connected' };
+  if (conn.lastSyncStatus === 'running') return { skipped: 'running' };
+  if (conn.lastSyncAt && Date.now() - new Date(conn.lastSyncAt).getTime() < LOGIN_SYNC_COOLDOWN_MS) {
+    return { skipped: 'recent' };
+  }
+  const newest = await newestStravaTimestamp(userId);
+  if (!newest && !conn.lastSyncAt) return { skipped: 'never_synced' };
+  const synced = await syncStravaActivities(userId, { full: false });
+  return { synced };
 }
 
 export { analyzeActivity, getConnection as getStravaConnection };

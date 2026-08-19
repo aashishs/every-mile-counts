@@ -1,12 +1,20 @@
 import { useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import Layout from '../components/Layout';
 import { useAuth } from '../context/AuthContext';
-import { formatDate, formatDistance, formatDuration, formatPace, activityMetric } from '../utils/format';
+import {
+  activityMetric,
+  formatDate,
+  formatDistance,
+  formatDuration,
+  formatPace,
+  getActivityIcon,
+} from '../utils/format';
 
 export default function ActivityDetail() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const { isCoach, user } = useAuth();
   const [data, setData] = useState(null);
   const [coaches, setCoaches] = useState([]);
@@ -33,6 +41,14 @@ export default function ActivityDetail() {
 
   const { activity, insights, athleteInsights, reviews } = data;
   const mine = activity.athleteId === user.id;
+  const glance = insights || athleteInsights || {};
+  const metric = activityMetric(activity.type, activity.sportType, activity.distance);
+  const primary = metric === 'swim'
+    ? `${Math.round(activity.distance || 0)} m`
+    : metric === 'duration'
+      ? formatDuration(activity.movingTime || activity.elapsedTime)
+      : formatDistance(activity.distance);
+  const primaryLabel = metric === 'duration' ? 'Duration' : metric === 'swim' ? 'Distance' : 'Distance';
 
   const requestReview = async (coachId) => {
     try {
@@ -55,57 +71,97 @@ export default function ActivityDetail() {
     }
   };
 
+  const stats = metric === 'duration'
+    ? [
+        { label: 'Duration', value: formatDuration(activity.movingTime || activity.elapsedTime) },
+        { label: 'Avg HR', value: activity.avgHeartrate ? `${Math.round(activity.avgHeartrate)}` : '—', unit: activity.avgHeartrate ? 'bpm' : '' },
+        { label: 'Max HR', value: activity.maxHeartrate ? `${Math.round(activity.maxHeartrate)}` : '—', unit: activity.maxHeartrate ? 'bpm' : '' },
+      ]
+    : [
+        { label: 'Time', value: formatDuration(activity.movingTime) },
+        { label: 'Pace', value: formatPace(activity.avgSpeed).replace(' /km', ''), unit: metric === 'swim' ? '' : '/km' },
+        { label: 'Climb', value: `${Math.round(activity.elevationGain || 0)}`, unit: 'm' },
+        { label: 'Avg HR', value: activity.avgHeartrate ? `${Math.round(activity.avgHeartrate)}` : '—', unit: activity.avgHeartrate ? 'bpm' : '' },
+      ];
+
   return (
     <Layout>
-      <h2 className="page-title">{activity.name}</h2>
-      <p className="page-sub">{formatDate(activity.startDate)} · {activity.type} · {activity.source}</p>
-      {message && <div className="mb-4 card text-sm text-brand">{message}</div>}
-
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-        {activityMetric(activity.type, activity.sportType, activity.distance) === 'duration' ? (
-          <>
-            <Metric label="Duration" value={formatDuration(activity.movingTime || activity.elapsedTime)} />
-            <Metric label="Calories" value={activity.calories ? `${Math.round(activity.calories)} kcal` : '—'} />
-            <Metric label="Avg HR" value={activity.avgHeartrate ? `${Math.round(activity.avgHeartrate)} bpm` : '—'} />
-            <Metric label="Max HR" value={activity.maxHeartrate ? `${Math.round(activity.maxHeartrate)} bpm` : '—'} />
-          </>
-        ) : (
-          <>
-            <Metric label="Distance" value={activityMetric(activity.type, activity.sportType, activity.distance) === 'swim' ? `${Math.round(activity.distance || 0)} m` : formatDistance(activity.distance)} />
-            <Metric label="Moving time" value={formatDuration(activity.movingTime)} />
-            <Metric label="Pace" value={formatPace(activity.avgSpeed)} />
-            <Metric label="Elevation" value={`${Math.round(activity.elevationGain || 0)} m`} />
-            <Metric label="Avg HR" value={activity.avgHeartrate ? `${Math.round(activity.avgHeartrate)} bpm` : '—'} />
-            <Metric label="Cadence" value={activity.avgCadence ? Math.round(activity.avgCadence) : '—'} />
-            <Metric label="Power" value={activity.avgPower ? `${Math.round(activity.avgPower)} W` : '—'} />
-            <Metric label="Calories" value={activity.calories ? Math.round(activity.calories) : '—'} />
-          </>
-        )}
+      <div className="flex justify-end mb-3">
+        <button type="button" className="btn-outline btn-sm" onClick={() => navigate('/activities')}>
+          Done
+        </button>
       </div>
 
-      {(athleteInsights || insights) && (
-        <div className="card mb-6">
-          <h3 className="font-semibold mb-2">Insights</h3>
-          {insights ? (
-            <ul className="text-sm space-y-1 text-muted">
-              <li>Pace consistency: {insights.paceConsistency}</li>
-              <li>HR zone: {insights.heartRateZone?.label || '—'}</li>
-              <li>Cadence: {insights.cadenceEfficiency || '—'}</li>
-              <li>{insights.elevationImpact}</li>
-              <li>Training load: {insights.trainingLoad}</li>
-              <li>{insights.recoveryRecommendation}</li>
-            </ul>
-          ) : (
-            <p className="text-sm text-muted">{athleteInsights.recoveryRecommendation}</p>
+      <div className="hero-week">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="stat-label text-teal-100/70">
+              {getActivityIcon(activity.type)} {activity.type} · {formatDate(activity.startDate)}
+            </div>
+            <h2 className="font-display text-3xl md:text-4xl font-bold tracking-tight text-white mt-2 leading-tight">
+              {activity.name}
+            </h2>
+          </div>
+          <span className="text-4xl shrink-0">{getActivityIcon(activity.type)}</span>
+        </div>
+        <div className="font-display text-5xl md:text-6xl font-bold tracking-tight text-white mt-5 leading-none">
+          {primary}
+        </div>
+        <div className="stat-label text-teal-100/70 mt-2">{primaryLabel}</div>
+        <div className="flex flex-wrap gap-2 mt-5">
+          <span className="rounded-full bg-black/25 px-3 py-1 text-xs font-semibold">{activity.source || 'manual'}</span>
+          {glance.pace && <span className="rounded-full bg-black/25 px-3 py-1 text-xs font-semibold">{glance.pace} /km</span>}
+          {glance.heartRateZone?.label && (
+            <span className="rounded-full bg-black/25 px-3 py-1 text-xs font-semibold">Z{glance.heartRateZone.zone} {glance.heartRateZone.label}</span>
           )}
         </div>
+      </div>
+
+      {message && <div className="mb-4 card text-sm text-brand">{message}</div>}
+
+      <div className="grid grid-cols-2 gap-2 mb-5">
+        {stats.map((s) => (
+          <div key={s.label} className="stat-card">
+            <div className="stat-label">{s.label}</div>
+            <div className="stat-value text-brand">
+              {s.value}
+              {s.unit ? <span className="text-sm text-muted font-sans font-semibold ml-1">{s.unit}</span> : null}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {(insights || athleteInsights) && (
+        <section className="mb-6">
+          <h3 className="section-title mb-3">Session read</h3>
+          <div className="grid grid-cols-2 gap-2 mb-2">
+            {glance.paceConsistency && glance.paceConsistency !== 'unknown' && (
+              <Insight label="Pace" value={glance.paceConsistency} />
+            )}
+            {glance.heartRateZone?.label && (
+              <Insight label="HR zone" value={`Z${glance.heartRateZone.zone}`} hint={glance.heartRateZone.label} />
+            )}
+            {glance.trainingLoad != null && (
+              <Insight label="Load" value={Math.round(glance.trainingLoad)} />
+            )}
+          </div>
+          {glance.elevationImpact && (
+            <div className="card mb-2 text-sm text-muted">{glance.elevationImpact}</div>
+          )}
+          {glance.recoveryRecommendation && (
+            <div className="race-card">
+              <div className="stat-label text-orange-200/80">Recovery</div>
+              <p className="text-sm mt-2 mb-0">{glance.recoveryRecommendation}</p>
+            </div>
+          )}
+        </section>
       )}
 
       {mine && (
         <div className="card mb-6">
-          <h3 className="font-semibold mb-3">Request coach review</h3>
+          <h3 className="section-title mb-3">Coach review</h3>
           {!coaches.length ? (
-            <p className="text-sm text-muted">No assigned coaches yet. Join a club or wait for a club admin to assign one.</p>
+            <p className="text-sm text-muted mb-0">No coach yet. Add one from Profile.</p>
           ) : (
             <div className="flex flex-wrap gap-2">
               {coaches.map((c) => (
@@ -119,26 +175,29 @@ export default function ActivityDetail() {
       )}
 
       {reviews?.length > 0 && (
-        <div className="mb-6">
-          <h3 className="font-semibold mb-3">Coach reviews</h3>
+        <section className="mb-6">
+          <h3 className="section-title mb-3">Coach notes</h3>
           {reviews.map((r) => (
-            <div key={r.id} className="card mb-3 text-sm space-y-1">
-              <div className="font-semibold text-brand">{r.coachFirstName} {r.coachLastName} {r.rating ? `· ${'★'.repeat(r.rating)}` : ''}</div>
-              {r.performanceSummary && <p>{r.performanceSummary}</p>}
-              {r.strengths && <p><strong>Strengths:</strong> {r.strengths}</p>}
-              {r.improvements && <p><strong>Improve:</strong> {r.improvements}</p>}
-              {r.technique && <p><strong>Technique:</strong> {r.technique}</p>}
-              {r.recommendations && <p><strong>Training:</strong> {r.recommendations}</p>}
-              {r.recoveryAdvice && <p><strong>Recovery:</strong> {r.recoveryAdvice}</p>}
-              {r.comments && <p>{r.comments}</p>}
+            <div key={r.id} className="card mb-3 text-sm space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-semibold">{r.coachFirstName} {r.coachLastName}</span>
+                {r.rating ? <span className="text-accent">{'★'.repeat(r.rating)}</span> : null}
+              </div>
+              {r.performanceSummary && <p className="mb-0">{r.performanceSummary}</p>}
+              {r.strengths && <p className="mb-0 text-muted"><span className="text-slate-100 font-medium">Strengths.</span> {r.strengths}</p>}
+              {r.improvements && <p className="mb-0 text-muted"><span className="text-slate-100 font-medium">Work on.</span> {r.improvements}</p>}
+              {r.technique && <p className="mb-0 text-muted"><span className="text-slate-100 font-medium">Technique.</span> {r.technique}</p>}
+              {r.recommendations && <p className="mb-0 text-muted"><span className="text-slate-100 font-medium">Training.</span> {r.recommendations}</p>}
+              {r.recoveryAdvice && <p className="mb-0 text-muted"><span className="text-slate-100 font-medium">Recovery.</span> {r.recoveryAdvice}</p>}
+              {r.comments && <p className="mb-0 text-muted">{r.comments}</p>}
             </div>
           ))}
-        </div>
+        </section>
       )}
 
       {isCoach && !mine && (
         <form className="card space-y-3" onSubmit={submitReview}>
-          <h3 className="font-semibold">Write review</h3>
+          <h3 className="section-title">Write review</h3>
           {['performanceSummary', 'strengths', 'improvements', 'technique', 'recommendations', 'recoveryAdvice', 'comments'].map((field) => (
             <div key={field}>
               <label className="capitalize">{field.replace(/([A-Z])/g, ' $1')}</label>
@@ -151,18 +210,19 @@ export default function ActivityDetail() {
               {[1, 2, 3, 4, 5].map((n) => <option key={n} value={n}>{n}</option>)}
             </select>
           </div>
-          <button className="btn-primary" type="submit">Publish review</button>
+          <button className="btn-primary w-full" type="submit">Publish review</button>
         </form>
       )}
     </Layout>
   );
 }
 
-function Metric({ label, value }) {
+function Insight({ label, value, hint }) {
   return (
     <div className="stat-card">
-      <div className="text-xs text-muted">{label}</div>
-      <div className="font-bold text-brand">{value}</div>
+      <div className="stat-label">{label}</div>
+      <div className="stat-value text-xl capitalize text-brand">{value}</div>
+      {hint && <div className="text-[11px] text-muted mt-1">{hint}</div>}
     </div>
   );
 }

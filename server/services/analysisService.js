@@ -357,7 +357,7 @@ export function buildActivityTypeHighlights(activities) {
         label: bucket.label,
         count: matches.length,
         fastest: highlight ? recordPayload(highlight) : null,
-        badge: metric === 'duration' ? 'Longest' : 'Fastest',
+        badge: metric === 'duration' ? 'Longest' : 'PR',
       };
     });
 
@@ -408,7 +408,7 @@ export function detectPersonalRecords(activities, type) {
       if (best) {
         records[bucket.key] = {
           ...recordPayload(best),
-          label: `Fastest ${bucket.label}`,
+          label: `PR ${bucket.label}`,
         };
       }
     }
@@ -458,26 +458,135 @@ function formatVolumeValue(distance, time, metric) {
   return formatDistance(distance);
 }
 
-export async function periodAnalysis(athleteId, days = 30, { type } = {}) {
-  const since = new Date();
-  since.setDate(since.getDate() - Number(days));
-  const prevSince = new Date(since);
-  prevSince.setDate(prevSince.getDate() - Number(days));
+const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+function periodMonths(period) {
+  const p = String(period ?? '90').toLowerCase();
+  if (p === 'all' || p === '0') return null;
+  const n = Number(p);
+  if (n === 180 || n === 6) return 6;
+  if (n === 365 || n === 12) return 12;
+  return 3;
+}
+
+function localYmd(date = new Date()) {
+  const d = new Date(date);
+  return { year: d.getFullYear(), month: d.getMonth() + 1, day: d.getDate() };
+}
+
+function addMonths({ year, month }, delta) {
+  const total = year * 12 + (month - 1) + delta;
+  const y = Math.floor(total / 12);
+  const m = ((total % 12) + 12) % 12;
+  return { year: y, month: m + 1 };
+}
+
+function monthStamp({ year, month }) {
+  return `${year}-${String(month).padStart(2, '0')}`;
+}
+
+/** Local midnight on the 1st, as UTC ISO so Postgres does not include the previous day. */
+function localMidnightFirst(ym) {
+  return new Date(ym.year, ym.month - 1, 1, 0, 0, 0, 0).toISOString();
+}
+
+function monthLabel(stamp) {
+  const [year, month] = stamp.split('-');
+  return `${MONTH_NAMES[Number(month) - 1]} ${String(year).slice(-2)}`;
+}
+
+function eachMonthStamps(fromYm, toYm) {
+  const keys = [];
+  let cursor = { ...fromYm };
+  const end = monthStamp(toYm);
+  while (monthStamp(cursor) <= end) {
+    keys.push(monthStamp(cursor));
+    cursor = addMonths(cursor, 1);
+  }
+  return keys;
+}
+
+function monthKey(date) {
+  return monthStamp(localYmd(date));
+}
+
+function periodWindow(period, today = new Date()) {
+  const named = periodMonths(period);
+  const now = localYmd(today);
+  if (!named) {
+    return { named: null, monthCount: null, since: null, prevSince: null, sinceYm: null, nowYm: now };
+  }
+  // On the 1st, current month has just started — include it plus N complete prior months.
+  const monthCount = now.day === 1 ? named + 1 : named;
+  const sinceYm = addMonths(now, -(monthCount - 1));
+  const prevSinceYm = addMonths(sinceYm, -monthCount);
+  return {
+    named,
+    monthCount,
+    since: localMidnightFirst(sinceYm),
+    prevSince: localMidnightFirst(prevSinceYm),
+    sinceYm,
+    nowYm: now,
+  };
+}
+
+function monthlySeries(activities, fromYm, toYm) {
+  const buckets = {};
+  for (const act of activities) {
+    const key = monthKey(act.startDate);
+    if (!buckets[key]) {
+      buckets[key] = { distance: 0, time: 0, paceDistance: 0, paceTime: 0, hrSum: 0, hrCount: 0, count: 0 };
+    }
+    const b = buckets[key];
+    b.count += 1;
+    b.distance += num(act.distance);
+    b.time += num(act.movingTime);
+    if (num(act.avgSpeed) > 0 && num(act.distance) > 0) {
+      b.paceDistance += num(act.distance);
+      b.paceTime += num(act.movingTime);
+    }
+    if (act.avgHeartrate) {
+      b.hrSum += num(act.avgHeartrate);
+      b.hrCount += 1;
+    }
+  }
+
+  return eachMonthStamps(fromYm, toYm).map((key) => {
+    const b = buckets[key] || { distance: 0, time: 0, paceDistance: 0, paceTime: 0, hrSum: 0, hrCount: 0, count: 0 };
+    return {
+      month: key,
+      label: monthLabel(key),
+      count: b.count,
+      distance: b.distance,
+      time: b.time,
+      paceSecPerKm: b.paceDistance > 0 ? b.paceTime / (b.paceDistance / 1000) : null,
+      hr: b.hrCount ? b.hrSum / b.hrCount : null,
+    };
+  });
+}
+
+export async function periodAnalysis(athleteId, period = '90', { type } = {}) {
+  const window = periodWindow(period);
+  const { named, monthCount, since, prevSince, sinceYm, nowYm } = window;
   const filterType = type && type !== 'all' ? type : null;
   const metric = volumeMetric(filterType);
 
   const currentRaw = camelMany(
     await many(
-      `SELECT * FROM activities WHERE athlete_id = $1 AND start_date >= $2 ORDER BY start_date`,
-      [athleteId, since]
+      since
+        ? `SELECT * FROM activities WHERE athlete_id = $1 AND start_date >= $2::timestamptz ORDER BY start_date`
+        : `SELECT * FROM activities WHERE athlete_id = $1 ORDER BY start_date`,
+      since ? [athleteId, since] : [athleteId]
     )
   );
-  const previousRaw = camelMany(
-    await many(
-      `SELECT * FROM activities WHERE athlete_id = $1 AND start_date >= $2 AND start_date < $3`,
-      [athleteId, prevSince, since]
-    )
-  );
+  const previousRaw = named
+    ? camelMany(
+        await many(
+          `SELECT * FROM activities WHERE athlete_id = $1 AND start_date >= $2::timestamptz AND start_date < $3::timestamptz`,
+          [athleteId, prevSince, since]
+        )
+      )
+    : [];
   const current = filterType ? currentRaw.filter((a) => sportFamily(a) === filterType) : currentRaw;
   const previous = filterType ? previousRaw.filter((a) => sportFamily(a) === filterType) : previousRaw;
 
@@ -509,19 +618,15 @@ export async function periodAnalysis(athleteId, days = 30, { type } = {}) {
     byType[family].elevation += num(act.elevationGain);
   }
 
-  const weeklyBreakdown = {};
-  for (const act of current) {
-    const key = startOfWeek(act.startDate).toISOString().slice(0, 10);
-    if (!weeklyBreakdown[key]) weeklyBreakdown[key] = { week: key, count: 0, distance: 0, time: 0 };
-    weeklyBreakdown[key].count += 1;
-    weeklyBreakdown[key].distance += num(act.distance);
-    weeklyBreakdown[key].time += num(act.movingTime);
-  }
+  const chartFromYm = sinceYm || (current[0]?.startDate ? localYmd(current[0].startDate) : nowYm);
+  const monthlyBreakdown = monthlySeries(current, chartFromYm, nowYm);
 
   const allTime = camelMany(await many(`SELECT * FROM activities WHERE athlete_id = $1`, [athleteId]));
 
   return {
-    period: Number(days),
+    period: named ? `${named}m` : 'all',
+    monthCount,
+    periodStart: since || localMidnightFirst(chartFromYm),
     filterType: filterType || 'all',
     metric,
     current: {
@@ -533,17 +638,18 @@ export async function periodAnalysis(athleteId, days = 30, { type } = {}) {
       },
     },
     previous: prev,
-    comparison: {
-      distancePct: Math.round(delta(cur[compareKey], prev[compareKey])),
-      timePct: Math.round(delta(cur.time, prev.time)),
-      countPct: Math.round(delta(cur.count, prev.count)),
-    },
+    comparison: named
+      ? {
+          distancePct: Math.round(delta(cur[compareKey], prev[compareKey])),
+          timePct: Math.round(delta(cur.time, prev.time)),
+          countPct: Math.round(delta(cur.count, prev.count)),
+        }
+      : { distancePct: null, timePct: null, countPct: null },
     byType,
-    weeklyBreakdown: Object.values(weeklyBreakdown).sort((a, b) => a.week.localeCompare(b.week)),
+    monthlyBreakdown,
+    weeklyBreakdown: monthlyBreakdown,
     personalRecords: detectPersonalRecords(allTime, filterType),
-    paceTrends: current
-      .filter((a) => a.avgSpeed)
-      .map((a) => ({ date: a.startDate, paceSecPerKm: 1000 / Number(a.avgSpeed), hr: a.avgHeartrate })),
+    paceTrends: monthlyBreakdown,
   };
 }
 

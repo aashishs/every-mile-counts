@@ -4,7 +4,13 @@
 
 @layer base {
   body {
-    @apply bg-ink text-slate-100 font-sans min-h-screen antialiased;
+    @apply text-slate-100 font-sans min-h-screen antialiased;
+    background-color: #0b1118;
+    background-image:
+      radial-gradient(900px 420px at 8% -8%, rgba(13, 148, 136, 0.22), transparent 55%),
+      radial-gradient(700px 360px at 110% 8%, rgba(249, 115, 22, 0.12), transparent 50%),
+      linear-gradient(180deg, #0b1118 0%, #0f1419 40%, #0b1118 100%);
+    background-attachment: fixed;
   }
   input, select, textarea {
     @apply bg-ink border border-line rounded-xl px-3 py-2.5 text-slate-100 w-full focus:outline-none focus:border-brand;
@@ -16,7 +22,7 @@
 
 @layer components {
   .btn {
-    @apply inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-semibold text-sm transition disabled:opacity-50;
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-2xl font-semibold text-sm transition disabled:opacity-50;
   }
   .btn-primary {
     @apply btn bg-brand text-white hover:bg-brand-dark;
@@ -31,27 +37,160 @@
     @apply btn bg-red-500 text-white hover:bg-red-600;
   }
   .btn-sm {
-    @apply px-3 py-1.5 text-xs;
+    @apply px-3 py-1.5 text-xs rounded-full;
   }
   .card {
-    @apply bg-card border border-line rounded-xl p-5 shadow-card;
+    @apply bg-card border border-line rounded-2xl p-4 md:p-5 shadow-card;
   }
   .stat-card {
-    @apply card;
+    @apply card py-3.5;
+  }
+  .stat-label {
+    @apply text-[10px] uppercase text-muted font-semibold;
+    letter-spacing: 0.18em;
+  }
+  .stat-value {
+    @apply text-2xl md:text-3xl font-bold tracking-tight text-white mt-1 leading-none;
+    font-family: 'Barlow Condensed', 'DM Sans', system-ui, sans-serif;
   }
   .page-title {
-    @apply text-2xl font-bold mb-1;
+    @apply text-3xl md:text-4xl font-bold mb-1 tracking-tight;
+    font-family: 'Barlow Condensed', 'DM Sans', system-ui, sans-serif;
   }
   .page-sub {
-    @apply text-muted mb-6;
+    @apply text-muted mb-5 md:mb-6 text-sm;
+  }
+  .section-title {
+    @apply text-xl font-bold tracking-tight;
+    font-family: 'Barlow Condensed', 'DM Sans', system-ui, sans-serif;
   }
   .nav-link {
-    @apply flex items-center gap-3 px-4 py-2.5 rounded-xl text-muted font-medium hover:bg-hover hover:text-slate-100;
+    @apply flex items-center gap-3 px-4 py-3 md:py-2.5 rounded-2xl text-muted font-medium hover:bg-hover hover:text-slate-100;
   }
   .nav-link.active {
     @apply bg-brand/15 text-brand;
   }
   .badge {
-    @apply inline-block px-2.5 py-0.5 rounded-full text-xs font-semibold uppercase;
+    @apply inline-block px-2.5 py-0.5 rounded-full text-xs font-semibold uppercase tracking-wide;
   }
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-full border border-line px-3.5 py-2 text-sm font-semibold text-muted;
+    background: rgba(26, 35, 50, 0.6);
+  }
+  .chip-active {
+    @apply inline-flex items-center gap-1.5 rounded-full border border-brand bg-brand px-3.5 py-2 text-sm font-semibold text-white;
+  }
+  .hero-week {
+    @apply rounded-3xl p-5 md:p-6 border mb-4;
+    border-color: rgba(13, 148, 136, 0.3);
+    background:
+      radial-gradient(500px 180px at 90% -20%, rgba(249, 115, 22, 0.28), transparent 50%),
+      radial-gradient(600px 220px at 0% 120%, rgba(13, 148, 136, 0.45), transparent 55%),
+      linear-gradient(135deg, #12343a 0%, #15202e 55%, #1a2838 100%);
+  }
+  .race-card {
+    @apply rounded-3xl p-4 border;
+    border-color: rgba(249, 115, 22, 0.3);
+    background:
+      radial-gradient(400px 160px at 100% 0%, rgba(249, 115, 22, 0.22), transparent 55%),
+      linear-gradient(135deg, #2a1d14 0%, #1a2332 70%);
+  }
+  .pr-featured {
+    background:
+      radial-gradient(1200px 200px at 10% -20%, rgba(249, 115, 22, 0.28), transparent 50%),
+      radial-gradient(800px 240px at 100% 120%, rgba(13, 148, 136, 0.35), transparent 45%),
+      linear-gradient(135deg, #1e2d42 0%, #15202e 55%, #1a2332 100%);
+    animation: pr-glow 4s ease-in-out infinite;
+  }
+  .pr-tile {
+    @apply rounded-2xl border border-line p-4 transition duration-200 hover:-translate-y-0.5 hover:border-brand/50;
+    background: rgba(15, 20, 25, 0.7);
+  }
+  .pr-tile-locked {
+    @apply opacity-50 border-dashed;
+  }
+}
+
+@keyframes pr-glow {
+  0%, 100% { box-shadow: 0 8px 32px rgba(13, 148, 136, 0.12); }
+  50% { box-shadow: 0 12px 40px rgba(249, 115, 22, 0.22); }
+}
+
+.safe-top {
+  padding-top: max(0.5rem, env(safe-area-inset-top));
+}
+
+.safe-bottom {
+  padding-bottom: max(0.35rem, env(safe-area-inset-bottom));
+}
+
+.chip-row {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1.25rem;
+  overflow-x: auto;
+  padding-bottom: 0.25rem;
+  margin-left: -1rem;
+  margin-right: -1rem;
+  padding-left: 1rem;
+  padding-right: 1rem;
+  scrollbar-width: none;
+}
+
+@media (min-width: 768px) {
+  .chip-row {
+    margin-left: 0;
+    margin-right: 0;
+    padding-left: 0;
+    padding-right: 0;
+    flex-wrap: wrap;
+  }
+}
+
+.chip-row::-webkit-scrollbar {
+  display: none;
+}
+
+.chip-row > * {
+  flex-shrink: 0;
+}
+
+.tab-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  padding-top: 0.5rem;
+  padding-bottom: 0.5rem;
+  min-height: 3.4rem;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  text-decoration: none;
+  color: #8b9cb3;
+}
+
+.tab-item.active {
+  color: #0d9488;
+}
+
+.tab-icon {
+  display: grid;
+  place-items: center;
+  width: 2.25rem;
+  height: 1.75rem;
+  border-radius: 0.75rem;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.tab-item.active .tab-icon {
+  background: rgba(13, 148, 136, 0.15);
+  color: #0d9488;
+}
+
+.font-display {
+  font-family: 'Barlow Condensed', 'DM Sans', system-ui, sans-serif;
 }

@@ -208,6 +208,7 @@ CREATE TABLE IF NOT EXISTS events (
   club_id UUID REFERENCES clubs(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
   event_date DATE NOT NULL,
+  event_time TIME,
   distance NUMERIC,
   category TEXT NOT NULL DEFAULT 'run'
     CHECK (category IN ('run', 'bike', 'swim', 'triathlon', 'walk', 'other')),
@@ -398,3 +399,15 @@ CREATE TABLE IF NOT EXISTS oauth_pending (
 );
 
 ALTER TABLE users ADD COLUMN IF NOT EXISTS default_activity_type TEXT NOT NULL DEFAULT 'Run';
+ALTER TABLE events ADD COLUMN IF NOT EXISTS event_time TIME;
+
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token_hash TEXT NOT NULL UNIQUE,
+  expires_at TIMESTAMPTZ NOT NULL,
+  used_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_password_reset_user ON password_reset_tokens (user_id);
+CREATE INDEX IF NOT EXISTS idx_password_reset_expires ON password_reset_tokens (expires_at);
