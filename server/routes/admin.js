@@ -346,11 +346,15 @@ router.delete(
     }
     const user = camel(await one('SELECT * FROM users WHERE id = $1', [req.params.id]));
     if (!user) return res.status(404).json({ message: 'User not found' });
+    if (user.status !== 'suspended') {
+      return res.status(400).json({ message: 'Suspend this account before deleting it.' });
+    }
     await query(`UPDATE clubs SET created_by = NULL WHERE created_by = $1`, [user.id]);
     await query(`UPDATE invitation_codes SET created_by = NULL WHERE created_by = $1`, [user.id]);
     await query(`UPDATE club_announcements SET author_id = NULL WHERE author_id = $1`, [user.id]);
     await query(`UPDATE coach_assignments SET assigned_by = NULL WHERE assigned_by = $1`, [user.id]);
     await query(`UPDATE support_tickets SET assigned_to = NULL WHERE assigned_to = $1`, [user.id]);
+    await query(`DELETE FROM invitation_redemptions WHERE user_id = $1`, [user.id]);
     await query(`DELETE FROM events WHERE owner_type = 'athlete' AND owner_id = $1`, [user.id]);
     await query(`DELETE FROM users WHERE id = $1`, [user.id]);
     await writeAudit({

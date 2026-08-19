@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import Layout from '../components/Layout';
+import ConfirmDialog from '../components/ConfirmDialog';
 import Badge, { CodeTypeBadge, RoleBadges, StatusBadge, StravaBadge } from '../components/Badge';
 import { formatActivityPrimary, formatActivitySecondary, formatDate, getActivityIcon } from '../utils/format';
 
@@ -79,6 +80,9 @@ export default function Admin() {
   const [coachPick, setCoachPick] = useState('');
   const [selectedClubId, setSelectedClubId] = useState(null);
   const [clubDetail, setClubDetail] = useState(null);
+  const [dialog, setDialog] = useState(null);
+  const [dialogBusy, setDialogBusy] = useState(false);
+  const [dialogError, setDialogError] = useState('');
 
   const load = async (next = tab) => {
     if (next === 'overview') setOverview((await api.get('/admin/overview')).data);
@@ -252,25 +256,55 @@ export default function Admin() {
     await openUser(selectedId);
   };
 
-  const deleteUser = async (id, email) => {
-    if (!window.confirm(`Delete ${email} and all of their data? This cannot be undone.`)) return;
-    setAdminErr('');
-    try {
-      const { data } = await api.delete(`/admin/users/${id}`);
-      setAdminMsg(data.message);
-      setSelectedId(null);
-      setDetail(null);
-      load('users');
-    } catch (err) {
-      setAdminErr(err.response?.data?.message || 'Could not delete user');
-    }
+  const deleteUser = (id, email) => {
+    setDialogError('');
+    setDialog({ kind: 'delete-user', id, email });
   };
 
   const coaches = users.filter((u) => (u.roles || []).includes('coach'));
 
   const saveSettings = async () => {
-    await api.put('/admin/settings', settings);
-    alert('Settings saved');
+    try {
+      await api.put('/admin/settings', settings);
+      setDialog({ kind: 'notice', title: 'Settings saved', body: 'Your changes are in effect.' });
+    } catch (err) {
+      setDialog({
+        kind: 'notice',
+        title: 'Could not save settings',
+        body: err.response?.data?.message || 'Try again.',
+      });
+    }
+  };
+
+  const closeDialog = () => {
+    if (dialogBusy) return;
+    setDialog(null);
+    setDialogError('');
+  };
+
+  const runDialog = async () => {
+    if (dialog?.kind === 'notice') {
+      setDialog(null);
+      setDialogError('');
+      return;
+    }
+    if (dialog?.kind === 'delete-user') {
+      setDialogBusy(true);
+      setDialogError('');
+      setAdminErr('');
+      try {
+        const { data } = await api.delete(`/admin/users/${dialog.id}`);
+        setAdminMsg(data.message);
+        setSelectedId(null);
+        setDetail(null);
+        load('users');
+        setDialog(null);
+      } catch (err) {
+        setDialogError(err.response?.data?.message || 'Could not delete user');
+      } finally {
+        setDialogBusy(false);
+      }
+    }
   };
 
   return (
@@ -345,6 +379,11 @@ export default function Admin() {
                       <button className="btn-outline btn-sm" type="button" onClick={() => setUserStatus(u.id, u.status === 'suspended' ? 'active' : 'suspended')}>
                         {u.status === 'suspended' ? 'Restore' : 'Suspend'}
                       </button>
+                      {u.status === 'suspended' && (
+                        <button className="btn-danger btn-sm ml-1" type="button" onClick={() => deleteUser(u.id, u.email)}>
+                          Delete
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -382,9 +421,11 @@ export default function Admin() {
                   <button className="btn-outline btn-sm" type="button" onClick={() => setUserStatus(detail.user.id, detail.user.status === 'suspended' ? 'active' : 'suspended')}>
                     {detail.user.status === 'suspended' ? 'Restore' : 'Suspend'}
                   </button>
-                  <button className="btn-danger btn-sm" type="button" onClick={() => deleteUser(detail.user.id, detail.user.email)}>
-                    Delete
-                  </button>
+                  {detail.user.status === 'suspended' && (
+                    <button className="btn-danger btn-sm" type="button" onClick={() => deleteUser(detail.user.id, detail.user.email)}>
+                      Delete
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -737,9 +778,8 @@ export default function Admin() {
             <span>
               <span className="block font-medium">Pause email code on sign up</span>
               <span className="block text-xs text-muted mt-1">
-                New accounts skip the 6-digit email code and sign in immediately. Login also skips the code while this
-                is on. Use this if sign-up or login fails because verification emails cannot be sent. Turn it off after
-                email is working.
+                New accounts skip the 6-digit email code and finish sign up immediately. Login never uses an email
+                code. Turn this on only if verification emails cannot be sent.
               </span>
             </span>
           </label>
@@ -828,6 +868,32 @@ export default function Admin() {
             </table>
           </div>
         </div>
+      )}
+      {dialog?.kind === 'notice' && (
+        <ConfirmDialog
+          title={dialog.title}
+          confirmLabel="OK"
+          hideCancel
+          onCancel={closeDialog}
+          onConfirm={runDialog}
+        >
+          <p className="mb-0">{dialog.body}</p>
+        </ConfirmDialog>
+      )}
+      {dialog?.kind === 'delete-user' && (
+        <ConfirmDialog
+          title="Delete this account?"
+          confirmLabel="Delete account"
+          danger
+          busy={dialogBusy}
+          error={dialogError}
+          onCancel={closeDialog}
+          onConfirm={runDialog}
+        >
+          <p className="mb-0">
+            Delete <span className="text-slate-100 font-medium">{dialog.email}</span> and all of their data? This cannot be undone.
+          </p>
+        </ConfirmDialog>
       )}
     </Layout>
   );

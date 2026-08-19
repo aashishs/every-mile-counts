@@ -67,13 +67,13 @@ export default function Register() {
           Join <span className="text-brand">Every Mile Counts</span>
         </h1>
         {isBeta && (
-          <div className="flex justify-center mt-2">
+          <div className="flex justify-center mt-2 mb-6">
             <VersionBadge />
           </div>
         )}
-        <p className="text-center text-muted mb-6">
-          {otp ? 'Verify your email to finish' : 'Invitation-only beta. Ask an admin for a code.'}
-        </p>
+        {otp && (
+          <p className="text-center text-muted mb-6">Verify your email to finish</p>
+        )}
         {otp ? (
           <OtpVerify
             email={otp.email}
@@ -116,7 +116,8 @@ export default function Register() {
               </div>
               <div>
                 <label htmlFor="invitationCode">Invitation code</label>
-                <input id="invitationCode" name="invitationCode" value={form.invitationCode} onChange={set} required placeholder="WELCOME-EMC" />
+                <input id="invitationCode" name="invitationCode" value={form.invitationCode} onChange={set} required autoComplete="off" />
+                <p className="text-xs text-muted mt-1">Reach out to an admin for an invitation code.</p>
               </div>
               <div>
                 <label htmlFor="location">Location</label>

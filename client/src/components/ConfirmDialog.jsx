@@ -2,6 +2,8 @@ export default function ConfirmDialog({
   title,
   children,
   confirmLabel = 'Confirm',
+  cancelLabel = 'Cancel',
+  hideCancel = false,
   danger = false,
   busy = false,
   error = '',
@@ -22,12 +24,14 @@ export default function ConfirmDialog({
         aria-labelledby="confirm-title"
       >
         <h3 id="confirm-title" className="font-semibold text-lg mb-0">{title}</h3>
-        <div className="text-sm text-muted space-y-2">{children}</div>
+        {children ? <div className="text-sm text-muted space-y-2">{children}</div> : null}
         {error ? <p className="text-sm text-orange-300 mb-0">{error}</p> : null}
         <div className="flex justify-end gap-2">
-          <button type="button" className="btn-outline" onClick={onCancel} disabled={busy}>
-            Cancel
-          </button>
+          {!hideCancel && (
+            <button type="button" className="btn-outline" onClick={onCancel} disabled={busy}>
+              {cancelLabel}
+            </button>
+          )}
           <button
             type="button"
             className={danger ? 'btn-danger' : 'btn-primary'}

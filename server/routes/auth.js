@@ -2,7 +2,7 @@ import express from 'express';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import rateLimit from 'express-rate-limit';
-import { camel, one, query } from '../config/db.js';
+import { camel, many, one, query } from '../config/db.js';
 import { signToken } from '../utils/jwt.js';
 import { loadPublicUser, protect } from '../middleware/auth.js';
 import { planExpiryDate, publicUser, isAppAdminUser, isClubOnlyUser } from '../utils/membership.js';
@@ -15,7 +15,7 @@ import { issueLoginOtp, isSignupOtpPaused, verifyLoginOtp } from '../services/ot
 
 const router = express.Router();
 
-async function redeemInvitation({ code, type, userId, clubId }) {
+async function loadInvitation({ code, type }) {
   const invite = camel(
     await one(
       `SELECT ic.id, ic.code, ic.type, ic.plan_id, ic.max_activations, ic.activations_used,
@@ -41,7 +41,10 @@ async function redeemInvitation({ code, type, userId, clubId }) {
   if (invite.type !== 'universal' && type && invite.type !== type) {
     throw Object.assign(new Error(`This code is for ${invite.type} registration`), { status: 400 });
   }
+  return invite;
+}
 
+async function applyInvitation({ invite, userId, clubId }) {
   await query(`UPDATE invitation_codes SET activations_used = activations_used + 1 WHERE id = $1`, [invite.id]);
   await query(
     `INSERT INTO invitation_redemptions (code_id, user_id, club_id) VALUES ($1, $2, $3)`,
@@ -59,6 +62,27 @@ async function redeemInvitation({ code, type, userId, clubId }) {
   return { invite, plan };
 }
 
+async function abortIncompleteSignup(userId) {
+  if (!userId) return;
+  const redemptions = await many(`SELECT code_id FROM invitation_redemptions WHERE user_id = $1`, [userId]);
+  for (const row of redemptions) {
+    await query(
+      `UPDATE invitation_codes SET activations_used = GREATEST(activations_used - 1, 0) WHERE id = $1`,
+      [row.code_id]
+    );
+  }
+  await query(`DELETE FROM invitation_redemptions WHERE user_id = $1`, [userId]);
+  const clubs = await many(
+    `SELECT club_id FROM club_members WHERE user_id = $1 AND role = 'club_admin'`,
+    [userId]
+  );
+  await query(`UPDATE clubs SET created_by = NULL WHERE created_by = $1`, [userId]);
+  for (const row of clubs) {
+    await query(`DELETE FROM clubs WHERE id = $1`, [row.club_id]);
+  }
+  await query(`DELETE FROM users WHERE id = $1 AND email_verified_at IS NULL`, [userId]);
+}
+
 router.post(
   '/register',
   asyncHandler(async (req, res) => {
@@ -70,8 +94,8 @@ router.post(
       return res.status(400).json({ message: 'Password must be at least 8 characters' });
     }
 
-    const existing = await one('SELECT id FROM users WHERE email = $1', [email.toLowerCase()]);
-    if (existing) {
+    const existing = camel(await one('SELECT * FROM users WHERE email = $1', [email.toLowerCase()]));
+    if (existing?.emailVerifiedAt || (existing && existing.status !== 'active')) {
       return res.status(400).json({ message: 'Email already registered' });
     }
 
@@ -96,76 +120,120 @@ router.post(
           : 'athlete';
 
     const hash = await bcrypt.hash(password, 12);
-    const user = camel(
-      await one(
-        `INSERT INTO users (email, password_hash, first_name, last_name, location)
-         VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-        [email.toLowerCase(), hash, firstName, lastName, location || null]
-      )
-    );
 
-    for (const role of userRoles) {
-      await query(`INSERT INTO user_roles (user_id, role) VALUES ($1, $2) ON CONFLICT DO NOTHING`, [user.id, role]);
-    }
-    if (!userRoles.includes('athlete') && !userRoles.includes('club_admin')) {
-      await query(`INSERT INTO user_roles (user_id, role) VALUES ($1, 'athlete') ON CONFLICT DO NOTHING`, [user.id]);
-      userRoles.push('athlete');
-    }
-
-    let club = null;
-    if (userRoles.includes('club_admin')) {
-      const { slugify } = await import('../utils/format.js');
-      let slug = slugify(clubName);
-      const clash = await one('SELECT id FROM clubs WHERE slug = $1', [slug]);
-      if (clash) slug = `${slug}-${user.id.slice(0, 6)}`;
-      club = camel(
-        await one(
-          `INSERT INTO clubs (name, slug, location, created_by, status)
-           VALUES ($1, $2, $3, $4, 'pending_coach') RETURNING *`,
-          [clubName, slug, location || null, user.id]
-        )
-      );
+    if (existing && !existing.emailVerifiedAt) {
       await query(
-        `INSERT INTO club_members (club_id, user_id, role, status, approved_at)
-         VALUES ($1, $2, 'club_admin', 'active', NOW())`,
-        [club.id, user.id]
+        `UPDATE users SET password_hash = $1, first_name = $2, last_name = $3, location = $4, updated_at = NOW()
+         WHERE id = $5 AND email_verified_at IS NULL`,
+        [hash, firstName, lastName, location || null, existing.id]
       );
-      if (userRoles.includes('coach')) {
-        await query(`UPDATE clubs SET status = 'active', updated_at = NOW() WHERE id = $1 AND status = 'pending_coach'`, [
-          club.id,
-        ]);
+      if (await isSignupOtpPaused()) {
+        await query(
+          `UPDATE users SET email_verified_at = COALESCE(email_verified_at, NOW()), last_login_at = NOW(), updated_at = NOW()
+           WHERE id = $1`,
+          [existing.id]
+        );
+        const row = camel(await one('SELECT * FROM users WHERE id = $1', [existing.id]));
+        const { getUserRoles, getUserMembership } = await import('../utils/membership.js');
+        const nextRoles = await getUserRoles(row.id);
+        const membership = await getUserMembership(row.id);
+        return res.status(201).json({
+          requiresOtp: false,
+          token: signToken(row.id),
+          user: await publicUser(row, { roles: nextRoles, membership }),
+        });
+      }
+      try {
+        const otp = await issueLoginOtp(
+          { id: existing.id, email: existing.email, firstName },
+          { ip: req.ip }
+        );
+        return res.status(201).json(otp);
+      } catch (err) {
+        err.status = err.status || 503;
+        err.message = 'Could not send the verification email. Try again.';
+        throw err;
       }
     }
 
-    const { invite, plan } = await redeemInvitation({
-      code: invitationCode,
-      type: primaryType,
-      userId: user.id,
-      clubId: club?.id,
-    });
-    const expiresAt = planExpiryDate(plan);
+    await loadInvitation({ code: invitationCode, type: primaryType });
 
-    await query(
-      `INSERT INTO memberships (user_id, plan_id, invitation_code_id, status, starts_at, expires_at)
-       VALUES ($1, $2, $3, 'active', NOW(), $4)`,
-      [user.id, plan?.id || invite.planId, invite.id, expiresAt]
-    );
-
-    if (club) {
-      await query(
-        `INSERT INTO memberships (club_id, plan_id, invitation_code_id, status, starts_at, expires_at)
-         VALUES ($1, $2, $3, 'active', NOW(), $4)`,
-        [club.id, plan?.id || invite.planId, invite.id, expiresAt]
+    let user;
+    let club = null;
+    try {
+      user = camel(
+        await one(
+          `INSERT INTO users (email, password_hash, first_name, last_name, location)
+           VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+          [email.toLowerCase(), hash, firstName, lastName, location || null]
+        )
       );
-    }
 
-    await writeAudit({
-      userId: user.id,
-      action: 'register',
-      entityType: 'user',
-      entityId: user.id,
-      ip: req.ip,
-    });
+      for (const role of userRoles) {
+        await query(`INSERT INTO user_roles (user_id, role) VALUES ($1, $2) ON CONFLICT DO NOTHING`, [user.id, role]);
+      }
+      if (!userRoles.includes('athlete') && !userRoles.includes('club_admin')) {
+        await query(`INSERT INTO user_roles (user_id, role) VALUES ($1, 'athlete') ON CONFLICT DO NOTHING`, [user.id]);
+        userRoles.push('athlete');
+      }
+
+      if (userRoles.includes('club_admin')) {
+        const { slugify } = await import('../utils/format.js');
+        let slug = slugify(clubName);
+        const clash = await one('SELECT id FROM clubs WHERE slug = $1', [slug]);
+        if (clash) slug = `${slug}-${user.id.slice(0, 6)}`;
+        club = camel(
+          await one(
+            `INSERT INTO clubs (name, slug, location, created_by, status)
+             VALUES ($1, $2, $3, $4, 'pending_coach') RETURNING *`,
+            [clubName, slug, location || null, user.id]
+          )
+        );
+        await query(
+          `INSERT INTO club_members (club_id, user_id, role, status, approved_at)
+           VALUES ($1, $2, 'club_admin', 'active', NOW())`,
+          [club.id, user.id]
+        );
+        if (userRoles.includes('coach')) {
+          await query(`UPDATE clubs SET status = 'active', updated_at = NOW() WHERE id = $1 AND status = 'pending_coach'`, [
+            club.id,
+          ]);
+        }
+      }
+
+      const invite = await loadInvitation({ code: invitationCode, type: primaryType });
+      const { plan } = await applyInvitation({
+        invite,
+        userId: user.id,
+        clubId: club?.id,
+      });
+
+      const expiresAt = planExpiryDate(plan);
+      await query(
+        `INSERT INTO memberships (user_id, plan_id, invitation_code_id, status, starts_at, expires_at)
+         VALUES ($1, $2, $3, 'active', NOW(), $4)`,
+        [user.id, plan?.id || invite.planId, invite.id, expiresAt]
+      );
+
+      if (club) {
+        await query(
+          `INSERT INTO memberships (club_id, plan_id, invitation_code_id, status, starts_at, expires_at)
+           VALUES ($1, $2, $3, 'active', NOW(), $4)`,
+          [club.id, plan?.id || invite.planId, invite.id, expiresAt]
+        );
+      }
+
+      await writeAudit({
+        userId: user.id,
+        action: 'register',
+        entityType: 'user',
+        entityId: user.id,
+        ip: req.ip,
+      });
+    } catch (err) {
+      await abortIncompleteSignup(user?.id);
+      throw err;
+    }
 
     const clubPayload = club ? { id: club.id, name: club.name } : null;
     if (await isSignupOtpPaused()) {
@@ -176,12 +244,12 @@ router.post(
       );
       const row = camel(await one('SELECT * FROM users WHERE id = $1', [user.id]));
       const { getUserRoles, getUserMembership } = await import('../utils/membership.js');
-      const roles = await getUserRoles(row.id);
+      const nextRoles = await getUserRoles(row.id);
       const membership = await getUserMembership(row.id);
       return res.status(201).json({
         requiresOtp: false,
         token: signToken(row.id),
-        user: await publicUser(row, { roles, membership }),
+        user: await publicUser(row, { roles: nextRoles, membership }),
         club: clubPayload,
       });
     }
@@ -190,10 +258,9 @@ router.post(
       const otp = await issueLoginOtp({ id: user.id, email: user.email, firstName: user.firstName }, { ip: req.ip });
       res.status(201).json({ ...otp, club: clubPayload });
     } catch (err) {
+      await abortIncompleteSignup(user.id);
       err.status = err.status || 503;
-      err.message =
-        err.message ||
-        'Account was created but the verification email could not be sent. An admin can pause sign-up OTP in Settings.';
+      err.message = 'Could not send the verification email. Try again.';
       throw err;
     }
   })
@@ -227,33 +294,31 @@ router.post(
     }
 
     const user = camel(row);
-    if (await isSignupOtpPaused()) {
-      await query(
-        `UPDATE users SET email_verified_at = COALESCE(email_verified_at, NOW()), last_login_at = NOW(), updated_at = NOW()
-         WHERE id = $1`,
-        [user.id]
-      );
-      const { getUserRoles, getUserMembership } = await import('../utils/membership.js');
-      const roles = await getUserRoles(user.id);
-      const membership = await getUserMembership(user.id);
-      await writeAudit({ userId: user.id, action: 'login', entityType: 'user', entityId: user.id, ip: req.ip });
-      const payload = {
-        requiresOtp: false,
-        token: signToken(user.id),
-        user: await publicUser(user, { roles, membership }),
-      };
-      res.json(payload);
-      if (!isAppAdminUser(roles) && !isClubOnlyUser(roles)) {
-        syncStravaOnLogin(user.id).catch((err) => {
-          console.error('Login Strava sync:', err.message);
-        });
-      }
-      return;
+    if (!user.emailVerifiedAt && !(await isSignupOtpPaused())) {
+      return res.status(403).json({
+        message: 'Check your email for the sign-up verification code, then try signing in.',
+      });
     }
 
-    const otp = await issueLoginOtp(user, { ip: req.ip });
-    await writeAudit({ userId: user.id, action: 'login_otp_sent', entityType: 'user', entityId: user.id, ip: req.ip });
-    res.json(otp);
+    await query(
+      `UPDATE users SET last_login_at = NOW(), updated_at = NOW() WHERE id = $1`,
+      [user.id]
+    );
+    const { getUserRoles, getUserMembership } = await import('../utils/membership.js');
+    const roles = await getUserRoles(user.id);
+    const membership = await getUserMembership(user.id);
+    await writeAudit({ userId: user.id, action: 'login', entityType: 'user', entityId: user.id, ip: req.ip });
+    const payload = {
+      requiresOtp: false,
+      token: signToken(user.id),
+      user: await publicUser(user, { roles, membership }),
+    };
+    res.json(payload);
+    if (!isAppAdminUser(roles) && !isClubOnlyUser(roles)) {
+      syncStravaOnLogin(user.id).catch((err) => {
+        console.error('Login Strava sync:', err.message);
+      });
+    }
   })
 );
 
@@ -293,7 +358,7 @@ router.post(
       )
     );
     if (!pending || pending.status !== 'active') {
-      return res.status(400).json({ message: 'Request a new sign-in to get a code' });
+      return res.status(400).json({ message: 'Request a new verification code from sign up' });
     }
     const otp = await issueLoginOtp(
       { id: pending.userId, email: pending.email, firstName: pending.firstName },

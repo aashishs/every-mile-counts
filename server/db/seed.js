@@ -70,43 +70,18 @@ async function seed() {
     }
   }
 
-  const defaultPlan = await one(
-    `SELECT id FROM membership_plans WHERE name = '12 Months' LIMIT 1`
-  );
-  const clubPlan = await one(
-    `SELECT id FROM membership_plans WHERE name = 'Club 12 Months' LIMIT 1`
-  );
-
-  const codes = [
-    { code: 'WELCOME-EMC', type: 'universal', max: 1000, plan: defaultPlan?.id },
-    { code: 'ATHLETE-BETA', type: 'athlete', max: 500, plan: defaultPlan?.id },
-    { code: 'COACH-BETA', type: 'coach', max: 100, plan: defaultPlan?.id },
-    { code: 'CLUB-BETA', type: 'club', max: 50, plan: clubPlan?.id },
-  ];
-
-  for (const c of codes) {
-    const existing = await one('SELECT id FROM invitation_codes WHERE code = $1', [c.code]);
-    if (!existing) {
-      await pool.query(
-        `INSERT INTO invitation_codes (code, type, plan_id, max_activations, created_by, notes)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [c.code, c.type, c.plan, c.max, admin.id, 'Seeded beta invitation code']
-      );
-    }
-  }
-
   await pool.query(
     `INSERT INTO app_settings (key, value) VALUES
       ('membership_expiry_windows', '[30,15,7]'::jsonb),
       ('app_name', '"Every Mile Counts"'::jsonb),
       ('free_beta', 'true'::jsonb),
-      ('signup_otp_paused', 'true'::jsonb)
+      ('signup_otp_paused', 'false'::jsonb)
      ON CONFLICT (key) DO NOTHING`
   );
 
   console.log('Seed complete');
   console.log(`Admin login: ${email} / ${password}`);
-  console.log('Beta codes: WELCOME-EMC, ATHLETE-BETA, COACH-BETA, CLUB-BETA');
+  console.log('Create invitation codes in Admin → Invite codes. Public beta codes are disabled.');
   await pool.end();
 }
 

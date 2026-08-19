@@ -63,7 +63,7 @@ Seeded admin:
 - Email: `admin@everymilecounts.app`
 - Password: `Admin123!`
 
-Beta invitation codes: `WELCOME-EMC`, `ATHLETE-BETA`, `COACH-BETA`, `CLUB-BETA`
+Signup is invitation-only. Create codes in Admin → Invite codes.
 
 ### 4. Run
 
@@ -159,7 +159,7 @@ If the Railway web URL returns **502**, the process was not listening. Redeploy 
 
 Click **Deploy**. Wait until api health is green (`/api/health`). Open [https://www.everymilecounts.in](https://www.everymilecounts.in).
 
-Login: `ADMIN_EMAIL` / `ADMIN_PASSWORD`. Invite codes: `WELCOME-EMC`, `ATHLETE-BETA`, `COACH-BETA`, `CLUB-BETA`.
+Login: `ADMIN_EMAIL` / `ADMIN_PASSWORD`. Create invitation codes in Admin → Invite codes.
 
 ### 7. Strava data sync (optional)
 
@@ -222,7 +222,7 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 
 Frontend `VITE_API_URL` is set from the API URL by `render.yaml`.
 
-Seeded login after first boot: `ADMIN_EMAIL` / `ADMIN_PASSWORD`. Invite codes: `WELCOME-EMC`, `ATHLETE-BETA`, `COACH-BETA`, `CLUB-BETA`.
+Seeded login after first boot: `ADMIN_EMAIL` / `ADMIN_PASSWORD`. Create invitation codes in Admin → Invite codes.
 
 **Vercel alternative for the web app:** import `client/`, set `VITE_API_URL` to the Render API URL, then put that Vercel URL in `CLIENT_URL`.
 

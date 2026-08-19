@@ -256,7 +256,7 @@ export async function athleteDashboard(athleteId, athlete = {}, { type } = {}) {
   };
 }
 
-function sportFamily(activity) {
+export function sportFamily(activity) {
   const t = `${activity.type || ''} ${activity.sportType || ''}`.toLowerCase();
   if (t.includes('swim')) return 'Swim';
   if (t.includes('ride') || t.includes('cycle') || t.includes('bike')) return 'Ride';
@@ -650,6 +650,209 @@ export async function periodAnalysis(athleteId, period = '90', { type } = {}) {
     weeklyBreakdown: monthlyBreakdown,
     personalRecords: detectPersonalRecords(allTime, filterType),
     paceTrends: monthlyBreakdown,
+  };
+}
+
+function paceSecondsPerKm(activity) {
+  const speed = num(activity.avgSpeed);
+  if (speed > 0) return 1000 / speed;
+  const distance = num(activity.distance);
+  const time = num(activity.movingTime);
+  if (distance > 50 && time > 0) return time / (distance / 1000);
+  return null;
+}
+
+function formatClockDelta(totalSec) {
+  const sec = Math.round(Math.abs(totalSec));
+  if (sec < 60) return `${sec}s`;
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+function formatHr(value) {
+  return value ? `${Math.round(value)} bpm` : '—';
+}
+
+function snapshot(activity, athlete = {}) {
+  const insights = analyzeActivity(activity, athlete);
+  const metric = volumeMetric(sportFamily(activity));
+  const paceSec = paceSecondsPerKm(activity);
+  return {
+    id: activity.id,
+    name: activity.name,
+    type: activity.type,
+    sport: sportFamily(activity),
+    metric,
+    startDate: activity.startDate,
+    distance: num(activity.distance),
+    movingTime: num(activity.movingTime),
+    elevationGain: num(activity.elevationGain),
+    avgHeartrate: num(activity.avgHeartrate) || null,
+    maxHeartrate: num(activity.maxHeartrate) || null,
+    avgCadence: num(activity.avgCadence) || null,
+    avgPower: num(activity.avgPower) || null,
+    avgSpeed: num(activity.avgSpeed) || null,
+    calories: num(activity.calories) || null,
+    paceSecPerKm: paceSec,
+    pace: insights.pace,
+    trainingLoad: insights.trainingLoad,
+    heartRateZone: insights.heartRateZone,
+    paceConsistency: insights.paceConsistency,
+    formatted: {
+      distance: metric === 'swim' ? `${Math.round(num(activity.distance))} m` : formatDistance(activity.distance),
+      time: formatDuration(activity.movingTime),
+      pace: insights.pace ? `${insights.pace} /km` : '—',
+      elevation: `${Math.round(num(activity.elevationGain))} m`,
+      hr: formatHr(activity.avgHeartrate),
+      maxHr: formatHr(activity.maxHeartrate),
+      cadence: activity.avgCadence ? `${Math.round(activity.avgCadence)} spm` : '—',
+      load: insights.trainingLoad != null ? String(Math.round(insights.trainingLoad)) : '—',
+    },
+  };
+}
+
+function compareRow(key, label, olderDisplay, newerDisplay, { improved, deltaLabel, better } = {}) {
+  return { key, label, older: olderDisplay, newer: newerDisplay, improved, deltaLabel: deltaLabel || '—', better };
+}
+
+export function compareActivities(activityA, activityB, athlete = {}) {
+  const sportA = sportFamily(activityA);
+  const sportB = sportFamily(activityB);
+  if (sportA !== sportB) {
+    const err = new Error(`Pick two ${sportA} sessions. These are ${sportA} and ${sportB}.`);
+    err.status = 400;
+    throw err;
+  }
+
+  const firstIsOlder = new Date(activityA.startDate) <= new Date(activityB.startDate);
+  const olderAct = firstIsOlder ? activityA : activityB;
+  const newerAct = firstIsOlder ? activityB : activityA;
+  const older = snapshot(olderAct, athlete);
+  const newer = snapshot(newerAct, athlete);
+  const metric = older.metric;
+  const comparable =
+    metric === 'duration'
+      ? Boolean(older.movingTime && newer.movingTime && Math.abs(older.movingTime - newer.movingTime) / Math.max(older.movingTime, newer.movingTime) <= 0.2)
+      : Boolean(older.distance && newer.distance && Math.abs(older.distance - newer.distance) / Math.max(older.distance, newer.distance) <= 0.2);
+
+  const rows = [];
+
+  if (metric !== 'duration') {
+    const distDelta = newer.distance - older.distance;
+    rows.push(compareRow('distance', metric === 'swim' ? 'Distance' : 'Distance', older.formatted.distance, newer.formatted.distance, {
+      improved: Math.abs(distDelta) < 50 ? null : distDelta > 0,
+      deltaLabel: Math.abs(distDelta) < 50 ? 'similar' : `${distDelta > 0 ? '+' : ''}${metric === 'swim' ? `${Math.round(distDelta)} m` : formatDistance(distDelta)}`,
+      better: 'higher',
+    }));
+  }
+
+  const timeDelta = newer.movingTime - older.movingTime;
+  rows.push(compareRow('time', 'Time', older.formatted.time, newer.formatted.time, {
+    improved: metric === 'duration' ? (Math.abs(timeDelta) < 30 ? null : timeDelta > 0) : (comparable ? timeDelta < 0 : null),
+    deltaLabel: Math.abs(timeDelta) < 5 ? 'similar' : `${timeDelta > 0 ? '+' : '−'}${formatClockDelta(timeDelta)}`,
+    better: metric === 'duration' ? 'neutral' : 'lower',
+  }));
+
+  let paceImproved = null;
+  if (older.paceSecPerKm && newer.paceSecPerKm) {
+    const paceDelta = newer.paceSecPerKm - older.paceSecPerKm;
+    paceImproved = Math.abs(paceDelta) < 2 ? null : paceDelta < 0;
+    rows.push(compareRow('pace', 'Pace', older.formatted.pace, newer.formatted.pace, {
+      improved: paceImproved,
+      deltaLabel: Math.abs(paceDelta) < 2
+        ? 'similar'
+        : `${formatClockDelta(paceDelta)} /km ${paceDelta < 0 ? 'faster' : 'slower'}`,
+      better: 'lower',
+    }));
+  }
+
+  let hrImproved = null;
+  if (older.avgHeartrate && newer.avgHeartrate) {
+    const hrDelta = newer.avgHeartrate - older.avgHeartrate;
+    hrImproved = Math.abs(hrDelta) < 3 ? null : hrDelta < 0;
+    rows.push(compareRow('hr', 'Avg HR', older.formatted.hr, newer.formatted.hr, {
+      improved: hrImproved,
+      deltaLabel: Math.abs(hrDelta) < 3 ? 'similar' : `${hrDelta > 0 ? '+' : ''}${Math.round(hrDelta)} bpm`,
+      better: 'lower',
+    }));
+  }
+
+  if (older.maxHeartrate && newer.maxHeartrate) {
+    const maxDelta = newer.maxHeartrate - older.maxHeartrate;
+    rows.push(compareRow('maxHr', 'Max HR', older.formatted.maxHr, newer.formatted.maxHr, {
+      improved: Math.abs(maxDelta) < 3 ? null : maxDelta < 0,
+      deltaLabel: Math.abs(maxDelta) < 3 ? 'similar' : `${maxDelta > 0 ? '+' : ''}${Math.round(maxDelta)} bpm`,
+      better: 'lower',
+    }));
+  }
+
+  rows.push(compareRow('elevation', 'Elevation', older.formatted.elevation, newer.formatted.elevation, {
+    improved: null,
+    deltaLabel: `${newer.elevationGain - older.elevationGain >= 0 ? '+' : ''}${Math.round(newer.elevationGain - older.elevationGain)} m`,
+    better: 'neutral',
+  }));
+
+  if (older.avgCadence && newer.avgCadence) {
+    const cadDelta = newer.avgCadence - older.avgCadence;
+    rows.push(compareRow('cadence', 'Cadence', older.formatted.cadence, newer.formatted.cadence, {
+      improved: Math.abs(cadDelta) < 3 ? null : cadDelta > 0,
+      deltaLabel: Math.abs(cadDelta) < 3 ? 'similar' : `${cadDelta > 0 ? '+' : ''}${Math.round(cadDelta)} spm`,
+      better: 'higher',
+    }));
+  }
+
+  if (older.trainingLoad != null && newer.trainingLoad != null) {
+    const loadDelta = newer.trainingLoad - older.trainingLoad;
+    rows.push(compareRow('load', 'Load', older.formatted.load, newer.formatted.load, {
+      improved: null,
+      deltaLabel: Math.abs(loadDelta) < 2 ? 'similar' : `${loadDelta > 0 ? '+' : ''}${Math.round(loadDelta)}`,
+      better: 'neutral',
+    }));
+  }
+
+  let verdict = 'mixed';
+  let headline = `Comparing two ${sportA.toLowerCase()} sessions, older to newer.`;
+  if (!comparable) {
+    verdict = 'different';
+    headline = `These ${sportA.toLowerCase()}s are different lengths. Pace is the fairest performance signal.`;
+  }
+  if (paceImproved === true && hrImproved !== false) {
+    verdict = 'improved';
+    headline = comparable
+      ? 'The newer session is faster — that is a performance improvement.'
+      : 'The newer session is faster, even though the distances differ.';
+  } else if (paceImproved === true && hrImproved === false) {
+    verdict = 'mixed';
+    headline = 'The newer session is faster, but heart rate was higher. Speed improved; efficiency is mixed.';
+  } else if (paceImproved === false && hrImproved === true) {
+    verdict = 'mixed';
+    headline = 'The newer session was slower, but heart rate was lower. That can be easier effort, not lost fitness.';
+  } else if (paceImproved === false) {
+    verdict = 'slower';
+    headline = comparable
+      ? 'The newer session is slower than the earlier one.'
+      : 'The newer session has a slower pace. Distances differ, so treat this as a clue, not a verdict.';
+  } else if (paceImproved == null && hrImproved === true && comparable) {
+    verdict = 'improved';
+    headline = 'Pace is similar, and heart rate is lower — that is better efficiency.';
+  } else if (comparable && paceImproved == null && hrImproved == null) {
+    verdict = 'similar';
+    headline = 'These sessions look similar. No clear performance change.';
+  } else if (metric === 'duration' && hrImproved === true) {
+    verdict = 'improved';
+    headline = 'Heart rate is lower on the newer session — effort looks more efficient.';
+  }
+
+  return {
+    sport: sportA,
+    metric,
+    comparable,
+    verdict,
+    headline,
+    older,
+    newer,
+    rows,
   };
 }
 

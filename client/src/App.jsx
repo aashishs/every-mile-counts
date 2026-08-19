@@ -12,6 +12,7 @@ import Activities from './pages/Activities';
 import ActivityDetail from './pages/ActivityDetail';
 import Events from './pages/Events';
 import Analysis from './pages/Analysis';
+import CompareActivities from './pages/CompareActivities';
 import Coaches from './pages/Coaches';
 import Goals from './pages/Goals';
 import Clubs from './pages/Clubs';
@@ -33,6 +34,7 @@ export default function App() {
           <Route path="/register" element={<PublicRoute><Register /></PublicRoute>} />
           <Route path="/dashboard" element={<ProtectedRoute><AthleteRoute><Dashboard /></AthleteRoute></ProtectedRoute>} />
           <Route path="/activities" element={<ProtectedRoute><AthleteRoute><Activities /></AthleteRoute></ProtectedRoute>} />
+          <Route path="/activities/compare" element={<ProtectedRoute><NotAppAdmin><CompareActivities /></NotAppAdmin></ProtectedRoute>} />
           <Route path="/activities/:id" element={<ProtectedRoute><NotAppAdmin><ActivityDetail /></NotAppAdmin></ProtectedRoute>} />
           <Route path="/events" element={<ProtectedRoute><AthleteRoute><Events /></AthleteRoute></ProtectedRoute>} />
           <Route path="/analysis" element={<ProtectedRoute><AthleteRoute><Analysis /></AthleteRoute></ProtectedRoute>} />

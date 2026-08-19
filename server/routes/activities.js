@@ -1,7 +1,7 @@
 import express from 'express';
 import { camel, camelMany, many, one, query } from '../config/db.js';
 import { protect, requireMembership, rejectAppAdmin } from '../middleware/auth.js';
-import { analyzeActivity, athleteDashboard, periodAnalysis } from '../services/analysisService.js';
+import { analyzeActivity, athleteDashboard, compareActivities, periodAnalysis } from '../services/analysisService.js';
 import { syncUserActivities } from '../services/syncService.js';
 import { mappedFromFile, mappedFromManual, saveManualActivity } from '../services/activityImportService.js';
 import { asyncHandler } from '../middleware/error.js';
@@ -145,6 +145,42 @@ router.post(
       distance: mapped.distance,
       movingTime: mapped.movingTime,
     });
+  })
+);
+
+router.get(
+  '/compare',
+  asyncHandler(async (req, res) => {
+    const a = String(req.query.a || '').trim();
+    const b = String(req.query.b || '').trim();
+    if (!a || !b) {
+      return res.status(400).json({ message: 'Pick two activities to compare.' });
+    }
+    if (a === b) {
+      return res.status(400).json({ message: 'Choose two different activities.' });
+    }
+    const loadActivity = async (id) => camel(
+      await one(
+        `SELECT a.*, u.max_heart_rate
+         FROM activities a
+         JOIN users u ON u.id = a.athlete_id
+         WHERE a.id = $1`,
+        [id]
+      )
+    );
+    const first = await loadActivity(a);
+    const second = await loadActivity(b);
+    if (!first || !second) return res.status(404).json({ message: 'Activity not found' });
+    if (first.athleteId !== second.athleteId) {
+      return res.status(400).json({ message: 'Compare two sessions from the same athlete.' });
+    }
+    if (!(await canViewAthlete(req, first.athleteId))) {
+      return res.status(403).json({ message: 'Not authorized' });
+    }
+    const comparison = compareActivities(first, second, {
+      maxHeartRate: first.maxHeartRate || req.user.maxHeartRate,
+    });
+    res.json(comparison);
   })
 );
 

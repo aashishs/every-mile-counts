@@ -6,6 +6,7 @@ import { useAuth } from '../context/AuthContext';
 import { ACTIVITY_TYPE_OPTIONS, DEFAULT_ACTIVITY_TYPE } from '../utils/format';
 import { homePath, isAppAdminAccount, isClubOnlyAccount } from '../utils/roles';
 import StravaCard from '../components/StravaCard';
+import ConfirmDialog from '../components/ConfirmDialog';
 
 export default function Profile() {
   const { user, refresh } = useAuth();
@@ -40,6 +41,9 @@ export default function Profile() {
   const [coachQ, setCoachQ] = useState('');
   const [coachHits, setCoachHits] = useState([]);
   const [coachPick, setCoachPick] = useState('');
+  const [confirm, setConfirm] = useState(null);
+  const [confirmBusy, setConfirmBusy] = useState(false);
+  const [confirmError, setConfirmError] = useState('');
 
   const flash = (ok, text) => {
     setMsg(ok ? text : '');
@@ -120,14 +124,42 @@ export default function Profile() {
     }
   };
 
-  const leaveClub = async (club) => {
-    if (!window.confirm(`Leave ${club.name}? Coaches from this club will be unassigned.`)) return;
+  const leaveClub = (club) => {
+    setConfirmError('');
+    setConfirm({ kind: 'leave-club', club });
+  };
+
+  const removeCoach = (coach) => {
+    setConfirmError('');
+    setConfirm({ kind: 'remove-coach', coach });
+  };
+
+  const closeConfirm = () => {
+    if (confirmBusy) return;
+    setConfirm(null);
+    setConfirmError('');
+  };
+
+  const runConfirm = async () => {
+    setConfirmBusy(true);
+    setConfirmError('');
     try {
-      await api.post(`/clubs/${club.id}/leave`);
-      await Promise.all([loadClubs(), athlete ? loadCoaches() : Promise.resolve()]);
-      flash(true, `Left ${club.name}`);
+      if (confirm?.kind === 'leave-club') {
+        await api.post(`/clubs/${confirm.club.id}/leave`);
+        await Promise.all([loadClubs(), athlete ? loadCoaches() : Promise.resolve()]);
+        flash(true, `Left ${confirm.club.name}`);
+      }
+      if (confirm?.kind === 'remove-coach') {
+        const id = confirm.coach.coachId || confirm.coach.id;
+        await api.delete(`/coaches/remove/${id}`);
+        await loadCoaches();
+        flash(true, 'Coach removed');
+      }
+      setConfirm(null);
     } catch (ex) {
-      flash(false, ex.response?.data?.message || 'Could not leave club');
+      setConfirmError(ex.response?.data?.message || 'Could not complete that action');
+    } finally {
+      setConfirmBusy(false);
     }
   };
 
@@ -152,18 +184,6 @@ export default function Profile() {
       flash(true, 'Coach added');
     } catch (ex) {
       flash(false, ex.response?.data?.message || 'Could not add coach');
-    }
-  };
-
-  const removeCoach = async (coach) => {
-    const id = coach.coachId || coach.id;
-    if (!window.confirm(`Remove ${coach.firstName} ${coach.lastName} as your coach?`)) return;
-    try {
-      await api.delete(`/coaches/remove/${id}`);
-      await loadCoaches();
-      flash(true, 'Coach removed');
-    } catch (ex) {
-      flash(false, ex.response?.data?.message || 'Could not remove coach');
     }
   };
 
@@ -386,6 +406,36 @@ export default function Profile() {
             <p className="text-sm text-muted">You already have three coaches. Remove one to add another.</p>
           )}
         </section>
+      )}
+      {confirm?.kind === 'leave-club' && (
+        <ConfirmDialog
+          title="Leave this club?"
+          confirmLabel="Leave club"
+          danger
+          busy={confirmBusy}
+          error={confirmError}
+          onCancel={closeConfirm}
+          onConfirm={runConfirm}
+        >
+          <p className="mb-0">
+            Leave <span className="text-slate-100 font-medium">{confirm.club.name}</span>? Coaches from this club will be unassigned.
+          </p>
+        </ConfirmDialog>
+      )}
+      {confirm?.kind === 'remove-coach' && (
+        <ConfirmDialog
+          title="Remove this coach?"
+          confirmLabel="Remove coach"
+          danger
+          busy={confirmBusy}
+          error={confirmError}
+          onCancel={closeConfirm}
+          onConfirm={runConfirm}
+        >
+          <p className="mb-0">
+            Remove <span className="text-slate-100 font-medium">{confirm.coach.firstName} {confirm.coach.lastName}</span> as your coach?
+          </p>
+        </ConfirmDialog>
       )}
     </Layout>
   );

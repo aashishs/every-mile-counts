@@ -33,12 +33,28 @@ export async function ensureSchemaPatches() {
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_login_otps_user ON login_otps (user_id, created_at DESC)`);
 
   await pool.query(
-    `INSERT INTO app_settings (key, value) VALUES ('signup_otp_paused', 'true'::jsonb)
+    `INSERT INTO app_settings (key, value) VALUES ('signup_otp_paused', 'false'::jsonb)
+     ON CONFLICT (key) DO NOTHING`
+  );
+  await pool.query(
+    `UPDATE app_settings SET value = 'false'::jsonb
+     WHERE key = 'signup_otp_paused'
+       AND NOT EXISTS (SELECT 1 FROM app_settings WHERE key = 'signup_otp_unpaused_v1')`
+  );
+  await pool.query(
+    `INSERT INTO app_settings (key, value) VALUES ('signup_otp_unpaused_v1', 'true'::jsonb)
      ON CONFLICT (key) DO NOTHING`
   );
 
   await pool.query(
     `CREATE INDEX IF NOT EXISTS idx_oauth_connections_provider_user
      ON oauth_connections (provider, provider_user_id)`
+  );
+
+  await pool.query(
+    `UPDATE invitation_codes
+     SET is_disabled = TRUE
+     WHERE UPPER(code) IN ('WELCOME-EMC', 'ATHLETE-BETA', 'COACH-BETA', 'CLUB-BETA')
+       AND is_disabled = FALSE`
   );
 }
