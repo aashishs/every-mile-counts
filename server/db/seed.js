@@ -81,7 +81,7 @@ async function seed() {
 
   console.log('Seed complete');
   console.log(`Admin login: ${email} / ${password}`);
-  console.log('Create invitation codes in Admin → Invite codes. Public beta codes are disabled.');
+  console.log('Create invitation codes in Admin → Invite codes.');
   await pool.end();
 }
 

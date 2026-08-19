@@ -51,13 +51,6 @@ export async function ensureSchemaPatches() {
      ON oauth_connections (provider, provider_user_id)`
   );
 
-  await pool.query(
-    `UPDATE invitation_codes
-     SET is_disabled = TRUE
-     WHERE UPPER(code) IN ('WELCOME-EMC', 'ATHLETE-BETA', 'COACH-BETA', 'CLUB-BETA')
-       AND is_disabled = FALSE`
-  );
-
   await pool.query(`
     INSERT INTO user_roles (user_id, role)
     SELECT ur.user_id, 'athlete'
