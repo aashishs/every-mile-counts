@@ -1,6 +1,8 @@
 import axios from 'axios';
-import { camel, one, query } from '../config/db.js';
+import crypto from 'node:crypto';
+import { camel, many, one, query } from '../config/db.js';
 import { decrypt, encrypt } from '../utils/crypto.js';
+import { stravaWebhookUri } from '../utils/urls.js';
 import { analyzeActivity } from './analysisService.js';
 
 const STRAVA_API = 'https://www.strava.com/api/v3';
@@ -107,6 +109,133 @@ export async function completeStravaOAuth(userId, tokenData) {
     expiresAt: new Date(tokenData.expires_at * 1000),
     providerUserId: tokenData.athlete?.id,
   });
+}
+
+async function userIdForStravaAthlete(stravaAthleteId) {
+  const row = await one(
+    `SELECT user_id FROM oauth_connections
+     WHERE provider = 'strava' AND connected = TRUE AND provider_user_id = $1
+     LIMIT 1`,
+    [String(stravaAthleteId)]
+  );
+  return row?.user_id || null;
+}
+
+export async function fetchStravaActivity(userId, activityId) {
+  const accessToken = await getValidAccessToken(userId);
+  const { data } = await stravaGet(`${STRAVA_API}/activities/${activityId}`, accessToken);
+  return data;
+}
+
+export async function upsertStravaActivityById(userId, activityId) {
+  const act = await fetchStravaActivity(userId, activityId);
+  return upsertActivity(userId, 'strava', mapStravaActivity(act));
+}
+
+export async function handleStravaWebhookEvent(event) {
+  const objectType = event?.object_type;
+  const aspect = event?.aspect_type;
+  const ownerId = event?.owner_id;
+  const objectId = event?.object_id;
+  if (!objectType || !ownerId) return;
+
+  if (objectType === 'athlete' && (event?.updates?.authorized === 'false' || event?.updates?.authorized === false)) {
+    await query(
+      `UPDATE oauth_connections
+       SET connected = FALSE, last_sync_error = 'Strava access revoked', updated_at = NOW()
+       WHERE provider = 'strava' AND provider_user_id = $1`,
+      [String(ownerId)]
+    );
+    return;
+  }
+
+  if (objectType !== 'activity') return;
+  const userId = await userIdForStravaAthlete(ownerId);
+  if (!userId) return;
+
+  if (aspect === 'delete') {
+    await query(
+      `DELETE FROM activities WHERE source = 'strava' AND source_activity_id = $1 AND athlete_id = $2`,
+      [String(objectId), userId]
+    );
+    return;
+  }
+  if (aspect === 'create' || aspect === 'update') {
+    await upsertStravaActivityById(userId, objectId);
+  }
+}
+
+export async function syncAllConnectedStrava() {
+  const rows = await many(
+    `SELECT user_id FROM oauth_connections WHERE provider = 'strava' AND connected = TRUE`
+  );
+  let users = 0;
+  let activities = 0;
+  for (const row of rows) {
+    const userId = row.user_id;
+    try {
+      activities += await syncStravaActivities(userId, { full: false });
+      users += 1;
+    } catch (err) {
+      console.error('[strava] scheduled sync failed', userId, err.message);
+    }
+  }
+  return { users, activities };
+}
+
+function stravaClient() {
+  return {
+    client_id: String(process.env.STRAVA_CLIENT_ID || '').trim(),
+    client_secret: String(process.env.STRAVA_CLIENT_SECRET || '').trim(),
+  };
+}
+
+export function stravaWebhookVerifyToken() {
+  const explicit = String(process.env.STRAVA_VERIFY_TOKEN || '').trim();
+  if (explicit) return explicit;
+  return crypto
+    .createHash('sha256')
+    .update(`${process.env.JWT_SECRET || 'emc'}:strava-webhook`)
+    .digest('hex')
+    .slice(0, 32);
+}
+
+export async function ensureStravaWebhookSubscription() {
+  const { client_id, client_secret } = stravaClient();
+  const callbackUrl = stravaWebhookUri();
+  if (!client_id || !client_secret || !callbackUrl) return { skipped: true };
+  if (callbackUrl.includes('localhost') || callbackUrl.includes('127.0.0.1')) {
+    return { skipped: 'local' };
+  }
+
+  const verifyToken = stravaWebhookVerifyToken();
+  const { data: existing } = await axios.get('https://www.strava.com/api/v3/push_subscriptions', {
+    params: { client_id, client_secret },
+  });
+  const list = Array.isArray(existing) ? existing : [];
+  const current = list.find((s) => s.callback_url === callbackUrl);
+  if (current) return { ok: true, id: current.id, existing: true };
+
+  for (const sub of list) {
+    try {
+      await axios.delete(`https://www.strava.com/api/v3/push_subscriptions/${sub.id}`, {
+        params: { client_id, client_secret },
+      });
+    } catch (err) {
+      console.error('[strava] webhook delete failed', err.message);
+    }
+  }
+
+  const body = new URLSearchParams({
+    client_id,
+    client_secret,
+    callback_url: callbackUrl,
+    verify_token: verifyToken,
+  });
+  const { data } = await axios.post('https://www.strava.com/api/v3/push_subscriptions', body, {
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+  });
+  return { ok: true, id: data?.id };
 }
 
 function mapStravaActivity(act) {

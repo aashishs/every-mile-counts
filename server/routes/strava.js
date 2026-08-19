@@ -1,7 +1,13 @@
 import express from 'express';
 import axios from 'axios';
 import { protect, requireMembership } from '../middleware/auth.js';
-import { completeStravaOAuth, getStravaConnection, syncStravaActivities } from '../services/stravaService.js';
+import {
+  completeStravaOAuth,
+  getStravaConnection,
+  handleStravaWebhookEvent,
+  stravaWebhookVerifyToken,
+  syncStravaActivities,
+} from '../services/stravaService.js';
 import { asyncHandler } from '../middleware/error.js';
 import { writeAudit } from '../services/auditService.js';
 import { getUserRoles, isAppAdminUser, isClubOnlyUser } from '../utils/membership.js';
@@ -68,8 +74,8 @@ router.get(
       client_id: env('STRAVA_CLIENT_ID'),
       redirect_uri: redirectUri,
       response_type: 'code',
-      approval_prompt: 'auto',
-      scope: 'read,activity:read_all,profile:read_all',
+      approval_prompt: 'force',
+      scope: 'read,read_all,profile:read_all,activity:read,activity:read_all',
       state: req.user.id,
     });
     res.json({ url: `https://www.strava.com/oauth/authorize?${params.toString()}` });
@@ -80,7 +86,7 @@ router.get(
   '/callback',
   asyncHandler(async (req, res) => {
     const { code, state, error } = req.query;
-    const appUrl = requestPublicUrl(req) || clientUrl();
+    const appUrl = clientUrl() || requestPublicUrl(req);
     if (!appUrl) {
       return res.status(500).send('Set CLIENT_URL on the API to your public web URL.');
     }
@@ -119,6 +125,29 @@ router.get(
       }
       res.redirect(302, `${appUrl}/dashboard?strava=error&why=${oauthFailWhy(err)}`);
     }
+  })
+);
+
+router.get(
+  '/webhook',
+  asyncHandler(async (req, res) => {
+    const mode = String(req.query['hub.mode'] || '');
+    const challenge = String(req.query['hub.challenge'] || '');
+    const token = String(req.query['hub.verify_token'] || '');
+    if (mode === 'subscribe' && challenge && token === stravaWebhookVerifyToken()) {
+      return res.status(200).json({ 'hub.challenge': challenge });
+    }
+    return res.status(403).json({ message: 'Invalid Strava webhook verification' });
+  })
+);
+
+router.post(
+  '/webhook',
+  asyncHandler(async (req, res) => {
+    res.status(200).json({ ok: true });
+    handleStravaWebhookEvent(req.body).catch((err) => {
+      console.error('[strava] webhook event failed', err.response?.data || err.message);
+    });
   })
 );
 

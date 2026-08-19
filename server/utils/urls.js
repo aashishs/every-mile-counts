@@ -101,6 +101,15 @@ export function stravaRedirectUri(req) {
   return base ? `${base}/api/strava/callback` : '';
 }
 
+export function stravaWebhookUri(req) {
+  const explicit = normalizePublicUrl(process.env.STRAVA_WEBHOOK_URL, { allowLocal: !isDeployed() });
+  if (explicit) {
+    return explicit.includes('/api/strava/webhook') ? explicit : `${explicit}/api/strava/webhook`;
+  }
+  const base = clientUrl() || requestPublicUrl(req);
+  return base ? `${base}/api/strava/webhook` : '';
+}
+
 export function garminRedirectUri(req) {
   const explicit = normalizePublicUrl(process.env.GARMIN_REDIRECT_URI, { allowLocal: !isDeployed() });
   if (explicit) {

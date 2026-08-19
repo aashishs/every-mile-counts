@@ -36,4 +36,9 @@ export async function ensureSchemaPatches() {
     `INSERT INTO app_settings (key, value) VALUES ('signup_otp_paused', 'true'::jsonb)
      ON CONFLICT (key) DO NOTHING`
   );
+
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS idx_oauth_connections_provider_user
+     ON oauth_connections (provider, provider_user_id)`
+  );
 }

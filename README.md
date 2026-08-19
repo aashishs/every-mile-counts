@@ -8,7 +8,7 @@ Athletes sync Garmin or Strava, analyze training, join clubs, work with up to th
 
 - **RBAC:** athlete, coach, club administrator, application administrator
 - **Membership:** invitation codes, plans (1–24 months, lifetime, custom), expiry notices, club read-only mode
-- **Activity sync:** Garmin (preferred) and Strava, manual + daily job, duplicate-safe upserts
+- **Activity sync:** Strava OAuth (history + webhooks + periodic backup), Garmin, manual GPX/TCX, duplicate-safe upserts
 - **Athlete dashboard:** weekly/monthly/yearly mileage, PRs, consistency, coaches, goals, events
 - **Analysis:** pace, HR zones, cadence, elevation, training load, period comparison, charts
 - **Clubs:** profiles, join/approve, coaches required before members, announcements, events, leaderboard
@@ -161,12 +161,15 @@ Click **Deploy**. Wait until api health is green (`/api/health`). Open [https://
 
 Login: `ADMIN_EMAIL` / `ADMIN_PASSWORD`. Invite codes: `WELCOME-EMC`, `ATHLETE-BETA`, `COACH-BETA`, `CLUB-BETA`.
 
-### 7. Strava (optional)
+### 7. Strava data sync (optional)
+
+Strava OAuth is **not** app login. Athletes sign in with email, then authorize Strava so EMC can read activities.
 
 In [Strava API settings](https://www.strava.com/settings/api):
 
-- Authorization Callback Domain: your **web** host only (e.g. `web-production-xxxx.up.railway.app`), no `https`
-- Redirect is `{CLIENT_URL}/api/strava/callback` — do not hardcode a custom domain until you attach one
+- Authorization Callback Domain: the **web** host only (e.g. `www.everymilecounts.in`), no `https://`
+- Redirect URI: `{CLIENT_URL}/api/strava/callback` (Caddy proxies `/api` to the private API)
+- Webhook callback: `{CLIENT_URL}/api/strava/webhook` (subscribed automatically on API startup)
 
 ### Railway notes
 
@@ -197,8 +200,8 @@ Use **Neon** (Postgres) + **Render** (API + web). No credit card. The API sleeps
 
 In [Strava API settings](https://www.strava.com/settings/api):
 
-- Authorization Callback Domain: `emc-api.onrender.com` (host only)
-- Redirect: `https://emc-api.onrender.com/api/strava/callback`
+- Authorization Callback Domain: `emc-web.onrender.com` (web host only)
+- Redirect: `{CLIENT_URL}/api/strava/callback`
 
 ### Env vars (API / emc-api)
 
@@ -225,11 +228,11 @@ Seeded login after first boot: `ADMIN_EMAIL` / `ADMIN_PASSWORD`. Invite codes: `
 
 ## Garmin & Strava
 
-1. Create a [Strava API application](https://www.strava.com/settings/api). Callback domain: `localhost`. Redirect URI: `http://localhost:5000/api/strava/callback`.
+1. Create a [Strava API application](https://www.strava.com/settings/api). Callback domain: `localhost`. Redirect URI: `http://localhost:5173/api/strava/callback` (Vite proxies `/api` to the API).
 2. Create a Garmin Connect Developer Program application (OAuth 1.0a). Redirect URI: `http://localhost:5000/api/garmin/callback`.
 3. Put client/consumer credentials in `server/.env`.
 
-Garmin is preferred; Strava is the fallback. Either or both can be connected. Historical import runs on first connect; a daily job at 04:00 syncs all connected athletes.
+Athletes connect Strava from Dashboard or Profile after they are already logged in. First connect imports history; new/updated/deleted activities arrive via webhook, with an incremental backup sync every 3 hours. Garmin can still be connected separately.
 
 ## Docker (full stack)
 
