@@ -6,21 +6,55 @@ function isDeployed() {
   );
 }
 
+function isLocalHostname(host) {
+  const h = String(host || '').split(':')[0].toLowerCase();
+  return h === 'localhost' || h === '127.0.0.1' || h === '::1' || h.endsWith('.railway.internal');
+}
+
+function stripKnownCallbackPath(value) {
+  return String(value || '')
+    .trim()
+    .replace(/\/$/, '')
+    .replace(/\/api\/strava\/(callback|webhook)$/i, '')
+    .replace(/\/api\/garmin\/callback$/i, '');
+}
+
 function normalizePublicUrl(value, { allowLocal = false } = {}) {
-  let raw = String(value || '').trim().replace(/\/$/, '');
+  let raw = stripKnownCallbackPath(value);
   if (!raw) return '';
   if (!/^https?:\/\//i.test(raw)) raw = `https://${raw}`;
   try {
     const url = new URL(raw);
     const host = url.hostname;
     if (host.endsWith('.railway.internal')) return '';
-    if (host === 'localhost' || host === '127.0.0.1') {
-      return allowLocal ? raw : '';
+    if (isLocalHostname(host)) {
+      return allowLocal ? `${url.protocol}//${url.host}` : '';
     }
     return `${url.protocol}//${url.host}`;
   } catch {
     return '';
   }
+}
+
+function requestCallerBase(req) {
+  if (!req) return '';
+  const xfHost = String(req.get('x-forwarded-host') || '')
+    .split(',')[0]
+    .trim();
+  const xfProto = String(req.get('x-forwarded-proto') || '')
+    .split(',')[0]
+    .trim();
+  let refererOrigin = '';
+  try {
+    refererOrigin = req.get('referer') ? new URL(req.get('referer')).origin : '';
+  } catch {
+    refererOrigin = '';
+  }
+  return (
+    normalizePublicUrl(req.get('origin'), { allowLocal: false }) ||
+    normalizePublicUrl(refererOrigin, { allowLocal: false }) ||
+    normalizePublicUrl(xfHost ? `${xfProto || 'https'}://${xfHost}` : '', { allowLocal: false })
+  );
 }
 
 export function publicApiUrl() {
@@ -82,7 +116,9 @@ export function isAllowedOrigin(origin) {
       host.endsWith('.onrender.com') ||
       host.endsWith('.vercel.app') ||
       host.endsWith('.up.railway.app') ||
-      host.endsWith('.railway.app')
+      host.endsWith('.railway.app') ||
+      host === 'everymilecounts.in' ||
+      host.endsWith('.everymilecounts.in')
     ) {
       return true;
     }
@@ -92,29 +128,33 @@ export function isAllowedOrigin(origin) {
   return false;
 }
 
+function publicAppBase(req) {
+  const fromRequest = requestCallerBase(req) || normalizePublicUrl(requestPublicUrl(req), { allowLocal: false });
+  if (fromRequest) return fromRequest;
+  const fromEnv =
+    normalizePublicUrl(process.env.CLIENT_URL, { allowLocal: false }) ||
+    normalizePublicUrl(process.env.STRAVA_REDIRECT_URI, { allowLocal: false }) ||
+    normalizePublicUrl(process.env.STRAVA_WEBHOOK_URL, { allowLocal: false });
+  if (fromEnv) return fromEnv;
+  if (isDeployed()) return '';
+  return (
+    normalizePublicUrl(process.env.STRAVA_REDIRECT_URI, { allowLocal: true }) ||
+    normalizePublicUrl(process.env.CLIENT_URL, { allowLocal: true }) ||
+    'http://localhost:5173'
+  );
+}
+
 export function stravaRedirectUri(req) {
-  const explicit = normalizePublicUrl(process.env.STRAVA_REDIRECT_URI, { allowLocal: !isDeployed() });
-  if (explicit) {
-    return explicit.includes('/api/strava/callback') ? explicit : `${explicit}/api/strava/callback`;
-  }
-  const base = clientUrl() || requestPublicUrl(req);
+  const base = publicAppBase(req);
   return base ? `${base}/api/strava/callback` : '';
 }
 
 export function stravaWebhookUri(req) {
-  const explicit = normalizePublicUrl(process.env.STRAVA_WEBHOOK_URL, { allowLocal: !isDeployed() });
-  if (explicit) {
-    return explicit.includes('/api/strava/webhook') ? explicit : `${explicit}/api/strava/webhook`;
-  }
-  const base = clientUrl() || requestPublicUrl(req);
+  const base = publicAppBase(req);
   return base ? `${base}/api/strava/webhook` : '';
 }
 
 export function garminRedirectUri(req) {
-  const explicit = normalizePublicUrl(process.env.GARMIN_REDIRECT_URI, { allowLocal: !isDeployed() });
-  if (explicit) {
-    return explicit.includes('/api/garmin/callback') ? explicit : `${explicit}/api/garmin/callback`;
-  }
-  const base = requestPublicUrl(req);
+  const base = publicAppBase(req) || requestPublicUrl(req);
   return base ? `${base}/api/garmin/callback` : '';
 }

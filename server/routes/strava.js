@@ -64,10 +64,12 @@ router.get(
       });
     }
     const redirectUri = stravaRedirectUri(req);
-    if (!redirectUri) {
+    const caller = [req.get('origin'), req.get('referer'), req.get('x-forwarded-host')].filter(Boolean).join(' ');
+    const liveCaller = caller && !/localhost|127\.0\.0\.1/i.test(caller);
+    if (!redirectUri || (liveCaller && /localhost|127\.0\.0\.1/i.test(redirectUri))) {
       return res.status(503).json({
         message:
-          'Set CLIENT_URL on the API service to your public web URL, for example https://web-production-xxxx.up.railway.app',
+          'Set CLIENT_URL on the API service to https://www.everymilecounts.in and remove any localhost STRAVA_REDIRECT_URI on Railway, then redeploy api.',
       });
     }
     const params = new URLSearchParams({

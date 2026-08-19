@@ -18,7 +18,11 @@
 	encode gzip
 
 	handle /api* {
-		reverse_proxy {$API_URL}
+		reverse_proxy {$API_URL} {
+			header_up Host {host}
+			header_up X-Forwarded-Host {host}
+			header_up X-Forwarded-Proto {scheme}
+		}
 	}
 
 	handle {

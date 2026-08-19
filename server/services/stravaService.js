@@ -349,7 +349,7 @@ async function newestStravaTimestamp(userId) {
   return row?.ts ? Number(row.ts) : null;
 }
 
-export async function syncStravaActivities(userId, { full = false } = {}) {
+export async function syncStravaActivities(userId, { full = false, after: afterOverride } = {}) {
   const accessToken = await getValidAccessToken(userId);
   await query(
     `UPDATE oauth_connections
@@ -364,7 +364,9 @@ export async function syncStravaActivities(userId, { full = false } = {}) {
   const maxPages = full ? MAX_PAGES : 5;
   if (!full) {
     const conn = await getConnection(userId);
-    const after = await newestStravaTimestamp(userId)
+    const after =
+      afterOverride
+      || (await newestStravaTimestamp(userId))
       || (conn?.lastSyncAt ? Math.floor(new Date(conn.lastSyncAt).getTime() / 1000) : null);
     if (after) params.after = after;
   }
@@ -408,7 +410,7 @@ export async function syncStravaActivities(userId, { full = false } = {}) {
   }
 }
 
-const LOGIN_SYNC_COOLDOWN_MS = 2 * 60 * 1000;
+const LOGIN_SYNC_COOLDOWN_MS = 15 * 60 * 1000;
 
 export async function syncStravaOnLogin(userId) {
   const conn = await getConnection(userId);
@@ -417,12 +419,12 @@ export async function syncStravaOnLogin(userId) {
   if (conn.lastSyncAt && Date.now() - new Date(conn.lastSyncAt).getTime() < LOGIN_SYNC_COOLDOWN_MS) {
     return { skipped: 'recent' };
   }
-  const newest = await newestStravaTimestamp(userId);
-  if (!newest && !conn.lastSyncAt) {
+  if (!conn.lastSyncAt) {
     const synced = await syncStravaActivities(userId, { full: true });
     return { synced };
   }
-  const synced = await syncStravaActivities(userId, { full: false });
+  const after = Math.floor(new Date(conn.lastSyncAt).getTime() / 1000);
+  const synced = await syncStravaActivities(userId, { full: false, after });
   return { synced };
 }
 
