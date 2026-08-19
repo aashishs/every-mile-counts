@@ -9,7 +9,7 @@ const connectionString = process.env.DATABASE_URL || '';
 const useSsl =
   process.env.PGSSL === 'true' ||
   /sslmode=require/i.test(connectionString) ||
-  /neon\.tech|render\.com|amazonaws\.com/i.test(connectionString);
+  /neon\.tech|render\.com|amazonaws\.com|proxy\.rlwy\.net|railway\.app/i.test(connectionString);
 
 export const pool = new Pool({
   connectionString,

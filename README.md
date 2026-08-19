@@ -74,7 +74,90 @@ npm run dev
 - App: [http://localhost:5173](http://localhost:5173)
 - API: [http://localhost:5000/api/health](http://localhost:5000/api/health)
 
-## Deploy (free test, ~1 month)
+## Deploy on Railway
+
+This repo is a **monorepo**: Postgres + Express API (`server/`) + Vite web app (`client/`). Railway needs **three services** in one project.
+
+GitHub remote: `https://github.com/aashishs/every-mile-counts`
+
+### 0. Push this code
+
+Railway builds from GitHub. Commit and push `main` first (including `server/railway.toml` and `client/Caddyfile`).
+
+In [Railway](https://railway.com/dashboard) connect GitHub if you have not already: **Account → GitHub → Install Railway**.
+
+### 1. Create the project
+
+1. **New project** → **Empty project**. Rename it `every-mile-counts`.
+2. **+ Create** → **Database** → **PostgreSQL**.
+3. **+ Create** → **Empty service** twice. Rename them `api` and `web`.
+
+### 2. Wire GitHub
+
+For **api**:
+
+- **Settings → Root Directory:** `server`
+- **Settings → Source:** connect `aashishs/every-mile-counts`, branch `main`
+- **Settings → Networking → Generate domain**
+
+For **web**:
+
+- **Settings → Root Directory:** `client`
+- **Settings → Source:** same repo / `main`
+- **Settings → Networking → Generate domain**
+
+### 3. API variables
+
+On **api** → **Variables**, add:
+
+| Name | Value |
+| --- | --- |
+| `NODE_ENV` | `production` |
+| `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` |
+| `CLIENT_URL` | `https://${{web.RAILWAY_PUBLIC_DOMAIN}}` |
+| `JWT_SECRET` | a long random string |
+| `ENCRYPTION_KEY` | 64 hex chars (command below) |
+| `ADMIN_EMAIL` | your admin email |
+| `ADMIN_PASSWORD` | a strong password |
+| `STRAVA_CLIENT_ID` | from Strava (optional) |
+| `STRAVA_CLIENT_SECRET` | from Strava (optional) |
+
+If your Postgres service is not named `Postgres`, use that service’s name in `${{...}}`.
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+### 4. Web variables
+
+On **web** → **Variables**:
+
+| Name | Value |
+| --- | --- |
+| `VITE_API_URL` | `https://${{api.RAILWAY_PUBLIC_DOMAIN}}` |
+
+`VITE_*` is baked in at **build** time. If you change it later, **Redeploy** web.
+
+### 5. Deploy and log in
+
+Click **Deploy**. Wait until api health is green (`/api/health`). Open the **web** public URL.
+
+Login: `ADMIN_EMAIL` / `ADMIN_PASSWORD`. Invite codes: `WELCOME-EMC`, `ATHLETE-BETA`, `COACH-BETA`, `CLUB-BETA`.
+
+### 6. Strava (optional)
+
+In [Strava API settings](https://www.strava.com/settings/api):
+
+- Authorization Callback Domain: your **api** host only (e.g. `api-production-xxxx.up.railway.app`)
+- Redirect: `https://<api-host>/api/strava/callback`
+
+### Railway notes
+
+- Trial credit is limited; Hobby is billed after that. Private Postgres (`DATABASE_URL`) stays inside Railway — do not use `DATABASE_PUBLIC_URL` for the API.
+- The API start command runs migrate + seed, then `node index.js`. Seed does not overwrite an existing admin user.
+- SMTP is optional. Without it, password-reset emails are not sent.
+
+## Deploy (Render + Neon, free test)
 
 Use **Neon** (Postgres) + **Render** (API + web). No credit card. The API sleeps after 15 minutes idle; the first request after that takes about a minute.
 
