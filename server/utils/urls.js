@@ -1,15 +1,37 @@
+const PRODUCTION_SITE = 'https://www.everymilecounts.in';
+
+function normalizePublicUrl(value, { allowLocal = false } = {}) {
+  let raw = String(value || '').trim().replace(/\/$/, '');
+  if (!raw) return '';
+  if (!/^https?:\/\//i.test(raw)) raw = `https://${raw}`;
+  try {
+    const url = new URL(raw);
+    const host = url.hostname;
+    if (host.endsWith('.railway.internal')) return '';
+    if (host === 'localhost' || host === '127.0.0.1') {
+      return allowLocal ? raw : '';
+    }
+    return raw;
+  } catch {
+    return '';
+  }
+}
+
 export function publicApiUrl() {
   const raw =
-    process.env.PUBLIC_API_URL ||
-    process.env.RENDER_EXTERNAL_URL ||
-    (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : '') ||
-    process.env.CLIENT_URL ||
-    `http://localhost:${process.env.PORT || 5000}`;
-  return String(raw).replace(/\/$/, '');
+    normalizePublicUrl(process.env.PUBLIC_API_URL) ||
+    normalizePublicUrl(process.env.RENDER_EXTERNAL_URL) ||
+    normalizePublicUrl(process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : '') ||
+    clientUrl();
+  return raw;
 }
 
 export function clientUrl() {
-  return String(process.env.CLIENT_URL || 'http://localhost:5173').replace(/\/$/, '');
+  const allowLocal = process.env.NODE_ENV !== 'production';
+  return (
+    normalizePublicUrl(process.env.CLIENT_URL, { allowLocal }) ||
+    (process.env.NODE_ENV === 'production' ? PRODUCTION_SITE : 'http://localhost:5173')
+  );
 }
 
 export function allowedOrigins() {
@@ -17,7 +39,7 @@ export function allowedOrigins() {
     .split(',')
     .map((s) => s.trim().replace(/\/$/, ''))
     .filter(Boolean);
-  return [...new Set([clientUrl(), ...extras])];
+  return [...new Set([clientUrl(), PRODUCTION_SITE, 'https://everymilecounts.in', ...extras])];
 }
 
 export function isAllowedOrigin(origin) {
@@ -44,9 +66,17 @@ export function isAllowedOrigin(origin) {
 }
 
 export function stravaRedirectUri() {
-  return process.env.STRAVA_REDIRECT_URI || `${clientUrl()}/api/strava/callback`;
+  const explicit = normalizePublicUrl(process.env.STRAVA_REDIRECT_URI);
+  if (explicit) {
+    return explicit.includes('/api/strava/callback') ? explicit : `${explicit}/api/strava/callback`;
+  }
+  return `${clientUrl()}/api/strava/callback`;
 }
 
 export function garminRedirectUri() {
-  return process.env.GARMIN_REDIRECT_URI || `${publicApiUrl()}/api/garmin/callback`;
+  const explicit = normalizePublicUrl(process.env.GARMIN_REDIRECT_URI);
+  if (explicit) {
+    return explicit.includes('/api/garmin/callback') ? explicit : `${explicit}/api/garmin/callback`;
+  }
+  return `${clientUrl()}/api/garmin/callback`;
 }
