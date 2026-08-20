@@ -7,6 +7,7 @@ import { DEFAULT_ACTIVITY_TYPE, visibleActivityTypeOptions } from '../utils/form
 import { afterJoinPath, homePath, isAppAdminAccount, isAthleteAccount, isClubOnlyAccount, needsProfile } from '../utils/roles';
 import { ageFromDob, mafHeartRate, parseDateOfBirth, todayIsoDate } from '../utils/maf';
 import StravaCard from '../components/StravaCard';
+import ActivityTypesSettings from '../components/ActivityTypesSettings';
 import ConfirmDialog from '../components/ConfirmDialog';
 
 const TAB_DEFS = [
@@ -253,7 +254,7 @@ export default function Profile() {
       ? 'Fill in your details to continue'
       : appAdmin ? 'Edit your details' : 'Edit your details and notification preferences',
     password: 'Change the password you use to sign in',
-    strava: 'Connect Strava to sync activities',
+    strava: 'Connect Strava to sync activities. Choose sports on the Profile tab.',
     club: 'Join or manage your club',
     coaches: `Assign up to ${maxCoaches} coaches`,
   };
@@ -383,6 +384,8 @@ export default function Profile() {
         </button>
       </form>
       )}
+
+      {tab === 'profile' && athlete && !completing && <ActivityTypesSettings user={user} />}
 
       {tab === 'password' && (
       <form className="card space-y-3 mb-6 max-w-lg" onSubmit={changePw}>
