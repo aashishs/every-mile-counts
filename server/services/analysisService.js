@@ -404,7 +404,7 @@ const TYPE_BUCKETS = {
     { key: '50k', label: '50 km', min: 50000, max: 100000 },
     { key: '100k', label: '100 km', min: 100000, max: 150000 },
     { key: '150k', label: '150 km', min: 150000, max: 200000 },
-    { key: '200k', label: '200 km+', min: 200000, max: Infinity },
+    { key: '200k', label: '200 km', min: 200000, max: Infinity },
   ],
   Swim: [
     { key: '100m', label: '100 m', min: 100, max: 200 },
@@ -416,11 +416,12 @@ const TYPE_BUCKETS = {
 };
 
 function recordPayload(act) {
+  const seconds = num(act.movingTime || act.elapsedTime);
   return {
     activityId: act.id,
     name: act.name,
-    time: formatDuration(act.movingTime),
-    movingTime: num(act.movingTime),
+    time: formatDuration(seconds),
+    movingTime: seconds,
     date: act.startDate,
     distance: formatDistance(act.distance),
     meters: num(act.distance),
@@ -472,8 +473,8 @@ export function buildActivityTypeHighlights(activities) {
         const value = metric === 'duration' ? num(a.movingTime || a.elapsedTime) : num(a.distance);
         return value >= bucket.min && value < bucket.max && num(a.movingTime || a.elapsedTime) > 0;
       });
-      const fastest = [...matches].sort((a, b) => num(a.movingTime) - num(b.movingTime))[0] || null;
-      const longestSession = [...matches].sort((a, b) => num(b.movingTime) - num(a.movingTime))[0] || null;
+      const fastest = [...matches].sort((a, b) => num(a.movingTime || a.elapsedTime) - num(b.movingTime || b.elapsedTime))[0] || null;
+      const longestSession = [...matches].sort((a, b) => num(b.movingTime || b.elapsedTime) - num(a.movingTime || a.elapsedTime))[0] || null;
       const highlight = metric === 'duration' ? longestSession : fastest;
       return {
         key: bucket.key,
@@ -525,9 +526,9 @@ export function detectPersonalRecords(activities, type) {
   if (buckets) {
     for (const bucket of buckets) {
       const candidates = list.filter(
-        (a) => num(a.distance) >= bucket.min && num(a.distance) < bucket.max && a.movingTime
+        (a) => num(a.distance) >= bucket.min && num(a.distance) < bucket.max && num(a.movingTime || a.elapsedTime) > 0
       );
-      const best = candidates.sort((a, b) => num(a.movingTime) - num(b.movingTime))[0];
+      const best = candidates.sort((a, b) => num(a.movingTime || a.elapsedTime) - num(b.movingTime || b.elapsedTime))[0];
       if (best) {
         records[bucket.key] = {
           ...recordPayload(best),
