@@ -72,7 +72,7 @@ async function saveTokens(userId, {
     `INSERT INTO oauth_connections
       (user_id, provider, provider_user_id, access_token_enc, refresh_token_enc, expires_at, connected,
        granted_scope, pending_coach_share, coach_share_consented_at, updated_at)
-     VALUES ($1, 'strava', $2, $3, $4, $5, TRUE, $6, FALSE, $7, NOW())
+     VALUES ($1, 'strava', $2::text, $3, $4, $5, TRUE, $6::text, FALSE, $7::timestamptz, NOW())
      ON CONFLICT (user_id, provider) DO UPDATE SET
        provider_user_id = EXCLUDED.provider_user_id,
        access_token_enc = EXCLUDED.access_token_enc,
@@ -86,7 +86,7 @@ async function saveTokens(userId, {
        updated_at = NOW()`,
     [
       userId,
-      String(providerUserId),
+      providerUserId != null ? String(providerUserId) : null,
       encrypt(accessToken),
       encrypt(refreshToken),
       expiresAt,
@@ -172,23 +172,23 @@ export async function completeStravaOAuth(userId, tokenData, { grantedScope } = 
 export async function setPendingCoachShare(userId, enabled) {
   await query(
     `INSERT INTO oauth_connections (user_id, provider, pending_coach_share, updated_at)
-     VALUES ($1, 'strava', $2, NOW())
+     VALUES ($1::uuid, 'strava', $2::boolean, NOW())
      ON CONFLICT (user_id, provider) DO UPDATE SET
        pending_coach_share = EXCLUDED.pending_coach_share,
        updated_at = NOW()`,
-    [userId, Boolean(enabled)]
+    [userId, enabled === true]
   );
 }
 
 export async function setCoachShareConsent(userId, enabled) {
   await query(
     `INSERT INTO oauth_connections (user_id, provider, coach_share_consented_at, pending_coach_share, updated_at)
-     VALUES ($1, 'strava', $3, FALSE, NOW())
+     VALUES ($1::uuid, 'strava', $2::timestamptz, FALSE, NOW())
      ON CONFLICT (user_id, provider) DO UPDATE SET
-       coach_share_consented_at = $3,
+       coach_share_consented_at = $2::timestamptz,
        pending_coach_share = FALSE,
        updated_at = NOW()`,
-    [userId, Boolean(enabled), enabled ? new Date() : null]
+    [userId, enabled ? new Date().toISOString() : null]
   );
 }
 
@@ -461,7 +461,7 @@ export async function saveSyncActivityTypes(userId, types) {
        END,
        updated_at = NOW()
      WHERE id = $1`,
-    [userId, JSON.stringify(normalized), normalized, normalized[0]]
+    [userId, JSON.stringify(normalized), normalized, normalized[0] || 'Run']
   );
   return normalized;
 }

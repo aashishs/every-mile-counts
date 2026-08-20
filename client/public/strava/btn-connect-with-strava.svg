@@ -1,9 +1,8 @@
-<!-- Replace with the official Connect with Strava orange button (48px) from https://developers.strava.com/guidelines/ before Strava app review. -->
-<svg xmlns="http://www.w3.org/2000/svg" width="248" height="48" viewBox="0 0 248 48" role="img" aria-label="Connect with Strava">
+<svg xmlns="http://www.w3.org/2000/svg" width="193" height="48" viewBox="0 0 193 48" role="img" aria-label="Connect with Strava">
   <title>Connect with Strava</title>
-  <rect width="248" height="48" fill="#FC5200"/>
-  <g fill="#fff" font-family="Helvetica Neue, Helvetica, Arial, sans-serif">
-    <text x="16" y="30" font-size="16" font-weight="500">Connect with</text>
-    <text x="128" y="30" font-size="16" font-weight="700" letter-spacing="0.6">STRAVA</text>
+  <rect width="193" height="48" fill="#FC5200"/>
+  <text x="12" y="30" fill="#ffffff" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="14">Connect with</text>
+  <g fill="#ffffff" transform="translate(126,8) scale(1.32)">
+    <path d="M15.387 17.944l-2.089-4.116h-3.065L15.387 24l5.15-10.172h-3.066m-7.008-5.53l2.067 4.116h3.065L8.313 0 3.163 10.172h3.065"/>
   </g>
 </svg>

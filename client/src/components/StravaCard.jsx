@@ -225,7 +225,7 @@ export default function StravaCard({ user, autoConnect = false }) {
                 </button>
               </>
             ) : (
-              <ConnectWithStravaButton onClick={connect} disabled={idsMissing || shareRequired} busy={busy} />
+              <ConnectWithStravaButton onClick={connect} busy={busy} />
             )}
           </div>
         </div>

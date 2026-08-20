@@ -45,15 +45,15 @@ export function ConnectWithStravaButton({ onClick, disabled, busy }) {
       type="button"
       onClick={onClick}
       disabled={disabled || busy}
-      className="bg-transparent border-0 p-0 leading-none disabled:opacity-50"
+      className="bg-transparent border-0 p-0 leading-none cursor-pointer disabled:cursor-wait"
       aria-label="Connect with Strava"
     >
       <img
         src="/strava/btn-connect-with-strava.svg"
         alt="Connect with Strava"
-        width={248}
+        width={193}
         height={48}
-        className="h-12 w-auto"
+        className="block h-12 w-auto max-w-full"
       />
     </button>
   );
