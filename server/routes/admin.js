@@ -1,13 +1,17 @@
 import express from 'express';
 import { camel, camelMany, many, one, query } from '../config/db.js';
-import { protect, requireRole } from '../middleware/auth.js';
+import { protect, requireOpsAdmin, requireSuperAdmin } from '../middleware/auth.js';
 import { writeAudit } from '../services/auditService.js';
 import { createNotification } from '../services/notificationService.js';
 import { getUserRoles, grantAthleteUnlessClubAdmin, planExpiryDate, stripTrainingRolesForClubAdmin } from '../utils/membership.js';
+import { MANAGEABLE_STAFF_ROLES, STAFF_ROLE_SQL, isSuperAdminUser } from '../utils/staff.js';
+import { slugify } from '../utils/format.js';
 import { asyncHandler } from '../middleware/error.js';
+import { assertClubSlot, assertCoachSlot } from '../utils/invites.js';
+import bcrypt from 'bcryptjs';
 
 const router = express.Router();
-router.use(protect, requireRole('app_admin'));
+router.use(protect, requireOpsAdmin);
 
 const MEMBERSHIP_SELECT = `
   m.*, u.email, u.first_name, u.last_name, p.name AS plan_name,
@@ -140,7 +144,7 @@ router.get(
                LEFT JOIN oauth_connections oc ON oc.user_id = u.id AND oc.provider = 'strava'
                WHERE u.status <> 'deleted'
                  AND NOT EXISTS (
-                   SELECT 1 FROM user_roles ar WHERE ar.user_id = u.id AND ar.role = 'app_admin'
+                   SELECT 1 FROM user_roles ar WHERE ar.user_id = u.id AND ar.role IN ${STAFF_ROLE_SQL}
                  )`;
     if (q) {
       params.push(`%${q}%`);
@@ -176,6 +180,9 @@ router.patch(
     }
     if (Array.isArray(roles)) {
       let nextRoles = roles.filter(Boolean);
+      if (nextRoles.some((r) => ['super_admin', 'app_admin', 'admin', 'support_admin'].includes(r))) {
+        return res.status(400).json({ message: 'Staff roles are managed by super admin' });
+      }
       if (nextRoles.includes('club_admin')) {
         nextRoles = nextRoles.filter((r) => r !== 'athlete' && r !== 'coach');
       }
@@ -364,6 +371,9 @@ router.post(
     if (role === 'member') {
       await grantAthleteUnlessClubAdmin(user.id);
     }
+    if (role === 'member' || role === 'coach') {
+      await assertClubSlot(user.id, { clubId: club.id });
+    }
     await query(
       `INSERT INTO club_members (club_id, user_id, role, status, approved_at)
        VALUES ($1, $2, $3, 'active', NOW())
@@ -430,13 +440,7 @@ router.post(
     if (coachRoles.includes('club_admin')) {
       return res.status(400).json({ message: 'Club admins cannot be assigned as coaches' });
     }
-    const countRow = await one(
-      `SELECT COUNT(*)::int AS count FROM coach_assignments WHERE athlete_id = $1 AND status = 'active' AND coach_id <> $2`,
-      [athleteId, coachId]
-    );
-    if (countRow.count >= 3) {
-      return res.status(400).json({ message: 'Maximum of three coaches per athlete' });
-    }
+    await assertCoachSlot(athleteId, { coachId });
     await query(`INSERT INTO user_roles (user_id, role) VALUES ($1, 'coach') ON CONFLICT DO NOTHING`, [coachId]);
     await grantAthleteUnlessClubAdmin(coachId);
     await query(
@@ -589,6 +593,7 @@ router.patch(
 
 router.get(
   '/settings',
+  requireSuperAdmin,
   asyncHandler(async (_req, res) => {
     const rows = await many('SELECT key, value FROM app_settings');
     const settings = Object.fromEntries(rows.map((r) => [r.key, r.value]));
@@ -598,6 +603,7 @@ router.get(
 
 router.put(
   '/settings',
+  requireSuperAdmin,
   asyncHandler(async (req, res) => {
     const entries = Object.entries(req.body || {});
     for (const [key, value] of entries) {
@@ -613,6 +619,7 @@ router.put(
 
 router.get(
   '/audit/days',
+  requireSuperAdmin,
   asyncHandler(async (req, res) => {
     const tz = safeTz(req.query.tz);
     const days = camelMany(
@@ -637,6 +644,7 @@ router.get(
 
 router.get(
   '/audit/slots',
+  requireSuperAdmin,
   asyncHandler(async (req, res) => {
     const tz = safeTz(req.query.tz);
     const day = String(req.query.day || '').slice(0, 10);
@@ -663,6 +671,7 @@ router.get(
 
 router.get(
   '/audit',
+  requireSuperAdmin,
   asyncHandler(async (req, res) => {
     const tz = safeTz(req.query.tz);
     const day = String(req.query.day || '').slice(0, 10);
@@ -719,7 +728,7 @@ router.get(
            LEFT JOIN membership_plans p ON p.id = m.plan_id
            LEFT JOIN invitation_codes ic ON ic.id = m.invitation_code_id
            WHERE NOT EXISTS (
-             SELECT 1 FROM user_roles ar WHERE ar.user_id = m.user_id AND ar.role = 'app_admin'
+             SELECT 1 FROM user_roles ar WHERE ar.user_id = m.user_id AND ar.role IN ${STAFF_ROLE_SQL}
            )
            ORDER BY COALESCE(m.user_id::text, ''), COALESCE(m.club_id::text, ''), m.created_at DESC
          ) latest
@@ -847,6 +856,280 @@ router.patch(
     });
     const membership = await loadMembershipRow(updatedId);
     res.json({ membership });
+  })
+);
+
+router.get(
+  '/staff',
+  requireSuperAdmin,
+  asyncHandler(async (_req, res) => {
+    const users = camelMany(
+      await many(
+        `SELECT u.id, u.email, u.first_name, u.last_name, u.status, u.created_at, u.last_login_at,
+                COALESCE(JSON_AGG(DISTINCT ur.role) FILTER (WHERE ur.role IS NOT NULL), '[]'::json) AS roles
+         FROM users u
+         JOIN user_roles ur ON ur.user_id = u.id
+         WHERE ur.role = ANY($1)
+           AND u.status <> 'deleted'
+         GROUP BY u.id
+         ORDER BY u.created_at DESC`,
+        [MANAGEABLE_STAFF_ROLES]
+      )
+    );
+    res.json({ users });
+  })
+);
+
+router.post(
+  '/staff',
+  requireSuperAdmin,
+  asyncHandler(async (req, res) => {
+    const { email, password, firstName, lastName, role } = req.body;
+    if (!email || !password || !firstName || !lastName) {
+      return res.status(400).json({ message: 'Name, email, and password are required' });
+    }
+    if (!MANAGEABLE_STAFF_ROLES.includes(role)) {
+      return res.status(400).json({ message: 'Role must be admin or support-admin' });
+    }
+    if (String(password).length < 8) {
+      return res.status(400).json({ message: 'Password must be at least 8 characters' });
+    }
+    const existing = await one('SELECT id FROM users WHERE email = $1', [String(email).toLowerCase()]);
+    if (existing) return res.status(400).json({ message: 'Email already registered' });
+    const hash = await bcrypt.hash(password, 12);
+    const user = camel(
+      await one(
+        `INSERT INTO users (email, password_hash, first_name, last_name, email_verified_at)
+         VALUES ($1, $2, $3, $4, NOW()) RETURNING *`,
+        [String(email).toLowerCase(), hash, String(firstName).trim(), String(lastName).trim()]
+      )
+    );
+    await query(`INSERT INTO user_roles (user_id, role) VALUES ($1, $2)`, [user.id, role]);
+    await query(
+      `INSERT INTO memberships (user_id, status, starts_at, expires_at) VALUES ($1, 'active', NOW(), NULL)`,
+      [user.id]
+    );
+    await writeAudit({
+      userId: req.user.id,
+      action: 'admin_create_staff',
+      entityType: 'user',
+      entityId: user.id,
+      metadata: { role },
+    });
+    res.status(201).json({ user: { ...user, roles: [role] } });
+  })
+);
+
+router.patch(
+  '/staff/:id',
+  requireSuperAdmin,
+  asyncHandler(async (req, res) => {
+    const target = camel(await one('SELECT * FROM users WHERE id = $1', [req.params.id]));
+    if (!target || target.status === 'deleted') return res.status(404).json({ message: 'Staff account not found' });
+    const roles = await getUserRoles(target.id);
+    if (isSuperAdminUser(roles) || !roles.some((r) => MANAGEABLE_STAFF_ROLES.includes(r))) {
+      return res.status(400).json({ message: 'That account is not a manageable staff user' });
+    }
+    const { status, password, firstName, lastName, role } = req.body;
+    if (status) {
+      await query(`UPDATE users SET status = $1, updated_at = NOW() WHERE id = $2`, [status, target.id]);
+    }
+    if (firstName !== undefined || lastName !== undefined) {
+      await query(
+        `UPDATE users SET first_name = COALESCE($1, first_name), last_name = COALESCE($2, last_name), updated_at = NOW() WHERE id = $3`,
+        [firstName ? String(firstName).trim() : null, lastName ? String(lastName).trim() : null, target.id]
+      );
+    }
+    if (password) {
+      if (String(password).length < 8) {
+        return res.status(400).json({ message: 'Password must be at least 8 characters' });
+      }
+      const hash = await bcrypt.hash(password, 12);
+      await query(`UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2`, [hash, target.id]);
+    }
+    if (role) {
+      if (!MANAGEABLE_STAFF_ROLES.includes(role)) {
+        return res.status(400).json({ message: 'Role must be admin or support-admin' });
+      }
+      await query(`DELETE FROM user_roles WHERE user_id = $1`, [target.id]);
+      await query(`INSERT INTO user_roles (user_id, role) VALUES ($1, $2)`, [target.id, role]);
+    }
+    await writeAudit({
+      userId: req.user.id,
+      action: 'admin_update_staff',
+      entityType: 'user',
+      entityId: target.id,
+      metadata: { status, role },
+    });
+    const user = camel(await one('SELECT * FROM users WHERE id = $1', [req.params.id]));
+    res.json({ user: { ...user, roles: await getUserRoles(user.id) } });
+  })
+);
+
+router.delete(
+  '/staff/:id',
+  requireSuperAdmin,
+  asyncHandler(async (req, res) => {
+    if (req.params.id === req.user.id) {
+      return res.status(400).json({ message: 'You cannot delete your own account' });
+    }
+    const roles = await getUserRoles(req.params.id);
+    if (isSuperAdminUser(roles) || !roles.some((r) => MANAGEABLE_STAFF_ROLES.includes(r))) {
+      return res.status(400).json({ message: 'That account is not a manageable staff user' });
+    }
+    await query(`UPDATE users SET status = 'deleted', updated_at = NOW() WHERE id = $1`, [req.params.id]);
+    await writeAudit({
+      userId: req.user.id,
+      action: 'admin_delete_staff',
+      entityType: 'user',
+      entityId: req.params.id,
+    });
+    res.json({ message: 'Staff account deleted' });
+  })
+);
+
+router.post(
+  '/clubs',
+  asyncHandler(async (req, res) => {
+    const { name, location, email, password, firstName, lastName } = req.body;
+    if (!name || !email || !password) {
+      return res.status(400).json({ message: 'Club name, login email, and password are required' });
+    }
+    if (String(password).length < 8) {
+      return res.status(400).json({ message: 'Password must be at least 8 characters' });
+    }
+    const login = String(email).toLowerCase();
+    const existing = await one('SELECT id FROM users WHERE email = $1', [login]);
+    if (existing) return res.status(400).json({ message: 'That email is already registered' });
+    const hash = await bcrypt.hash(password, 12);
+    const adminFirst = String(firstName || name).trim() || 'Club';
+    const adminLast = String(lastName || 'Admin').trim() || 'Admin';
+    const user = camel(
+      await one(
+        `INSERT INTO users (email, password_hash, first_name, last_name, location, email_verified_at)
+         VALUES ($1, $2, $3, $4, $5, NOW()) RETURNING *`,
+        [login, hash, adminFirst, adminLast, location || null]
+      )
+    );
+    await query(`INSERT INTO user_roles (user_id, role) VALUES ($1, 'club_admin')`, [user.id]);
+    let slug = slugify(name) || `club-${user.id.slice(0, 8)}`;
+    const clash = await one('SELECT id FROM clubs WHERE slug = $1', [slug]);
+    if (clash) slug = `${slug}-${user.id.slice(0, 6)}`;
+    const club = camel(
+      await one(
+        `INSERT INTO clubs (name, slug, location, created_by, status)
+         VALUES ($1, $2, $3, $4, 'pending_coach') RETURNING *`,
+        [String(name).trim(), slug, location || null, user.id]
+      )
+    );
+    await query(
+      `INSERT INTO club_members (club_id, user_id, role, status, approved_at)
+       VALUES ($1, $2, 'club_admin', 'active', NOW())`,
+      [club.id, user.id]
+    );
+    const plan = await one(`SELECT * FROM membership_plans WHERE name = 'Club 12 Months' LIMIT 1`);
+    const expiresAt = planExpiryDate(plan);
+    await query(
+      `INSERT INTO memberships (user_id, plan_id, status, starts_at, expires_at)
+       VALUES ($1, $2, 'active', NOW(), $3)`,
+      [user.id, plan?.id || null, expiresAt]
+    );
+    await query(
+      `INSERT INTO memberships (club_id, plan_id, status, starts_at, expires_at)
+       VALUES ($1, $2, 'active', NOW(), $3)`,
+      [club.id, plan?.id || null, expiresAt]
+    );
+    await writeAudit({
+      userId: req.user.id,
+      action: 'admin_create_club',
+      entityType: 'club',
+      entityId: club.id,
+      metadata: { email: login },
+    });
+    res.status(201).json({ club, user: { id: user.id, email: user.email } });
+  })
+);
+
+router.get(
+  '/coach-requests',
+  asyncHandler(async (_req, res) => {
+    const requests = camelMany(
+      await many(
+        `SELECT r.*, c.name AS club_name, c.location AS club_location,
+                u.email, u.first_name, u.last_name,
+                ru.email AS requested_by_email, ru.first_name AS requested_by_first_name, ru.last_name AS requested_by_last_name
+         FROM coach_role_requests r
+         JOIN clubs c ON c.id = r.club_id
+         JOIN users u ON u.id = r.athlete_id
+         LEFT JOIN users ru ON ru.id = r.requested_by
+         WHERE r.status = 'pending'
+         ORDER BY r.created_at DESC`
+      )
+    );
+    res.json({ requests });
+  })
+);
+
+router.post(
+  '/coach-requests/:id/approve',
+  asyncHandler(async (req, res) => {
+    const row = camel(await one('SELECT * FROM coach_role_requests WHERE id = $1', [req.params.id]));
+    if (!row || row.status !== 'pending') {
+      return res.status(404).json({ message: 'Request not found' });
+    }
+    const roles = await getUserRoles(row.athleteId);
+    if (roles.includes('club_admin')) {
+      return res.status(400).json({ message: 'Club admins cannot also be coaches' });
+    }
+    await query(`INSERT INTO user_roles (user_id, role) VALUES ($1, 'coach') ON CONFLICT DO NOTHING`, [row.athleteId]);
+    await grantAthleteUnlessClubAdmin(row.athleteId);
+    await query(
+      `INSERT INTO club_members (club_id, user_id, role, status, approved_at)
+       VALUES ($1, $2, 'coach', 'active', NOW())
+       ON CONFLICT (club_id, user_id) DO UPDATE SET
+         status = 'active',
+         approved_at = NOW(),
+         role = 'coach'`,
+      [row.clubId, row.athleteId]
+    );
+    await query(`UPDATE clubs SET status = 'active', updated_at = NOW() WHERE id = $1 AND status = 'pending_coach'`, [
+      row.clubId,
+    ]);
+    await query(
+      `UPDATE coach_role_requests SET status = 'approved', reviewed_by = $1, reviewed_at = NOW() WHERE id = $2`,
+      [req.user.id, row.id]
+    );
+    const club = camel(await one('SELECT name FROM clubs WHERE id = $1', [row.clubId]));
+    await createNotification({
+      userId: row.athleteId,
+      type: 'club',
+      title: `You are now a coach at ${club?.name || 'your club'}`,
+      body: 'A platform admin approved the club request to make you a coach.',
+      data: { clubId: row.clubId },
+    });
+    await writeAudit({
+      userId: req.user.id,
+      action: 'admin_approve_coach',
+      entityType: 'user',
+      entityId: row.athleteId,
+      metadata: { clubId: row.clubId, requestId: row.id },
+    });
+    res.json({ message: 'Athlete marked as coach' });
+  })
+);
+
+router.post(
+  '/coach-requests/:id/reject',
+  asyncHandler(async (req, res) => {
+    const row = camel(await one('SELECT * FROM coach_role_requests WHERE id = $1', [req.params.id]));
+    if (!row || row.status !== 'pending') {
+      return res.status(404).json({ message: 'Request not found' });
+    }
+    await query(
+      `UPDATE coach_role_requests SET status = 'rejected', reviewed_by = $1, reviewed_at = NOW() WHERE id = $2`,
+      [req.user.id, row.id]
+    );
+    res.json({ message: 'Request rejected' });
   })
 );
 

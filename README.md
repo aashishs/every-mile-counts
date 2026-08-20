@@ -175,7 +175,7 @@ In [Strava API settings](https://www.strava.com/settings/api):
 
 - Trial credit is limited; Hobby is billed after that. Private Postgres (`DATABASE_URL`) stays inside Railway — do not use `DATABASE_PUBLIC_URL` for the API.
 - The API start command runs migrate + seed, then `node index.js`. Seed does not overwrite an existing admin user.
-- SMTP is optional. Without it, password-reset emails are not sent.
+- SMTP uses Gmail (`Everymilecountsapp@gmail.com`). Set `SMTP_PASS` to a Gmail **App Password** (Google Account → Security → 2-Step Verification → App passwords). Signup OTP and forgot-password emails will not send until that is set.
 
 ## Deploy (Render + Neon, free test)
 

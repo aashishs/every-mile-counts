@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { homePath } from '../utils/roles';
 import { VersionBadge } from '../components/Badge';
 import { isBeta } from '../utils/appVersion';
+import { clubJoinPath, pendingClubInvite } from '../utils/clubInvite';
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -21,7 +22,10 @@ export default function Login() {
     setLoading(true);
     try {
       const data = await login(email, password);
-      if (data.user) navigate(homePath(data.user));
+      if (data.user) {
+        const pending = pendingClubInvite();
+        navigate(pending ? clubJoinPath(pending) : homePath(data.user));
+      }
     } catch (err) {
       setError(err.response?.data?.message || 'Login failed');
     } finally {

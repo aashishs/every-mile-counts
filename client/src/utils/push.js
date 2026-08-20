@@ -1,5 +1,5 @@
 import api from '../api/client';
-import { isClubOnlyAccount } from './roles';
+import { isClubOnlyAccount, isStaffAccount } from './roles';
 
 function urlBase64ToUint8Array(base64String) {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
@@ -12,7 +12,7 @@ function urlBase64ToUint8Array(base64String) {
 
 export async function registerPush(user) {
   if (!user) return;
-  if (user.roles?.includes('app_admin') || isClubOnlyAccount(user)) return;
+  if (user.roles?.includes('app_admin') || isStaffAccount(user) || isClubOnlyAccount(user)) return;
   if (user.notificationPrefs?.push === false) return;
   if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) return;
 

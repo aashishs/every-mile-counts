@@ -3,6 +3,7 @@ import { query } from '../config/db.js';
 import { protect } from '../middleware/auth.js';
 import { asyncHandler } from '../middleware/error.js';
 import { isPushConfigured } from '../services/pushService.js';
+import { isStaffUser } from '../utils/staff.js';
 
 const router = express.Router();
 
@@ -14,7 +15,7 @@ router.post(
   '/subscribe',
   protect,
   asyncHandler(async (req, res) => {
-    if (req.user.roles.includes('app_admin')) {
+    if (isStaffUser(req.user)) {
       return res.status(204).end();
     }
     const clubOnly =

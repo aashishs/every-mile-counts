@@ -2,7 +2,11 @@ import { pool } from '../config/db.js';
 
 export async function ensureSchemaPatches() {
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS default_activity_type TEXT NOT NULL DEFAULT 'Run'`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS sync_activity_types JSONB NOT NULL DEFAULT '["Run","Ride","Swim","Walk","Hike","Workout","WeightTraining","Yoga","HIIT"]'::jsonb`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS sync_activity_types_confirmed_at TIMESTAMPTZ`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMPTZ`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS age INTEGER`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS maf_heart_rate INTEGER`);
   await pool.query(`ALTER TABLE events ADD COLUMN IF NOT EXISTS event_time TIME`);
 
   await pool.query(`
@@ -58,7 +62,7 @@ export async function ensureSchemaPatches() {
     WHERE ur.role = 'coach'
       AND NOT EXISTS (
         SELECT 1 FROM user_roles ca
-        WHERE ca.user_id = ur.user_id AND ca.role IN ('club_admin', 'app_admin')
+        WHERE ca.user_id = ur.user_id AND ca.role IN ('club_admin', 'app_admin', 'super_admin', 'admin', 'support_admin')
       )
       AND NOT EXISTS (
         SELECT 1 FROM user_roles a
@@ -74,7 +78,7 @@ export async function ensureSchemaPatches() {
     WHERE cm.role = 'club_admin' AND cm.status = 'active'
       AND NOT EXISTS (
         SELECT 1 FROM user_roles aa
-        WHERE aa.user_id = cm.user_id AND aa.role = 'app_admin'
+        WHERE aa.user_id = cm.user_id AND aa.role IN ('app_admin', 'super_admin', 'admin', 'support_admin')
       )
     ON CONFLICT DO NOTHING
   `);
@@ -88,7 +92,7 @@ export async function ensureSchemaPatches() {
       )
       AND NOT EXISTS (
         SELECT 1 FROM user_roles aa
-        WHERE aa.user_id = ur.user_id AND aa.role = 'app_admin'
+        WHERE aa.user_id = ur.user_id AND aa.role IN ('app_admin', 'super_admin', 'admin', 'support_admin')
       )
   `);
 
@@ -99,11 +103,11 @@ export async function ensureSchemaPatches() {
       AND (
         (
           EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = ca.athlete_id AND ur.role = 'club_admin')
-          AND NOT EXISTS (SELECT 1 FROM user_roles aa WHERE aa.user_id = ca.athlete_id AND aa.role = 'app_admin')
+          AND NOT EXISTS (SELECT 1 FROM user_roles aa WHERE aa.user_id = ca.athlete_id AND aa.role IN ('app_admin', 'super_admin', 'admin', 'support_admin'))
         )
         OR (
           EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = ca.coach_id AND ur.role = 'club_admin')
-          AND NOT EXISTS (SELECT 1 FROM user_roles aa WHERE aa.user_id = ca.coach_id AND aa.role = 'app_admin')
+          AND NOT EXISTS (SELECT 1 FROM user_roles aa WHERE aa.user_id = ca.coach_id AND aa.role IN ('app_admin', 'super_admin', 'admin', 'support_admin'))
         )
       )
   `);
@@ -151,4 +155,61 @@ export async function ensureSchemaPatches() {
      ON review_requests (activity_id, coach_id)
      WHERE status = 'pending'`
   );
+
+  await pool.query(`ALTER TABLE user_roles DROP CONSTRAINT IF EXISTS user_roles_role_check`);
+  await pool.query(`
+    ALTER TABLE user_roles ADD CONSTRAINT user_roles_role_check
+    CHECK (role IN ('athlete', 'coach', 'club_admin', 'app_admin', 'super_admin', 'admin', 'support_admin'))
+  `);
+  await pool.query(`
+    INSERT INTO user_roles (user_id, role)
+    SELECT user_id, 'super_admin' FROM user_roles WHERE role = 'app_admin'
+    ON CONFLICT DO NOTHING
+  `);
+  await pool.query(`DELETE FROM user_roles WHERE role = 'app_admin'`);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS support_ticket_messages (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      ticket_id UUID NOT NULL REFERENCES support_tickets(id) ON DELETE CASCADE,
+      user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+      body TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS idx_support_ticket_messages_ticket
+     ON support_ticket_messages (ticket_id, created_at)`
+  );
+  await pool.query(`
+    INSERT INTO support_ticket_messages (ticket_id, user_id, body, created_at)
+    SELECT t.id, t.user_id, t.body, t.created_at
+    FROM support_tickets t
+    WHERE NOT EXISTS (
+      SELECT 1 FROM support_ticket_messages m WHERE m.ticket_id = t.id
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS coach_role_requests (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      club_id UUID NOT NULL REFERENCES clubs(id) ON DELETE CASCADE,
+      athlete_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      requested_by UUID REFERENCES users(id) ON DELETE SET NULL,
+      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected', 'cancelled')),
+      reviewed_by UUID REFERENCES users(id) ON DELETE SET NULL,
+      reviewed_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (club_id, athlete_id)
+    )
+  `);
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS idx_coach_role_requests_status
+     ON coach_role_requests (status, created_at DESC)`
+  );
+
+  await pool.query(
+    `ALTER TABLE invitation_codes ADD COLUMN IF NOT EXISTS club_id UUID REFERENCES clubs(id) ON DELETE CASCADE`
+  );
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_invitation_codes_club ON invitation_codes (club_id)`);
 }

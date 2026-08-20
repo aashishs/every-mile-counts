@@ -3,16 +3,20 @@ import api from '../api/client';
 import Layout from '../components/Layout';
 import ConfirmDialog from '../components/ConfirmDialog';
 import Badge, { CodeTypeBadge, RoleBadges, StatusBadge, StravaBadge } from '../components/Badge';
+import { useAuth } from '../context/AuthContext';
+import { isSuperAdminAccount } from '../utils/roles';
 import { formatActivityPrimary, formatActivitySecondary, formatDate, getActivityIcon } from '../utils/format';
 
-const TABS = [
+const ALL_TABS = [
+  { id: 'staff', label: 'Staff', superOnly: true },
   { id: 'overview', label: 'Overview' },
   { id: 'users', label: 'Users' },
   { id: 'clubs', label: 'Clubs' },
-  { id: 'codes', label: 'Invite codes' },
+  { id: 'coach-requests', label: 'Coach requests' },
+  { id: 'codes', label: 'Invite codes', superOnly: true },
   { id: 'memberships', label: 'Memberships' },
-  { id: 'settings', label: 'Settings' },
-  { id: 'audit', label: 'Audit log' },
+  { id: 'settings', label: 'Settings', superOnly: true },
+  { id: 'audit', label: 'Audit log', superOnly: true },
 ];
 
 const CODE_TYPES = [
@@ -48,6 +52,9 @@ function codeStateLabel(state) {
 }
 
 export default function Admin() {
+  const { user } = useAuth();
+  const superAdmin = isSuperAdminAccount(user);
+  const tabs = ALL_TABS.filter((t) => superAdmin || !t.superOnly);
   const [tab, setTab] = useState('users');
   const [overview, setOverview] = useState(null);
   const [users, setUsers] = useState([]);
@@ -91,8 +98,13 @@ export default function Admin() {
   const [dialog, setDialog] = useState(null);
   const [dialogBusy, setDialogBusy] = useState(false);
   const [dialogError, setDialogError] = useState('');
+  const [staff, setStaff] = useState([]);
+  const [staffForm, setStaffForm] = useState({ firstName: '', lastName: '', email: '', password: '', role: 'admin' });
+  const [clubForm, setClubForm] = useState({ name: '', location: '', email: '', password: '', firstName: '', lastName: '' });
+  const [coachRequests, setCoachRequests] = useState([]);
 
   const load = async (next = tab) => {
+    if (next === 'staff' && superAdmin) setStaff((await api.get('/admin/staff')).data.users);
     if (next === 'overview') setOverview((await api.get('/admin/overview')).data);
     if (next === 'users') {
       const params = {};
@@ -101,6 +113,7 @@ export default function Admin() {
       setClubs((await api.get('/admin/clubs')).data.clubs);
     }
     if (next === 'clubs') setClubs((await api.get('/admin/clubs')).data.clubs);
+    if (next === 'coach-requests') setCoachRequests((await api.get('/admin/coach-requests')).data.requests || []);
     if (next === 'codes') {
       const params = {};
       if (codeFilter.type !== 'all') params.type = codeFilter.type;
@@ -383,17 +396,135 @@ export default function Admin() {
     }
   };
 
+  const createStaff = async (e) => {
+    e.preventDefault();
+    setAdminErr('');
+    setAdminMsg('');
+    try {
+      await api.post('/admin/staff', staffForm);
+      setStaffForm({ firstName: '', lastName: '', email: '', password: '', role: 'admin' });
+      setAdminMsg('Staff account created');
+      load('staff');
+    } catch (err) {
+      setAdminErr(err.response?.data?.message || 'Could not create staff account');
+    }
+  };
+
+  const deleteStaff = async (id) => {
+    setAdminErr('');
+    try {
+      await api.delete(`/admin/staff/${id}`);
+      setAdminMsg('Staff account deleted');
+      load('staff');
+    } catch (err) {
+      setAdminErr(err.response?.data?.message || 'Could not delete staff account');
+    }
+  };
+
+  const toggleStaffStatus = async (row) => {
+    const status = row.status === 'suspended' ? 'active' : 'suspended';
+    try {
+      await api.patch(`/admin/staff/${row.id}`, { status });
+      load('staff');
+    } catch (err) {
+      setAdminErr(err.response?.data?.message || 'Could not update staff account');
+    }
+  };
+
+  const createClubAccount = async (e) => {
+    e.preventDefault();
+    setAdminErr('');
+    setAdminMsg('');
+    try {
+      await api.post('/admin/clubs', clubForm);
+      setClubForm({ name: '', location: '', email: '', password: '', firstName: '', lastName: '' });
+      setAdminMsg('Club account created');
+      load('clubs');
+    } catch (err) {
+      setAdminErr(err.response?.data?.message || 'Could not create club');
+    }
+  };
+
+  const reviewCoachRequest = async (id, approve) => {
+    setAdminErr('');
+    try {
+      await api.post(`/admin/coach-requests/${id}/${approve ? 'approve' : 'reject'}`);
+      setAdminMsg(approve ? 'Athlete marked as coach' : 'Request rejected');
+      load('coach-requests');
+    } catch (err) {
+      setAdminErr(err.response?.data?.message || 'Could not update request');
+    }
+  };
+
   return (
     <Layout>
-      <h2 className="page-title">Platform admin</h2>
-      <p className="page-sub">Manage users, clubs, invite codes, memberships, and the app</p>
+      <h2 className="page-title">{superAdmin ? 'Super admin' : 'Admin'}</h2>
+      <p className="page-sub">
+        {superAdmin
+          ? 'Manage staff, users, clubs, invite codes, memberships, and the app'
+          : 'Manage users, clubs, and coach requests'}
+      </p>
       <div className="flex flex-wrap gap-2 mb-6">
-        {TABS.map((t) => (
+        {tabs.map((t) => (
           <button key={t.id} className={tab === t.id ? 'btn-primary btn-sm' : 'btn-outline btn-sm'} onClick={() => setTab(t.id)}>
             {t.label}
           </button>
         ))}
       </div>
+
+      {tab === 'staff' && superAdmin && (
+        <div className="space-y-4">
+          {adminErr && <div className="card text-orange-300 text-sm">{adminErr}</div>}
+          {adminMsg && <div className="card text-brand text-sm">{adminMsg}</div>}
+          <form className="card grid md:grid-cols-2 gap-3" onSubmit={createStaff}>
+            <h3 className="font-semibold md:col-span-2">Create staff account</h3>
+            <input placeholder="First name" value={staffForm.firstName} onChange={(e) => setStaffForm({ ...staffForm, firstName: e.target.value })} required />
+            <input placeholder="Last name" value={staffForm.lastName} onChange={(e) => setStaffForm({ ...staffForm, lastName: e.target.value })} required />
+            <input type="email" placeholder="Email / login id" value={staffForm.email} onChange={(e) => setStaffForm({ ...staffForm, email: e.target.value })} required />
+            <input type="password" placeholder="Password" value={staffForm.password} onChange={(e) => setStaffForm({ ...staffForm, password: e.target.value })} required minLength={8} />
+            <label className="md:col-span-2 mb-0">
+              <span className="block text-sm mb-1">Role</span>
+              <select value={staffForm.role} onChange={(e) => setStaffForm({ ...staffForm, role: e.target.value })}>
+                <option value="admin">Admin (users and clubs)</option>
+                <option value="support_admin">Support admin (tickets only)</option>
+              </select>
+            </label>
+            <button className="btn-primary md:col-span-2" type="submit">Create account</button>
+          </form>
+          <div className="card overflow-x-auto">
+            <table className="w-full text-sm min-w-[640px]">
+              <thead>
+                <tr className="text-left text-muted">
+                  <th className="p-2">Name</th>
+                  <th>Email</th>
+                  <th>Role</th>
+                  <th>Status</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {staff.map((s) => (
+                  <tr key={s.id} className="border-t border-line">
+                    <td className="p-2 font-semibold">{s.firstName} {s.lastName}</td>
+                    <td>{s.email}</td>
+                    <td><RoleBadges roles={s.roles} /></td>
+                    <td><StatusBadge value={s.status} /></td>
+                    <td className="text-right whitespace-nowrap">
+                      <button className="btn-outline btn-sm mr-1" type="button" onClick={() => toggleStaffStatus(s)}>
+                        {s.status === 'suspended' ? 'Restore' : 'Suspend'}
+                      </button>
+                      <button className="btn-danger btn-sm" type="button" onClick={() => deleteStaff(s.id)}>
+                        Delete
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {!staff.length && <div className="text-muted text-sm p-2">No admin or support-admin accounts yet.</div>}
+          </div>
+        </div>
+      )}
 
       {tab === 'overview' && overview && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -671,6 +802,18 @@ export default function Admin() {
 
       {tab === 'clubs' && (
         <div className="space-y-4">
+          {adminErr && <div className="card text-orange-300 text-sm">{adminErr}</div>}
+          {adminMsg && <div className="card text-brand text-sm">{adminMsg}</div>}
+          <form className="card grid md:grid-cols-2 gap-3" onSubmit={createClubAccount}>
+            <h3 className="font-semibold md:col-span-2">Add club with login</h3>
+            <input placeholder="Club name" value={clubForm.name} onChange={(e) => setClubForm({ ...clubForm, name: e.target.value })} required />
+            <input placeholder="Location" value={clubForm.location} onChange={(e) => setClubForm({ ...clubForm, location: e.target.value })} />
+            <input type="email" placeholder="Club admin email (login id)" value={clubForm.email} onChange={(e) => setClubForm({ ...clubForm, email: e.target.value })} required />
+            <input type="password" placeholder="Password" value={clubForm.password} onChange={(e) => setClubForm({ ...clubForm, password: e.target.value })} required minLength={8} />
+            <input placeholder="Admin first name" value={clubForm.firstName} onChange={(e) => setClubForm({ ...clubForm, firstName: e.target.value })} />
+            <input placeholder="Admin last name" value={clubForm.lastName} onChange={(e) => setClubForm({ ...clubForm, lastName: e.target.value })} />
+            <button className="btn-primary md:col-span-2" type="submit">Create club account</button>
+          </form>
           <div className="card overflow-x-auto">
             <table className="w-full text-sm min-w-[720px]">
               <thead>
@@ -737,6 +880,53 @@ export default function Admin() {
                   openUser(userId);
                 }}
               />
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab === 'coach-requests' && (
+        <div className="space-y-4">
+          {adminErr && <div className="card text-orange-300 text-sm">{adminErr}</div>}
+          {adminMsg && <div className="card text-brand text-sm">{adminMsg}</div>}
+          {!coachRequests.length ? (
+            <div className="card text-sm text-muted">No pending coach requests from clubs.</div>
+          ) : (
+            <div className="card overflow-x-auto">
+              <table className="w-full text-sm min-w-[720px]">
+                <thead>
+                  <tr className="text-left text-muted">
+                    <th className="p-2">Athlete</th>
+                    <th>Club</th>
+                    <th>Requested by</th>
+                    <th>When</th>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {coachRequests.map((r) => (
+                    <tr key={r.id} className="border-t border-line">
+                      <td className="p-2">
+                        <div className="font-semibold">{r.firstName} {r.lastName}</div>
+                        <div className="text-xs text-muted">{r.email}</div>
+                      </td>
+                      <td>{r.clubName}</td>
+                      <td className="text-sm">
+                        {r.requestedByFirstName ? `${r.requestedByFirstName} ${r.requestedByLastName}` : '—'}
+                      </td>
+                      <td className="text-muted whitespace-nowrap">{formatDate(r.createdAt)}</td>
+                      <td className="text-right whitespace-nowrap">
+                        <button className="btn-primary btn-sm mr-1" type="button" onClick={() => reviewCoachRequest(r.id, true)}>
+                          Make coach
+                        </button>
+                        <button className="btn-outline btn-sm" type="button" onClick={() => reviewCoachRequest(r.id, false)}>
+                          Reject
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
         </div>
@@ -1007,7 +1197,7 @@ export default function Admin() {
             <input
               type="checkbox"
               className="w-auto mt-1"
-              checked={settings.signup_otp_paused !== false}
+              checked={settings.signup_otp_paused === true}
               onChange={(e) => setSettings({ ...settings, signup_otp_paused: e.target.checked })}
             />
             <span>

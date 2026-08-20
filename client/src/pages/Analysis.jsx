@@ -6,7 +6,7 @@ import Layout from '../components/Layout';
 import ActivityTypeFilter from '../components/ActivityTypeFilter';
 import PersonalRecords from '../components/PersonalRecords';
 import { useAuth } from '../context/AuthContext';
-import { formatDistance, formatDuration, initialActivityType, rememberActivityType } from '../utils/format';
+import { formatDistance, formatDuration, initialActivityType, rememberActivityType, visibleActivityTypeOptions } from '../utils/format';
 
 const PERIODS = [
   { value: '90', label: 'Last 3 months' },
@@ -35,6 +35,11 @@ export default function Analysis() {
       setSearchParams({ type }, { replace: true });
     }
   }, [type]);
+
+  useEffect(() => {
+    const allowed = visibleActivityTypeOptions(user).map((opt) => opt.value);
+    if (!allowed.includes(type)) setType(allowed[0] || 'Run');
+  }, [user?.syncActivityTypes]);
 
   useEffect(() => {
     api.get('/activities/analysis', { params: { period, type } }).then((res) => setData(res.data));
@@ -67,6 +72,7 @@ export default function Analysis() {
         value={type}
         onChange={setType}
         showAll={false}
+        options={visibleActivityTypeOptions(user)}
       />
       <div className="chip-row">
         {PERIODS.map((opt) => (

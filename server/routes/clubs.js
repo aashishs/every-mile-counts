@@ -5,11 +5,71 @@ import { getClubMembership, isMembershipUsable, getUserRoles, grantAthleteUnless
 import { createNotification, notifyMany } from '../services/notificationService.js';
 import { slugify } from '../utils/format.js';
 import { asyncHandler } from '../middleware/error.js';
+import { generateCode } from '../utils/crypto.js';
+import { clientUrl } from '../utils/urls.js';
+import {
+  addUserToClub,
+  assertClubSlot,
+  assertCoachSlot,
+  consumeInvitation,
+  invitationState,
+  loadInvitation,
+} from '../utils/invites.js';
+import {
+  DEFAULT_CLUB_QR_USES,
+  MAX_ACTIVE_CLUB_QR_CODES,
+  MAX_CLUB_QR_USES,
+  MAX_CLUBS,
+} from '../utils/limits.js';
 
 const router = express.Router();
-router.use(protect, requireMembership, rejectAppAdmin);
 
-const MAX_COACHES = 3;
+function clubJoinPath({ clubId, role, code }) {
+  const params = new URLSearchParams({
+    club: clubId,
+    role,
+    code,
+  });
+  return `/join?${params.toString()}`;
+}
+
+function inviteExpiry(value) {
+  if (!value) return null;
+  const s = String(value).trim();
+  if (!s) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return `${s}T23:59:59`;
+  return s;
+}
+
+router.get(
+  '/invite-preview',
+  asyncHandler(async (req, res) => {
+    const code = String(req.query.code || '').trim();
+    const clubId = String(req.query.club || '').trim();
+    const role = String(req.query.role || '').trim();
+    if (!code) return res.status(400).json({ message: 'Invitation code is required' });
+    const invite = await loadInvitation({
+      code,
+      type: ['athlete', 'coach'].includes(role) ? role : undefined,
+    });
+    if (!invite.clubId) {
+      return res.status(400).json({ message: 'This code is not a club join QR' });
+    }
+    if (clubId && clubId !== invite.clubId) {
+      return res.status(400).json({ message: 'This QR does not match that club' });
+    }
+    res.json({
+      clubId: invite.clubId,
+      clubName: invite.clubName,
+      role: invite.type,
+      remaining: Math.max(0, Number(invite.maxActivations) - Number(invite.activationsUsed)),
+      expiresAt: invite.expiresAt,
+      clubStatus: invite.clubStatus,
+    });
+  })
+);
+
+router.use(protect, requireMembership, rejectAppAdmin);
 
 async function membership(userId, clubId) {
   return camel(
@@ -26,7 +86,7 @@ async function isClubCoach(userId, clubId) {
 }
 
 async function requireClubAdmin(req, clubId) {
-  if (req.user.roles.includes('app_admin')) return true;
+  if (req.user.roles.some((role) => ['app_admin', 'super_admin', 'admin'].includes(role))) return true;
   const m = await membership(req.user.id, clubId);
   return m?.role === 'club_admin' && m.status === 'active';
 }
@@ -82,7 +142,7 @@ router.get(
       )
     );
     const ids = clubs.map((c) => c.id);
-    if (!ids.length) return res.json({ clubs });
+    if (!ids.length) return res.json({ clubs, max: MAX_CLUBS });
     const assigned = camelMany(
       await many(
         `SELECT ca.club_id, u.id, u.first_name, u.last_name, u.email
@@ -116,6 +176,136 @@ router.get(
         coaches: coachesByClub[c.id] || [],
         coachRequested: requested.has(c.id),
       })),
+      max: MAX_CLUBS,
+    });
+  })
+);
+
+router.get(
+  '/:id/invite-codes',
+  asyncHandler(async (req, res) => {
+    if (!(await requireClubAdmin(req, req.params.id))) {
+      return res.status(403).json({ message: 'Club admin required' });
+    }
+    const rows = camelMany(
+      await many(
+        `SELECT ic.*, u.email AS created_by_email
+         FROM invitation_codes ic
+         LEFT JOIN users u ON u.id = ic.created_by
+         WHERE ic.club_id = $1
+         ORDER BY ic.created_at DESC`,
+        [req.params.id]
+      )
+    );
+    const codes = rows.map((row) => {
+      const next = invitationState(row);
+      return {
+        ...next,
+        joinPath: clubJoinPath({ clubId: req.params.id, role: row.type, code: row.code }),
+      };
+    });
+    const activeCount = codes.filter((c) => c.state === 'active').length;
+    res.json({
+      codes,
+      limits: {
+        maxActive: MAX_ACTIVE_CLUB_QR_CODES,
+        activeCount,
+        remainingSlots: Math.max(0, MAX_ACTIVE_CLUB_QR_CODES - activeCount),
+        defaultUses: DEFAULT_CLUB_QR_USES,
+        maxUses: MAX_CLUB_QR_USES,
+      },
+    });
+  })
+);
+
+router.post(
+  '/:id/invite-codes',
+  asyncHandler(async (req, res) => {
+    if (!(await requireClubAdmin(req, req.params.id))) {
+      return res.status(403).json({ message: 'Club admin required' });
+    }
+    const writable = await clubWritable(req.params.id);
+    if (!writable.ok) return res.status(writable.status).json({ message: writable.message });
+    const type = req.body.type === 'coach' ? 'coach' : req.body.type === 'athlete' ? 'athlete' : null;
+    if (!type) return res.status(400).json({ message: 'QR type must be athlete or coach' });
+    const active = await one(
+      `SELECT COUNT(*)::int AS count FROM invitation_codes
+       WHERE club_id = $1
+         AND is_disabled = FALSE
+         AND (expires_at IS NULL OR expires_at > NOW())
+         AND activations_used < max_activations`,
+      [req.params.id]
+    );
+    if ((active?.count || 0) >= MAX_ACTIVE_CLUB_QR_CODES) {
+      return res.status(400).json({
+        message: `This club already has ${MAX_ACTIVE_CLUB_QR_CODES} active QR codes. Disable or let one expire before creating another.`,
+      });
+    }
+    const uses = Math.min(MAX_CLUB_QR_USES, Math.max(1, Number(req.body.maxActivations) || DEFAULT_CLUB_QR_USES));
+    const code = generateCode(type === 'coach' ? 'COA' : 'ATH');
+    const row = camel(
+      await one(
+        `INSERT INTO invitation_codes
+          (code, type, club_id, max_activations, valid_from, expires_at, created_by, notes)
+         VALUES ($1,$2,$3,$4,NOW(),$5,$6,$7) RETURNING *`,
+        [code, type, req.params.id, uses, inviteExpiry(req.body.expiresAt), req.user.id, req.body.notes || null]
+      )
+    );
+    const next = invitationState(row);
+    res.status(201).json({
+      code: {
+        ...next,
+        joinPath: clubJoinPath({ clubId: req.params.id, role: type, code: row.code }),
+        joinUrl: `${clientUrl()}${clubJoinPath({ clubId: req.params.id, role: type, code: row.code })}`,
+      },
+    });
+  })
+);
+
+router.patch(
+  '/:id/invite-codes/:codeId',
+  asyncHandler(async (req, res) => {
+    if (!(await requireClubAdmin(req, req.params.id))) {
+      return res.status(403).json({ message: 'Club admin required' });
+    }
+    const existing = camel(
+      await one(
+        `SELECT * FROM invitation_codes WHERE id = $1 AND club_id = $2`,
+        [req.params.codeId, req.params.id]
+      )
+    );
+    if (!existing) return res.status(404).json({ message: 'QR code not found' });
+    let maxActivations = existing.maxActivations;
+    if (req.body.maxActivations != null) {
+      maxActivations = Math.min(
+        MAX_CLUB_QR_USES,
+        Math.max(Number(existing.activationsUsed) || 1, Number(req.body.maxActivations) || existing.maxActivations)
+      );
+    }
+    const row = camel(
+      await one(
+        `UPDATE invitation_codes SET
+           is_disabled = COALESCE($1, is_disabled),
+           expires_at = COALESCE($2, expires_at),
+           max_activations = $3,
+           notes = COALESCE($4, notes)
+         WHERE id = $5 AND club_id = $6 RETURNING *`,
+        [
+          req.body.isDisabled ?? null,
+          req.body.expiresAt === undefined ? null : req.body.expiresAt,
+          maxActivations,
+          req.body.notes ?? null,
+          req.params.codeId,
+          req.params.id,
+        ]
+      )
+    );
+    const next = invitationState(row);
+    res.json({
+      code: {
+        ...next,
+        joinPath: clubJoinPath({ clubId: req.params.id, role: row.type, code: row.code }),
+      },
     });
   })
 );
@@ -155,7 +345,11 @@ router.get(
                 EXISTS (
                   SELECT 1 FROM coach_assignment_requests r
                   WHERE r.club_id = cm.club_id AND r.athlete_id = u.id AND r.status = 'pending'
-                ) AS coach_requested
+                ) AS coach_requested,
+                EXISTS (
+                  SELECT 1 FROM coach_role_requests cr
+                  WHERE cr.club_id = cm.club_id AND cr.athlete_id = u.id AND cr.status = 'pending'
+                ) AS coach_role_requested
          FROM club_members cm
          JOIN users u ON u.id = cm.user_id
          LEFT JOIN user_roles ur ON ur.user_id = u.id
@@ -201,38 +395,53 @@ router.get(
 router.post(
   '/:id/join',
   asyncHandler(async (req, res) => {
-    const { invitationCode } = req.body;
+    const { invitationCode, role: requestedRole } = req.body;
     const writable = await clubWritable(req.params.id);
     if (!writable.ok) return res.status(writable.status).json({ message: writable.message });
     const { club } = writable;
-    if (club.status === 'pending_coach') {
-      return res.status(400).json({ message: 'This club must add at least one coach before accepting members' });
-    }
     const existing = await membership(req.user.id, club.id);
-    if (existing?.status === 'active') return res.status(400).json({ message: 'Already a member' });
 
-    const autoApprove = Boolean(invitationCode);
-    if (invitationCode) {
-      const invite = await one(
-        `SELECT * FROM invitation_codes WHERE UPPER(code) = UPPER($1) AND is_disabled = FALSE`,
-        [invitationCode]
-      );
-      if (!invite) return res.status(400).json({ message: 'Invalid club invitation code' });
+    const roles = await getUserRoles(req.user.id);
+    if (roles.includes('club_admin')) {
+      return res.status(400).json({ message: 'Club admins cannot join as athletes or coaches' });
     }
 
-    const row = camel(
-      await one(
-        `INSERT INTO club_members (club_id, user_id, role, status, approved_at)
-         VALUES ($1, $2, 'member', $3, $4)
-         ON CONFLICT (club_id, user_id) DO UPDATE SET
-           status = EXCLUDED.status,
-           requested_at = NOW(),
-           approved_at = CASE WHEN EXCLUDED.status = 'pending' THEN NULL ELSE EXCLUDED.approved_at END
-         RETURNING *`,
-        [club.id, req.user.id, autoApprove ? 'active' : 'pending', autoApprove ? new Date() : null]
-      )
-    );
-    res.status(201).json({ membership: row });
+    let joinRole = requestedRole === 'coach' ? 'coach' : 'member';
+    let autoApprove = false;
+    if (invitationCode) {
+      const invite = await loadInvitation({
+        code: invitationCode,
+        type: ['athlete', 'coach'].includes(requestedRole) ? requestedRole : undefined,
+        userId: req.user.id,
+      });
+      if (!invite.clubId || invite.clubId !== club.id) {
+        return res.status(400).json({ message: 'This invitation is not for this club' });
+      }
+      joinRole = invite.type === 'coach' ? 'coach' : 'member';
+      if (club.status === 'pending_coach' && joinRole !== 'coach') {
+        return res.status(400).json({ message: 'This club must add at least one coach before accepting members' });
+      }
+      if (existing?.status === 'active' && (joinRole !== 'coach' || existing.role === 'coach')) {
+        return res.status(400).json({ message: 'Already a member' });
+      }
+      await assertClubSlot(req.user.id, { clubId: club.id });
+      await consumeInvitation({ invite, userId: req.user.id, clubId: club.id });
+      autoApprove = true;
+    } else if (existing?.status === 'active') {
+      return res.status(400).json({ message: 'Already a member' });
+    } else if (club.status === 'pending_coach') {
+      return res.status(400).json({ message: 'This club must add at least one coach before accepting members' });
+    } else {
+      await assertClubSlot(req.user.id, { clubId: club.id });
+    }
+
+    const membershipRow = await addUserToClub({
+      clubId: club.id,
+      userId: req.user.id,
+      role: joinRole,
+      autoApprove,
+    });
+    res.status(201).json({ membership: membershipRow });
   })
 );
 
@@ -261,6 +470,7 @@ router.post(
     if (roles.includes('club_admin')) {
       return res.status(400).json({ message: 'Club admins cannot be added as athletes' });
     }
+    await assertClubSlot(user.id, { clubId: club.id });
     await grantAthleteUnlessClubAdmin(user.id);
     await query(
       `INSERT INTO club_members (club_id, user_id, role, status, approved_at)
@@ -330,14 +540,7 @@ router.post(
     if (!member) return res.status(404).json({ message: 'Membership not found' });
 
     if (coachId) {
-      const countRow = await one(
-        `SELECT COUNT(*)::int AS count FROM coach_assignments
-         WHERE athlete_id = $1 AND status = 'active'`,
-        [member.userId]
-      );
-      if (countRow.count >= MAX_COACHES) {
-        return res.status(400).json({ message: 'Athlete already has three coaches' });
-      }
+      await assertCoachSlot(member.userId, { coachId });
       await query(
         `INSERT INTO coach_assignments (athlete_id, coach_id, club_id, assigned_by, status)
          VALUES ($1,$2,$3,$4,'active')
@@ -376,30 +579,50 @@ router.post(
     if (roles.includes('club_admin')) {
       return res.status(400).json({ message: 'Club admins cannot also be coaches. Add a separate coach account.' });
     }
-    await query(`INSERT INTO user_roles (user_id, role) VALUES ($1, 'coach') ON CONFLICT DO NOTHING`, [user.id]);
-    await grantAthleteUnlessClubAdmin(user.id);
-    await query(
-      `INSERT INTO club_members (club_id, user_id, role, status, approved_at)
-       VALUES ($1, $2, 'coach', 'active', NOW())
-       ON CONFLICT (club_id, user_id) DO UPDATE SET
-         status = 'active',
-         approved_at = NOW(),
-         role = 'coach'`,
-      [req.params.id, user.id]
-    );
-    await query(`UPDATE clubs SET status = 'active', updated_at = NOW() WHERE id = $1 AND status = 'pending_coach'`, [
-      req.params.id,
-    ]);
-    if (user.id !== req.user.id) {
-      await createNotification({
-        userId: user.id,
-        type: 'club',
-        title: `Added as coach at ${writable.club.name}`,
-        body: `A club admin added you as a coach at ${writable.club.name}.`,
-        data: { clubId: req.params.id },
-      });
+    await assertClubSlot(user.id, { clubId: req.params.id });
+    if (roles.includes('coach')) {
+      await query(
+        `INSERT INTO club_members (club_id, user_id, role, status, approved_at)
+         VALUES ($1, $2, 'coach', 'active', NOW())
+         ON CONFLICT (club_id, user_id) DO UPDATE SET
+           status = 'active',
+           approved_at = NOW(),
+           role = 'coach'`,
+        [req.params.id, user.id]
+      );
+      await query(`UPDATE clubs SET status = 'active', updated_at = NOW() WHERE id = $1 AND status = 'pending_coach'`, [
+        req.params.id,
+      ]);
+      if (user.id !== req.user.id) {
+        await createNotification({
+          userId: user.id,
+          type: 'club',
+          title: `Added as coach at ${writable.club.name}`,
+          body: `A club admin added you as a coach at ${writable.club.name}.`,
+          data: { clubId: req.params.id },
+        });
+      }
+      return res.json({ message: 'Coach added', requested: false });
     }
-    res.json({ message: 'Coach added' });
+
+    const request = camel(
+      await one(
+        `INSERT INTO coach_role_requests (club_id, athlete_id, requested_by, status)
+         VALUES ($1, $2, $3, 'pending')
+         ON CONFLICT (club_id, athlete_id) DO UPDATE SET
+           status = 'pending',
+           requested_by = EXCLUDED.requested_by,
+           reviewed_by = NULL,
+           reviewed_at = NULL
+         RETURNING *`,
+        [req.params.id, user.id, req.user.id]
+      )
+    );
+    res.json({
+      message: 'Request sent to platform admin to mark this athlete as a coach',
+      requested: true,
+      request,
+    });
   })
 );
 
@@ -503,13 +726,7 @@ router.post(
     if (!(await isClubCoach(coachId, req.params.id))) {
       return res.status(400).json({ message: 'Coach must belong to this club' });
     }
-    const countRow = await one(
-      `SELECT COUNT(*)::int AS count FROM coach_assignments WHERE athlete_id = $1 AND status = 'active'`,
-      [athleteId]
-    );
-    if (countRow.count >= MAX_COACHES) {
-      return res.status(400).json({ message: 'Maximum of three coaches per athlete' });
-    }
+    await assertCoachSlot(athleteId, { coachId });
     await query(
       `INSERT INTO coach_assignments (athlete_id, coach_id, club_id, assigned_by, status)
        VALUES ($1,$2,$3,$4,'active')

@@ -34,10 +34,14 @@ export default function OtpVerify({ email, debugCode, onVerify, onResend, onBack
   return (
     <form onSubmit={submit} className="space-y-4">
       <p className="text-sm text-muted">
-        Enter the 6-digit code we sent to <span className="text-slate-100">{email}</span>
+        {debugCode
+          ? 'Email is not sending yet on this server. Use the on-screen code below.'
+          : <>Enter the 6-digit code we sent to <span className="text-slate-100">{email}</span></>}
       </p>
       {debugCode && (
-        <p className="text-xs text-accent">Dev code: {debugCode}</p>
+        <p className="text-sm text-accent">
+          Dev code: <span className="font-semibold tracking-[0.3em]">{debugCode}</span>
+        </p>
       )}
       {error && <div className="rounded-xl border border-red-500/40 bg-red-500/10 text-red-200 p-3 text-sm">{error}</div>}
       <div>

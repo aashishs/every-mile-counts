@@ -127,6 +127,14 @@ export const DEFAULT_ACTIVITY_TYPE = 'Run';
 
 const ACTIVITY_TYPE_STORAGE_KEY = 'emcActivityType';
 
+export function visibleActivityTypeOptions(user) {
+  const selected = Array.isArray(user?.syncActivityTypes) && user.syncActivityTypes.length
+    ? user.syncActivityTypes
+    : ACTIVITY_TYPE_OPTIONS.map((o) => o.value);
+  const options = ACTIVITY_TYPE_OPTIONS.filter((o) => selected.includes(o.value));
+  return options.length ? options : ACTIVITY_TYPE_OPTIONS;
+}
+
 export function rememberActivityType(type) {
   if (!type || type === 'all') return;
   try {
@@ -137,8 +145,10 @@ export function rememberActivityType(type) {
 }
 
 export function initialActivityType(user, queryType) {
-  const fallback = user?.defaultActivityType || DEFAULT_ACTIVITY_TYPE;
-  const allowed = ACTIVITY_TYPE_OPTIONS.map((o) => o.value);
+  const allowed = visibleActivityTypeOptions(user).map((o) => o.value);
+  const fallback = allowed.includes(user?.defaultActivityType)
+    ? user.defaultActivityType
+    : (allowed[0] || DEFAULT_ACTIVITY_TYPE);
   if (queryType && allowed.includes(queryType)) return queryType;
   try {
     const stored = sessionStorage.getItem(ACTIVITY_TYPE_STORAGE_KEY);

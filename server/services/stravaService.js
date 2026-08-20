@@ -1,9 +1,15 @@
 import axios from 'axios';
 import crypto from 'node:crypto';
-import { camel, many, one, query } from '../config/db.js';
+import { camel, camelMany, many, one, query } from '../config/db.js';
 import { decrypt, encrypt } from '../utils/crypto.js';
 import { stravaWebhookUri } from '../utils/urls.js';
 import { analyzeActivity } from './analysisService.js';
+import {
+  activityMatchesSyncTypes,
+  normalizeSyncTypes,
+  parseStoredSyncTypes,
+  typesEqual,
+} from '../utils/activityTypes.js';
 
 const STRAVA_API = 'https://www.strava.com/api/v3';
 const PER_PAGE = 200;
@@ -155,6 +161,8 @@ export async function fetchStravaActivity(userId, activityId) {
 
 export async function upsertStravaActivityById(userId, activityId) {
   const act = await fetchStravaActivity(userId, activityId);
+  const types = await loadUserSyncTypes(userId);
+  if (!activityMatchesSyncTypes(act, types)) return null;
   return upsertActivity(userId, 'strava', mapStravaActivity(act));
 }
 
@@ -262,6 +270,62 @@ export async function ensureStravaWebhookSubscription() {
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
   });
   return { ok: true, id: data?.id };
+}
+
+export function isRelevantStravaActivity(act, types) {
+  return activityMatchesSyncTypes(act, types);
+}
+
+async function loadUserSyncTypes(userId) {
+  const row = camel(await one(`SELECT sync_activity_types FROM users WHERE id = $1`, [userId]));
+  return parseStoredSyncTypes(row?.syncActivityTypes);
+}
+
+export async function pruneStravaActivitiesOutsideTypes(userId, types) {
+  const allowed = parseStoredSyncTypes(types);
+  const rows = camelMany(
+    await many(
+      `SELECT id, type, sport_type FROM activities WHERE athlete_id = $1 AND source = 'strava'`,
+      [userId]
+    )
+  );
+  const ids = rows.filter((row) => !activityMatchesSyncTypes(row, allowed)).map((row) => row.id);
+  if (!ids.length) return 0;
+  await query(`DELETE FROM activities WHERE id = ANY($1::uuid[])`, [ids]);
+  return ids.length;
+}
+
+export async function saveSyncActivityTypes(userId, types) {
+  const normalized = normalizeSyncTypes(types);
+  await query(
+    `UPDATE users SET
+       sync_activity_types = $2::jsonb,
+       sync_activity_types_confirmed_at = COALESCE(sync_activity_types_confirmed_at, NOW()),
+       default_activity_type = CASE
+         WHEN default_activity_type = ANY($3::text[]) THEN default_activity_type
+         ELSE $4
+       END,
+       updated_at = NOW()
+     WHERE id = $1`,
+    [userId, JSON.stringify(normalized), normalized, normalized[0]]
+  );
+  return normalized;
+}
+
+export async function applySyncActivityTypes(userId, types) {
+  const previous = await loadUserSyncTypes(userId);
+  const normalized = await saveSyncActivityTypes(userId, types);
+  const conn = await getConnection(userId);
+  const changed = !typesEqual(previous, normalized);
+  let pruned = 0;
+  let synced = 0;
+  if (changed && (conn?.connected || conn?.lastSyncAt)) {
+    pruned = await pruneStravaActivitiesOutsideTypes(userId, normalized);
+    if (conn?.connected) {
+      synced = await syncStravaActivities(userId, { full: true });
+    }
+  }
+  return { types: normalized, changed, pruned, synced, resynced: Boolean(changed && conn?.connected) };
 }
 
 function mapStravaActivity(act) {
@@ -385,6 +449,7 @@ export async function syncStravaActivities(userId, { full = false, after: afterO
 
   try {
     const accessToken = await getValidAccessToken(userId);
+    const types = await loadUserSyncTypes(userId);
     let page = 1;
     let synced = 0;
     const params = { per_page: PER_PAGE };
@@ -406,6 +471,7 @@ export async function syncStravaActivities(userId, { full = false, after: afterO
       if (!Array.isArray(activities) || !activities.length) break;
 
       for (const act of activities) {
+        if (!isRelevantStravaActivity(act, types)) continue;
         try {
           await upsertActivity(userId, 'strava', mapStravaActivity(act));
           synced += 1;

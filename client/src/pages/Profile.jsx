@@ -3,8 +3,8 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../api/client';
 import Layout from '../components/Layout';
 import { useAuth } from '../context/AuthContext';
-import { ACTIVITY_TYPE_OPTIONS, DEFAULT_ACTIVITY_TYPE } from '../utils/format';
-import { homePath, isAppAdminAccount, isAthleteAccount } from '../utils/roles';
+import { DEFAULT_ACTIVITY_TYPE, visibleActivityTypeOptions } from '../utils/format';
+import { afterJoinPath, homePath, isAppAdminAccount, isAthleteAccount, isClubOnlyAccount, needsProfile } from '../utils/roles';
 import { ageFromDob, mafHeartRate, parseDateOfBirth, todayIsoDate } from '../utils/maf';
 import StravaCard from '../components/StravaCard';
 import ConfirmDialog from '../components/ConfirmDialog';
@@ -23,7 +23,8 @@ export default function Profile() {
   const [searchParams, setSearchParams] = useSearchParams();
   const appAdmin = isAppAdminAccount(user);
   const athlete = isAthleteAccount(user);
-  const needDob = athlete && searchParams.get('needDob') === '1';
+  const clubAdmin = isClubOnlyAccount(user);
+  const completing = needsProfile(user);
   const [form, setForm] = useState({
     firstName: user.firstName || '',
     lastName: user.lastName || '',
@@ -35,12 +36,14 @@ export default function Profile() {
     dateOfBirth: parseDateOfBirth(user.dateOfBirth) || '',
     defaultActivityType: user.defaultActivityType || DEFAULT_ACTIVITY_TYPE,
     notificationPrefs: user.notificationPrefs || {},
+    clubName: user.adminClubName || '',
   });
   const [pw, setPw] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
 
   const [clubs, setClubs] = useState([]);
+  const [maxClubs, setMaxClubs] = useState(3);
   const [clubQ, setClubQ] = useState('');
   const [clubResults, setClubResults] = useState([]);
   const [inviteCode, setInviteCode] = useState('');
@@ -64,6 +67,7 @@ export default function Profile() {
   const loadClubs = async () => {
     const { data } = await api.get('/clubs/mine');
     setClubs(data.clubs || []);
+    setMaxClubs(data.max || 3);
   };
 
   const loadCoaches = async () => {
@@ -84,11 +88,14 @@ export default function Profile() {
   const save = async (e) => {
     e.preventDefault();
     try {
-      await api.patch('/users/me', form);
+      await api.patch('/users/me', {
+        ...form,
+        ...(clubAdmin && !user.adminClubId ? { clubName: form.clubName.trim() } : {}),
+      });
       const next = await refresh();
       flash(true, 'Profile saved');
-      if (needDob && parseDateOfBirth(next?.dateOfBirth || form.dateOfBirth)) {
-        navigate(homePath(next || user), { replace: true });
+      if (completing && !needsProfile(next)) {
+        navigate(afterJoinPath(next || user), { replace: true });
       }
     } catch (ex) {
       flash(false, ex.response?.data?.message || 'Could not save profile');
@@ -214,20 +221,22 @@ export default function Profile() {
     }
   };
 
-  const togglePref = (key) => {
-    setForm({
-      ...form,
-      notificationPrefs: { ...form.notificationPrefs, [key]: !form.notificationPrefs?.[key] },
-    });
-  };
+  useEffect(() => {
+    const allowed = visibleActivityTypeOptions(user).map((opt) => opt.value);
+    if (allowed.length && !allowed.includes(form.defaultActivityType)) {
+      setForm((prev) => ({ ...prev, defaultActivityType: allowed[0] }));
+    }
+  }, [user?.syncActivityTypes]);
 
   const canAddCoach = coaches.length < maxCoaches;
+  const athleteClubCount = clubs.filter((c) => c.role === 'member' || c.role === 'coach').length;
+  const canJoinClub = athleteClubCount < maxClubs;
 
   const previewAge = ageFromDob(form.dateOfBirth);
   const previewMaf = mafHeartRate(previewAge);
 
   const tabs = TAB_DEFS.filter((t) => !t.athleteOnly || athlete);
-  const requestedTab = searchParams.get('tab');
+  const requestedTab = completing ? 'profile' : searchParams.get('tab');
   const tab = tabs.some((t) => t.id === requestedTab) ? requestedTab : 'profile';
 
   const setTab = (id) => {
@@ -240,7 +249,9 @@ export default function Profile() {
   };
 
   const tabCopy = {
-    profile: appAdmin ? 'Edit your details' : 'Edit your details and notification preferences',
+    profile: completing
+      ? 'Fill in your details to continue'
+      : appAdmin ? 'Edit your details' : 'Edit your details and notification preferences',
     password: 'Change the password you use to sign in',
     strava: 'Connect Strava to sync activities',
     club: 'Join or manage your club',
@@ -254,16 +265,18 @@ export default function Profile() {
           <h2 className="page-title">Profile</h2>
           <p className="page-sub">{tabCopy[tab] || 'Manage your account'}</p>
         </div>
+        {!completing && (
         <button
           type="button"
           className="btn-outline btn-sm shrink-0"
           onClick={() => navigate(homePath(user))}
-          disabled={needDob && !form.dateOfBirth}
         >
           Done
         </button>
+        )}
       </div>
 
+      {!completing && (
       <div className="chip-row">
         {tabs.map((t) => (
           <button
@@ -276,13 +289,16 @@ export default function Profile() {
           </button>
         ))}
       </div>
+      )}
 
       {msg && <div className="card mb-4 text-brand text-sm">{msg}</div>}
       {err && <div className="card mb-4 text-orange-300 text-sm">{err}</div>}
 
-      {needDob && tab === 'profile' && (
+      {completing && tab === 'profile' && (
         <div className="card mb-4 text-sm text-orange-200">
-          Date of birth is required. Age and MAF (180 − age) are calculated from it.
+          Finish your profile to continue.
+          {athlete ? ' Date of birth sets your age and MAF (180 − age).' : ''}
+          {clubAdmin && !user.adminClubId ? ' Add your club name to create the club.' : ''}
         </div>
       )}
 
@@ -290,13 +306,13 @@ export default function Profile() {
 
       {tab === 'profile' && (
       <form className="card grid md:grid-cols-2 gap-3 mb-6" onSubmit={save}>
-        <h3 className="font-semibold md:col-span-2">Edit profile</h3>
+        <h3 className="font-semibold md:col-span-2">{completing ? 'Your details' : 'Edit profile'}</h3>
         <div>
-          <label htmlFor="firstName">First name</label>
+          <label htmlFor="firstName">{clubAdmin ? 'Admin first name' : 'First name'}</label>
           <input id="firstName" value={form.firstName} onChange={(e) => setForm({ ...form, firstName: e.target.value })} required />
         </div>
         <div>
-          <label htmlFor="lastName">Last name</label>
+          <label htmlFor="lastName">{clubAdmin ? 'Admin last name' : 'Last name'}</label>
           <input id="lastName" value={form.lastName} onChange={(e) => setForm({ ...form, lastName: e.target.value })} required />
         </div>
         <div className="md:col-span-2">
@@ -307,6 +323,17 @@ export default function Profile() {
           <label htmlFor="location">Location</label>
           <input id="location" value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} placeholder="City" />
         </div>
+        {clubAdmin && !user.adminClubId && (
+          <div>
+            <label htmlFor="clubName">Club name</label>
+            <input
+              id="clubName"
+              value={form.clubName}
+              onChange={(e) => setForm({ ...form, clubName: e.target.value })}
+              required
+            />
+          </div>
+        )}
         {athlete && (
           <>
             <div>
@@ -340,7 +367,7 @@ export default function Profile() {
                 value={form.defaultActivityType}
                 onChange={(e) => setForm({ ...form, defaultActivityType: e.target.value })}
               >
-                {ACTIVITY_TYPE_OPTIONS.map((opt) => (
+                {visibleActivityTypeOptions(user).map((opt) => (
                   <option key={opt.value} value={opt.value}>{opt.label}</option>
                 ))}
               </select>
@@ -351,20 +378,9 @@ export default function Profile() {
           <label htmlFor="bio">Bio</label>
           <textarea id="bio" value={form.bio} onChange={(e) => setForm({ ...form, bio: e.target.value })} placeholder="About you" />
         </div>
-        {appAdmin ? null : (
-        <div className="md:col-span-2">
-          <p className="text-sm font-medium mb-2">Notifications</p>
-          <div className="flex flex-wrap gap-4 text-sm">
-            {['push', 'inApp', ...(athlete ? ['sync'] : []), 'reviews', 'events', 'membership', 'announcements'].map((k) => (
-              <label key={k} className="flex items-center gap-2">
-                <input type="checkbox" className="w-auto" checked={form.notificationPrefs?.[k] !== false} onChange={() => togglePref(k)} />
-                {k}
-              </label>
-            ))}
-          </div>
-        </div>
-        )}
-        <button className="btn-primary md:col-span-2" type="submit">Save profile</button>
+        <button className="btn-primary md:col-span-2" type="submit">
+          {completing ? 'Save and continue' : 'Save profile'}
+        </button>
       </form>
       )}
 
@@ -390,7 +406,7 @@ export default function Profile() {
       {tab === 'club' && athlete && (
         <section className="card space-y-4 mb-6">
           <div className="flex items-center justify-between gap-3">
-            <h3 className="font-semibold">Club</h3>
+            <h3 className="font-semibold">Clubs · {athleteClubCount}/{maxClubs}</h3>
             <Link to="/clubs" className="text-sm text-brand no-underline">Search clubs</Link>
           </div>
           <div className="space-y-2">
@@ -433,6 +449,8 @@ export default function Profile() {
             ))}
             {!clubs.length && <p className="text-sm text-muted">You are not in a club yet.</p>}
           </div>
+          {canJoinClub ? (
+          <>
           <form className="space-y-2" onSubmit={searchClubs}>
             <label>Find another club</label>
             <div className="flex flex-col sm:flex-row gap-2">
@@ -454,6 +472,10 @@ export default function Profile() {
               </div>
             ))}
           </div>
+          </>
+          ) : (
+            <p className="text-sm text-muted">You already belong to {maxClubs} clubs. Leave one to join another.</p>
+          )}
         </section>
       )}
 

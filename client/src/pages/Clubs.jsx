@@ -12,6 +12,7 @@ export default function Clubs() {
   const clubHome = user?.roles?.includes('club_admin') && !athlete;
   const [clubs, setClubs] = useState([]);
   const [mine, setMine] = useState([]);
+  const [maxClubs, setMaxClubs] = useState(3);
   const [q, setQ] = useState('');
   const [searched, setSearched] = useState(false);
   const [msg, setMsg] = useState('');
@@ -20,6 +21,7 @@ export default function Clubs() {
   const loadMine = async () => {
     const { data } = await api.get('/clubs/mine');
     setMine(data.clubs || []);
+    setMaxClubs(data.max || 3);
   };
 
   useEffect(() => {
@@ -52,6 +54,8 @@ export default function Clubs() {
 
   const mineIds = new Set(mine.map((c) => c.id));
   const visibleClubs = clubs.filter((c) => !mineIds.has(c.id));
+  const athleteClubCount = mine.filter((c) => c.role === 'member' || c.role === 'coach').length;
+  const canJoinClub = athleteClubCount < maxClubs;
 
   const requestJoin = async (clubId) => {
     setJoining(clubId);
@@ -135,6 +139,8 @@ export default function Clubs() {
       )}
       {athlete && (
         <>
+          {canJoinClub ? (
+          <>
           <form className="flex gap-2 mb-4" onSubmit={search}>
             <input placeholder="Search by club name or city" value={q} onChange={(e) => setQ(e.target.value)} />
             <button className="btn-primary" type="submit">Search</button>
@@ -163,6 +169,10 @@ export default function Clubs() {
               <div className="card text-muted text-sm">Search by name or city to find a club and send a join request.</div>
             )}
           </div>
+          </>
+          ) : (
+            <div className="card text-muted text-sm">You already belong to {maxClubs} clubs. Leave one to join another.</div>
+          )}
         </>
       )}
     </Layout>

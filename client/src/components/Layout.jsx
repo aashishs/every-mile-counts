@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { isAppAdminAccount, isAthleteAccount } from '../utils/roles';
+import { isOpsAdminAccount, isStaffAccount, isSuperAdminAccount, isSupportAdminAccount, isAthleteAccount } from '../utils/roles';
 import { VersionBadge } from './Badge';
 import { isBeta } from '../utils/appVersion';
 import { GOALS_ENABLED } from '../utils/features';
@@ -31,6 +31,7 @@ const athleteTabs = [
 function pathActive(pathname, to) {
   if (to === '/dashboard') return pathname === '/dashboard';
   if (to === '/admin') return pathname === '/admin' || pathname.startsWith('/admin/');
+  if (to === '/support-desk') return pathname === '/support-desk' || pathname.startsWith('/support-desk/');
   if (to === '/clubs') return pathname === '/clubs' || pathname.startsWith('/clubs/');
   return pathname === to || pathname.startsWith(`${to}/`);
 }
@@ -43,17 +44,30 @@ export default function Layout({ children }) {
   const initials = `${user.firstName?.[0] || ''}${user.lastName?.[0] || ''}`.toUpperCase();
   const membership = user.membership;
   const expiring = membership?.status === 'expiring_soon';
-  const appAdmin = isAppAdminAccount(user);
+  const staff = isStaffAccount(user);
+  const superAdmin = isSuperAdminAccount(user);
+  const opsAdmin = isOpsAdminAccount(user);
+  const supportOnly = isSupportAdminAccount(user) && !superAdmin && !opsAdmin;
   const isAthlete = isAthleteAccount(user);
-  const isCoachUser = !appAdmin && (user?.roles?.includes('coach'));
-  const clubHome = !appAdmin && user?.roles?.includes('club_admin') && !isAthlete;
-  const adminTabs = [
-    { to: '/admin', label: 'Admin', icon: '🛡️' },
-    { to: '/support', label: 'Support', icon: '💬' },
-    { to: '/profile', label: 'Profile', icon: '👤' },
-  ];
-  const tabs = appAdmin
-    ? adminTabs
+  const isCoachUser = !staff && (user?.roles?.includes('coach'));
+  const clubHome = !staff && user?.roles?.includes('club_admin') && !isAthlete;
+  const staffTabs = supportOnly
+    ? [
+        { to: '/support-desk', label: 'Support', icon: '💬' },
+        { to: '/profile', label: 'Profile', icon: '👤' },
+      ]
+    : superAdmin
+      ? [
+          { to: '/admin', label: 'Admin', icon: '🛡️' },
+          { to: '/support-desk', label: 'Support', icon: '💬' },
+          { to: '/profile', label: 'Profile', icon: '👤' },
+        ]
+      : [
+          { to: '/admin', label: 'Admin', icon: '🛡️' },
+          { to: '/profile', label: 'Profile', icon: '👤' },
+        ];
+  const tabs = staff
+    ? staffTabs
     : clubHome
       ? [
           { to: '/clubs', label: 'Club', icon: '🏅' },
@@ -63,8 +77,8 @@ export default function Layout({ children }) {
         ]
       : athleteTabs;
 
-  const links = appAdmin
-    ? adminTabs
+  const links = staff
+    ? staffTabs
     : [
         ...(isAthlete ? athleteLinks : []),
         ...(isCoachUser ? [{ to: '/coaches', label: 'Coaching', icon: '👥' }] : []),
@@ -123,7 +137,7 @@ export default function Layout({ children }) {
         </div>
         <div className="flex flex-wrap items-center gap-1 mt-0.5">
           <span className="text-xs text-muted truncate" style={{ textTransform: 'capitalize' }}>
-            {appAdmin ? 'App admin' : clubHome ? 'Club admin' : user.roles?.join(' · ')}
+            {staff ? (superAdmin ? 'Super admin' : supportOnly ? 'Support admin' : 'Admin') : clubHome ? 'Club admin' : user.roles?.join(' · ')}
           </span>
           <VersionBadge />
         </div>
@@ -207,7 +221,7 @@ export default function Layout({ children }) {
         </div>
 
         <main className="p-4 md:p-8 max-w-6xl pb-24 md:pb-8">
-          {expiring && !appAdmin && (
+          {expiring && !staff && (
             <div className="mb-4 rounded-xl border border-accent/40 bg-accent/10 text-orange-200 px-4 py-3 text-sm">
               Membership expiring soon
               {membership.expiresAt ? ` on ${new Date(membership.expiresAt).toLocaleDateString()}` : ''}.
@@ -217,7 +231,7 @@ export default function Layout({ children }) {
         </main>
 
         <nav className="md:hidden fixed bottom-0 inset-x-0 z-30 bg-[#0b1118]/90 backdrop-blur-md border-t border-white/5 safe-bottom">
-          <div className={`grid ${appAdmin ? 'grid-cols-3' : clubHome ? 'grid-cols-4' : 'grid-cols-5'}`}>
+          <div className={`grid ${staff ? (staffTabs.length > 2 ? 'grid-cols-3' : 'grid-cols-2') : clubHome ? 'grid-cols-4' : 'grid-cols-5'}`}>
             {tabs.map((tab) => {
               const active = pathActive(location.pathname, tab.to);
               return (
@@ -231,7 +245,7 @@ export default function Layout({ children }) {
                 </NavLink>
               );
             })}
-            {!clubHome && !appAdmin && (
+            {!clubHome && !staff && (
               <button
                 type="button"
                 className={`tab-item ${open || !tabHit ? 'active' : ''}`}

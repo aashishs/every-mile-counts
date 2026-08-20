@@ -6,6 +6,7 @@ import { athleteHrContext } from '../utils/maf.js';
 import { syncUserActivities } from '../services/syncService.js';
 import { mappedFromFile, mappedFromManual, saveManualActivity } from '../services/activityImportService.js';
 import { asyncHandler } from '../middleware/error.js';
+import { familySqlClause, parseStoredSyncTypes } from '../utils/activityTypes.js';
 
 const router = express.Router();
 router.use(protect, requireMembership, rejectAppAdmin);
@@ -64,7 +65,23 @@ router.get(
     const filters = ['a.athlete_id = $1'];
     const params = [ownerId];
     let i = 2;
+    const owner =
+      ownerId === req.user.id
+        ? req.user
+        : camel(await one('SELECT sync_activity_types FROM users WHERE id = $1', [ownerId]));
+    const selectedTypes = parseStoredSyncTypes(owner?.syncActivityTypes);
     if (type && type !== 'all') {
+      if (!selectedTypes.includes(String(type))) {
+        return res.json({
+          activities: [],
+          total: 0,
+          page: 1,
+          pages: 1,
+          limit: parsedLimit,
+          sort: sortKey,
+          dir: dirSql.toLowerCase(),
+        });
+      }
       const family = activityTypeSql(type);
       if (family.params.length) {
         filters.push(family.clause.replace(/\$n/g, `$${i}`));
@@ -73,6 +90,9 @@ router.get(
       } else {
         filters.push(family.clause);
       }
+    } else {
+      const scoped = familySqlClause(selectedTypes);
+      if (scoped) filters.push(scoped);
     }
     if (q && String(q).trim()) {
       filters.push(`a.name ILIKE $${i++}`);
@@ -129,7 +149,10 @@ router.get(
   '/dashboard',
   requireAthlete,
   asyncHandler(async (req, res) => {
-    const data = await athleteDashboard(req.user.id, req.user, { type: req.query.type });
+    const data = await athleteDashboard(req.user.id, req.user, {
+      type: req.query.type,
+      syncTypes: req.user.syncActivityTypes,
+    });
     res.json(data);
   })
 );
@@ -138,7 +161,10 @@ router.get(
   '/analysis',
   requireAthlete,
   asyncHandler(async (req, res) => {
-    const data = await periodAnalysis(req.user.id, req.query.period || '90', { type: req.query.type });
+    const data = await periodAnalysis(req.user.id, req.query.period || '90', {
+      type: req.query.type,
+      syncTypes: req.user.syncActivityTypes,
+    });
     res.json(data);
   })
 );
@@ -157,6 +183,10 @@ router.post(
   requireAthlete,
   asyncHandler(async (req, res) => {
     const mapped = mappedFromManual(req.body || {});
+    const allowed = parseStoredSyncTypes(req.user.syncActivityTypes);
+    if (mapped.type && !allowed.includes(mapped.type)) {
+      return res.status(400).json({ message: 'That sport is not in your selected activity types' });
+    }
     const id = await saveManualActivity(req.user.id, mapped);
     res.status(201).json({ id, source: 'manual' });
   })
@@ -167,6 +197,10 @@ router.post(
   requireAthlete,
   asyncHandler(async (req, res) => {
     const mapped = mappedFromFile(req.body || {});
+    const allowed = parseStoredSyncTypes(req.user.syncActivityTypes);
+    if (mapped.type && !allowed.includes(mapped.type)) {
+      return res.status(400).json({ message: 'That sport is not in your selected activity types' });
+    }
     const id = await saveManualActivity(req.user.id, mapped);
     res.status(201).json({
       id,
@@ -289,7 +323,7 @@ router.get(
   asyncHandler(async (req, res) => {
     const activity = camel(
       await one(
-        `SELECT a.*, u.first_name, u.last_name, u.email, u.max_heart_rate, u.date_of_birth
+        `SELECT a.*, u.first_name, u.last_name, u.email, u.max_heart_rate, u.date_of_birth, u.age, u.maf_heart_rate
          FROM activities a
          JOIN users u ON u.id = a.athlete_id
          WHERE a.id = $1`,
@@ -301,7 +335,8 @@ router.get(
       return res.status(403).json({ message: 'Not authorized' });
     }
 
-    const insights = analyzeActivity(activity, athleteHrContext(activity));
+    const hr = athleteHrContext(activity);
+    const insights = analyzeActivity(activity, hr);
     const isCoach = req.user.roles.includes('coach') && req.user.id !== activity.athleteId;
 
     const reviews = camelMany(
@@ -326,7 +361,7 @@ router.get(
     );
 
     res.json({
-      activity,
+      activity: { ...activity, age: hr.age, mafHeartRate: hr.mafHeartRate },
       insights: isCoach ? insights : undefined,
       athleteInsights: req.user.id === activity.athleteId ? {
         summary: insights.summary,

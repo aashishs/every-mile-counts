@@ -151,6 +151,9 @@ export default function ActivityDetail() {
           <div>
             <div className="stat-label text-teal-100/70">
               {getActivityIcon(activity.type)} {activity.type} · {formatDate(activity.startDate)}
+              {isCoach && !mine && activity.mafHeartRate
+                ? ` · MAF ${activity.mafHeartRate} bpm`
+                : ''}
             </div>
             <h2 className="font-display text-3xl md:text-4xl font-bold tracking-tight text-white mt-2 leading-tight">
               {activity.name}

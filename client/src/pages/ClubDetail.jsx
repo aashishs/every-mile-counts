@@ -5,6 +5,7 @@ import Layout from '../components/Layout';
 import { useAuth } from '../context/AuthContext';
 import { isAthleteAccount } from '../utils/roles';
 import { formatActivityPrimary, formatDate, formatDateShort, getActivityIcon } from '../utils/format';
+import ClubInviteCodes from '../components/ClubInviteCodes';
 
 const PAGE_SIZES = [10, 20, 50, 100];
 
@@ -295,12 +296,22 @@ export default function ClubDetail() {
   const addCoach = async (e) => {
     e.preventDefault();
     try {
-      await api.post(`/clubs/${id}/coaches`, { email: coachEmail });
+      const { data } = await api.post(`/clubs/${id}/coaches`, { email: coachEmail });
       setCoachEmail('');
-      flash('Coach added');
+      flash(data.requested ? 'Request sent to platform admin' : 'Coach added');
       load();
     } catch (err) {
       flash(err.response?.data?.message || 'Could not add coach');
+    }
+  };
+
+  const requestCoachRole = async (userId) => {
+    try {
+      const { data } = await api.post(`/clubs/${id}/coaches`, { userId });
+      flash(data.requested ? 'Request sent to platform admin' : 'Coach added');
+      load();
+    } catch (err) {
+      flash(err.response?.data?.message || 'Could not request coach');
     }
   };
 
@@ -405,6 +416,9 @@ export default function ClubDetail() {
   const tabs = isAdmin
     ? [
         { id: 'about', label: 'About' },
+        ...(myMembership?.role === 'club_admin' && myMembership.status === 'active'
+          ? [{ id: 'invites', label: 'QR codes' }]
+          : []),
         { id: 'coaches', label: `Coaches (${coaches.length})` },
         { id: 'athletes', label: `Athletes (${athletes.length})` },
         { id: 'requests', label: (pending.length + coachRequests.length) ? `Requests (${pending.length + coachRequests.length})` : 'Requests' },
@@ -513,6 +527,12 @@ export default function ClubDetail() {
         </form>
       )}
 
+      {isAdmin && tab === 'invites' && (
+        <div className="mb-8">
+          <ClubInviteCodes clubId={id} clubName={club.name} pendingCoach={club.status === 'pending_coach'} />
+        </div>
+      )}
+
       {isAdmin && tab === 'coaches' && (
         <>
           <div className="flex flex-col gap-3 mb-3">
@@ -538,10 +558,10 @@ export default function ClubDetail() {
           <form className="card space-y-2 mb-3" onSubmit={addCoach}>
             <div className="flex flex-col sm:flex-row gap-2">
               <input placeholder="Coach email" value={coachEmail} onChange={(e) => setCoachEmail(e.target.value)} required />
-              <button className="btn-primary sm:w-auto w-full" type="submit">Add coach</button>
+              <button className="btn-primary sm:w-auto w-full" type="submit">Add or request coach</button>
             </div>
             {club.status === 'pending_coach' && (
-              <p className="text-xs text-accent mb-0">Add at least one coach before accepting athletes.</p>
+              <p className="text-xs text-accent mb-0">Request at least one coach. A platform admin must approve before the club can accept athletes.</p>
             )}
           </form>
           {!coaches.length ? (
@@ -692,6 +712,13 @@ export default function ClubDetail() {
                         <button className="btn-primary btn-sm" type="button" onClick={() => assign(a.userId)} disabled={!assignPick[a.userId]}>
                           Assign
                         </button>
+                        {a.coachRoleRequested ? (
+                          <span className="text-xs text-orange-200 self-center">Coach request pending</span>
+                        ) : (
+                          <button className="btn-outline btn-sm" type="button" onClick={() => requestCoachRole(a.userId)}>
+                            Request as coach
+                          </button>
+                        )}
                         <button className="btn-outline btn-sm" type="button" onClick={() => viewAthlete(a.userId)}>
                           {open ? 'Hide' : 'View'}
                         </button>
@@ -805,6 +832,13 @@ export default function ClubDetail() {
                               <button className="btn-primary btn-sm" type="button" onClick={() => assign(a.userId)} disabled={!assignPick[a.userId]}>
                                 Assign
                               </button>
+                              {a.coachRoleRequested ? (
+                                <span className="text-xs text-orange-200 self-center">Coach request pending</span>
+                              ) : (
+                                <button className="btn-outline btn-sm" type="button" onClick={() => requestCoachRole(a.userId)}>
+                                  Request as coach
+                                </button>
+                              )}
                               <button className="btn-outline btn-sm" type="button" onClick={() => viewAthlete(a.userId)}>
                                 {open ? 'Hide' : 'View'}
                               </button>

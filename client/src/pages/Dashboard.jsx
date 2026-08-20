@@ -5,7 +5,7 @@ import Layout from '../components/Layout';
 import ActivityTypeFilter from '../components/ActivityTypeFilter';
 import PersonalRecords from '../components/PersonalRecords';
 import { useAuth } from '../context/AuthContext';
-import { formatDate, formatTime, getActivityIcon, initialActivityType, rememberActivityType } from '../utils/format';
+import { formatDate, formatTime, getActivityIcon, initialActivityType, rememberActivityType, visibleActivityTypeOptions } from '../utils/format';
 import { isAthleteAccount } from '../utils/roles';
 import StravaCard from '../components/StravaCard';
 
@@ -40,6 +40,11 @@ export default function Dashboard() {
   useEffect(() => {
     rememberActivityType(type);
   }, [type]);
+
+  useEffect(() => {
+    const allowed = visibleActivityTypeOptions(user).map((opt) => opt.value);
+    if (!allowed.includes(type)) setType(allowed[0] || 'Run');
+  }, [user?.syncActivityTypes]);
 
   useEffect(() => {
     load();
@@ -88,7 +93,12 @@ export default function Dashboard() {
         <h2 className="page-title mb-0">{user.firstName}</h2>
         <p className="text-muted text-sm mt-1">Your {type.toLowerCase()} at a glance</p>
       </div>
-      <ActivityTypeFilter value={type} onChange={setType} showAll={false} />
+      <ActivityTypeFilter
+        value={type}
+        onChange={setType}
+        showAll={false}
+        options={visibleActivityTypeOptions(user)}
+      />
 
       {alertKey && messages[alertKey] && (
         <div className={`mb-4 rounded-2xl p-3 text-sm ${messages[alertKey].type === 'success' ? 'bg-emerald-500/10 border border-emerald-500 text-emerald-200' : 'bg-red-500/10 border border-red-500 text-red-200'}`}>

@@ -1,6 +1,7 @@
 import { verifyToken } from '../utils/jwt.js';
 import { camel, one } from '../config/db.js';
 import { getUserMembership, getUserRoles, isMembershipUsable, publicUser } from '../utils/membership.js';
+import { isOpsAdminUser, isStaffUser, isSuperAdminUser } from '../utils/staff.js';
 
 export async function protect(req, res, next) {
   const header = req.headers.authorization;
@@ -27,20 +28,39 @@ export async function protect(req, res, next) {
 }
 
 export function rejectAppAdmin(req, res, next) {
-  if (req.user.roles.includes('app_admin')) {
-    return res.status(403).json({ message: 'App admins manage the platform only' });
+  if (isStaffUser(req.user)) {
+    return res.status(403).json({ message: 'Staff accounts manage the platform only' });
   }
   next();
 }
 
 export function requireRole(...roles) {
   return (req, res, next) => {
-    const has = roles.some((role) => req.user.roles.includes(role));
+    const have = req.user.roles || [];
+    const expanded = roles.flatMap((role) => {
+      if (role === 'app_admin' || role === 'super_admin') return ['app_admin', 'super_admin'];
+      return [role];
+    });
+    const has = expanded.some((role) => have.includes(role));
     if (!has) {
       return res.status(403).json({ message: `Requires one of: ${roles.join(', ')}` });
     }
     next();
   };
+}
+
+export function requireSuperAdmin(req, res, next) {
+  if (!isSuperAdminUser(req.user)) {
+    return res.status(403).json({ message: 'Super admin required' });
+  }
+  next();
+}
+
+export function requireOpsAdmin(req, res, next) {
+  if (!isOpsAdminUser(req.user)) {
+    return res.status(403).json({ message: 'Admin required' });
+  }
+  next();
 }
 
 const MEMBERSHIP_BYPASS_PREFIXES = [
@@ -53,8 +73,8 @@ const MEMBERSHIP_BYPASS_PREFIXES = [
 ];
 
 export async function requireMembership(req, res, next) {
-  if (req.user.roles.includes('app_admin')) {
-    req.membership = { status: 'active', planName: 'Admin' };
+  if (isStaffUser(req.user)) {
+    req.membership = { status: 'active', planName: 'Staff' };
     return next();
   }
 

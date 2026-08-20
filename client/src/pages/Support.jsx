@@ -4,6 +4,8 @@ import Layout from '../components/Layout';
 import { StatusBadge } from '../components/Badge';
 import { useAuth } from '../context/AuthContext';
 import { formatDate, formatDateShort } from '../utils/format';
+import { homePath, isStaffAccount } from '../utils/roles';
+import { Navigate } from 'react-router-dom';
 
 const PAGE_SIZES = [10, 20, 50, 100];
 
@@ -44,7 +46,7 @@ function SortHeader({ label, column, sort, dir, onSort }) {
 }
 
 export default function Support() {
-  const { isAppAdmin } = useAuth();
+  const { user } = useAuth();
   const [tickets, setTickets] = useState([]);
   const [form, setForm] = useState({ subject: '', body: '' });
   const [sort, setSort] = useState('date');
@@ -55,7 +57,8 @@ export default function Support() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
 
-  const sortOptions = isAppAdmin ? ADMIN_SORT_OPTIONS : SORT_OPTIONS;
+  const sortOptions = SORT_OPTIONS;
+  const isAppAdmin = false;
 
   const load = async () => {
     setLoading(true);
@@ -70,7 +73,7 @@ export default function Support() {
     }
   };
 
-  useEffect(() => { load(); }, [sort, dir, page, limit, isAppAdmin]);
+  useEffect(() => { load(); }, [sort, dir, page, limit]);
 
   const submit = async (e) => {
     e.preventDefault();
@@ -111,6 +114,10 @@ export default function Support() {
 
   const from = total === 0 ? 0 : (page - 1) * limit + 1;
   const to = Math.min(page * limit, total);
+
+  if (isStaffAccount(user)) {
+    return <Navigate to={homePath(user)} replace />;
+  }
 
   return (
     <Layout>

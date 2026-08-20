@@ -45,7 +45,10 @@ const ROLE_LABEL = {
   athlete: 'Athlete',
   coach: 'Coach',
   club_admin: 'Club admin',
-  app_admin: 'App admin',
+  app_admin: 'Super admin',
+  super_admin: 'Super admin',
+  admin: 'Admin',
+  support_admin: 'Support admin',
   member: 'Athlete',
 };
 
@@ -54,6 +57,9 @@ const ROLE_VARIANT = {
   coach: 'accent',
   club_admin: 'info',
   app_admin: 'warning',
+  super_admin: 'warning',
+  admin: 'info',
+  support_admin: 'accent',
   member: 'brand',
 };
 

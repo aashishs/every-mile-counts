@@ -14,6 +14,8 @@ CREATE TABLE IF NOT EXISTS users (
   location TEXT,
   timezone TEXT DEFAULT 'UTC',
   date_of_birth DATE,
+  age INTEGER,
+  maf_heart_rate INTEGER,
   max_heart_rate INTEGER,
   resting_heart_rate INTEGER,
   status TEXT NOT NULL DEFAULT 'active'
@@ -30,6 +32,8 @@ CREATE TABLE IF NOT EXISTS users (
   }'::jsonb,
   last_login_at TIMESTAMPTZ,
   default_activity_type TEXT NOT NULL DEFAULT 'Run',
+  sync_activity_types JSONB NOT NULL DEFAULT '["Run","Ride","Swim","Walk","Hike","Workout","WeightTraining","Yoga","HIIT"]'::jsonb,
+  sync_activity_types_confirmed_at TIMESTAMPTZ,
   email_verified_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -37,7 +41,7 @@ CREATE TABLE IF NOT EXISTS users (
 
 CREATE TABLE IF NOT EXISTS user_roles (
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  role TEXT NOT NULL CHECK (role IN ('athlete', 'coach', 'club_admin', 'app_admin')),
+  role TEXT NOT NULL CHECK (role IN ('athlete', 'coach', 'club_admin', 'app_admin', 'super_admin', 'admin', 'support_admin')),
   PRIMARY KEY (user_id, role)
 );
 
@@ -135,6 +139,9 @@ ALTER TABLE memberships
   ADD CONSTRAINT memberships_club_id_fkey
   FOREIGN KEY (club_id) REFERENCES clubs(id) ON DELETE CASCADE;
 
+ALTER TABLE invitation_codes ADD COLUMN IF NOT EXISTS club_id UUID REFERENCES clubs(id) ON DELETE CASCADE;
+CREATE INDEX IF NOT EXISTS idx_invitation_codes_club ON invitation_codes (club_id);
+
 CREATE TABLE IF NOT EXISTS club_members (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   club_id UUID NOT NULL REFERENCES clubs(id) ON DELETE CASCADE,
@@ -162,7 +169,7 @@ CREATE INDEX IF NOT EXISTS idx_club_members_user ON club_members (user_id);
 CREATE INDEX IF NOT EXISTS idx_clubs_slug ON clubs (slug);
 
 -- ---------------------------------------------------------------------------
--- Coach assignments (max 3 per athlete, enforced in application)
+-- Coach assignments (max 3 coaches and max 3 clubs per athlete, enforced in application)
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS coach_assignments (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -403,6 +410,30 @@ CREATE TABLE IF NOT EXISTS support_tickets (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS support_ticket_messages (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  ticket_id UUID NOT NULL REFERENCES support_tickets(id) ON DELETE CASCADE,
+  user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  body TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_support_ticket_messages_ticket ON support_ticket_messages (ticket_id, created_at);
+
+CREATE TABLE IF NOT EXISTS coach_role_requests (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  club_id UUID NOT NULL REFERENCES clubs(id) ON DELETE CASCADE,
+  athlete_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  requested_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected', 'cancelled')),
+  reviewed_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  reviewed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (club_id, athlete_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_coach_role_requests_status ON coach_role_requests (status, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS oauth_pending (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -413,6 +444,8 @@ CREATE TABLE IF NOT EXISTS oauth_pending (
 );
 
 ALTER TABLE users ADD COLUMN IF NOT EXISTS default_activity_type TEXT NOT NULL DEFAULT 'Run';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS sync_activity_types JSONB NOT NULL DEFAULT '["Run","Ride","Swim","Walk","Hike","Workout","WeightTraining","Yoga","HIIT"]'::jsonb;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS sync_activity_types_confirmed_at TIMESTAMPTZ;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMPTZ;
 ALTER TABLE events ADD COLUMN IF NOT EXISTS event_time TIME;
 

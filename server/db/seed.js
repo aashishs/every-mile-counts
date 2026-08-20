@@ -1,9 +1,6 @@
 import bcrypt from 'bcryptjs';
-import dotenv from 'dotenv';
 import { pool, one } from '../config/db.js';
 import { ensureSchemaPatches } from './ensureSchema.js';
-
-dotenv.config();
 
 const PLANS = [
   { name: '1 Month', months: 1, audience: 'universal' },
@@ -31,7 +28,7 @@ async function seed() {
       [email, hash]
     );
     await pool.query(
-      `INSERT INTO user_roles (user_id, role) VALUES ($1, 'app_admin')
+      `INSERT INTO user_roles (user_id, role) VALUES ($1, 'super_admin')
        ON CONFLICT DO NOTHING`,
       [admin.id]
     );
@@ -40,15 +37,21 @@ async function seed() {
        VALUES ($1, 'active', NOW(), NULL)`,
       [admin.id]
     );
-    console.log(`Created admin user ${email}`);
+    console.log(`Created super admin user ${email}`);
+  } else {
+    await pool.query(
+      `INSERT INTO user_roles (user_id, role) VALUES ($1, 'super_admin')
+       ON CONFLICT DO NOTHING`,
+      [admin.id]
+    );
   }
 
   await pool.query(
     `DELETE FROM user_roles ur
      USING user_roles admin_role
      WHERE admin_role.user_id = ur.user_id
-       AND admin_role.role = 'app_admin'
-       AND ur.role <> 'app_admin'`
+       AND admin_role.role IN ('super_admin', 'app_admin')
+       AND ur.role NOT IN ('super_admin', 'app_admin')`
   );
 
   for (const plan of PLANS) {

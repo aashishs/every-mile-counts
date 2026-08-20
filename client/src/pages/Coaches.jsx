@@ -342,6 +342,7 @@ export default function Coaches() {
                     <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted mt-2">
                       <span>{a.activityCount ?? 0} activities</span>
                       <span>Last {a.lastActivityAt ? formatDateShort(a.lastActivityAt) : '—'}</span>
+                      <span>{a.mafHeartRate ? `MAF ${a.mafHeartRate}` : 'MAF —'}</span>
                     </div>
                   </button>
                 ))}
@@ -360,6 +361,7 @@ export default function Coaches() {
                       <th className="p-3">
                         <SortHeader label="Last activity" column="lastActivity" sort={sort} dir={dir} onSort={changeSort} />
                       </th>
+                      <th className="p-3 text-muted font-semibold">MAF</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -377,6 +379,7 @@ export default function Coaches() {
                         <td className="p-3 whitespace-nowrap text-muted">
                           {a.lastActivityAt ? formatDate(a.lastActivityAt) : '—'}
                         </td>
+                        <td className="p-3 whitespace-nowrap">{a.mafHeartRate ? `${a.mafHeartRate}` : '—'}</td>
                       </tr>
                     ))}
                   </tbody>

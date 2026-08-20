@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import api from '../api/client';
 import { DurationPicker, TimePicker, ymd } from './MonthCalendar';
-import { ACTIVITY_TYPE_OPTIONS, activityMetric } from '../utils/format';
+import { activityMetric, visibleActivityTypeOptions } from '../utils/format';
+import { useAuth } from '../context/AuthContext';
 
 function pad2(n) {
   return String(n).padStart(2, '0');
@@ -32,8 +33,14 @@ const emptyManual = () => ({
 });
 
 export default function AddActivityModal({ onClose, onSaved }) {
+  const { user } = useAuth();
+  const typeOptions = visibleActivityTypeOptions(user);
   const [tab, setTab] = useState('manual');
-  const [form, setForm] = useState(emptyManual);
+  const [form, setForm] = useState(() => {
+    const seed = emptyManual();
+    const first = typeOptions[0]?.value || 'Run';
+    return { ...seed, type: typeOptions.some((opt) => opt.value === seed.type) ? seed.type : first };
+  });
   const [file, setFile] = useState(null);
   const [fileMeta, setFileMeta] = useState({ name: '', type: '', description: '' });
   const [saving, setSaving] = useState(false);
@@ -111,7 +118,7 @@ export default function AddActivityModal({ onClose, onSaved }) {
             <div>
               <label htmlFor="actType">Sport</label>
               <select id="actType" value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })}>
-                {ACTIVITY_TYPE_OPTIONS.map((t) => (
+                {typeOptions.map((t) => (
                   <option key={t.value} value={t.value}>{t.label}</option>
                 ))}
               </select>
@@ -191,7 +198,7 @@ export default function AddActivityModal({ onClose, onSaved }) {
               <label htmlFor="fileType">Sport (optional)</label>
               <select id="fileType" value={fileMeta.type} onChange={(e) => setFileMeta({ ...fileMeta, type: e.target.value })}>
                 <option value="">From file</option>
-                {ACTIVITY_TYPE_OPTIONS.map((t) => (
+                {typeOptions.map((t) => (
                   <option key={t.value} value={t.value}>{t.label}</option>
                 ))}
               </select>

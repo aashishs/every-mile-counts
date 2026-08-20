@@ -77,10 +77,15 @@ export function AuthProvider({ children }) {
         resendOtp,
         logout,
         refresh,
+        updateUser: setUser,
         hasRole,
         isCoach: hasRole('coach'),
         isClubAdmin: hasRole('club_admin'),
-        isAppAdmin: hasRole('app_admin'),
+        isAppAdmin: ['super_admin', 'app_admin', 'admin', 'support_admin'].some((r) => hasRole(r)),
+        isSuperAdmin: hasRole('super_admin') || hasRole('app_admin'),
+        isOpsAdmin: hasRole('admin') || hasRole('super_admin') || hasRole('app_admin'),
+        isSupportAdmin: hasRole('support_admin'),
+        isSupportStaff: hasRole('support_admin') || hasRole('super_admin') || hasRole('app_admin'),
       }}
     >
       {children}

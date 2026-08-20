@@ -52,8 +52,8 @@ export async function issueLoginOtp(user, { ip } = {}) {
   const { sent } = await sendMail({
     to: user.email,
     subject: 'Your Every Mile Counts verification code',
-    text: `Hi ${user.firstName || ''},\n\nYour verification code is ${code}. It expires in ${OTP_MINUTES} minutes.\n\nIf you did not try to sign in, you can ignore this email.`,
-    html: `<p>Hi ${user.firstName || ''},</p><p>Your verification code is <strong style="font-size:1.25rem;letter-spacing:0.2em">${code}</strong>.</p><p>It expires in ${OTP_MINUTES} minutes.</p><p>If you did not try to sign in, you can ignore this email.</p>`,
+    text: `Your Every Mile Counts verification code is ${code}. It expires in ${OTP_MINUTES} minutes.\n\nIf you did not try to sign up, you can ignore this email.`,
+    html: `<p>Your Every Mile Counts verification code is <strong style="font-size:1.25rem;letter-spacing:0.2em">${code}</strong>.</p><p>It expires in ${OTP_MINUTES} minutes.</p><p>If you did not try to sign up, you can ignore this email.</p>`,
   });
 
   if (!sent && process.env.NODE_ENV === 'production') {
@@ -64,7 +64,10 @@ export async function issueLoginOtp(user, { ip } = {}) {
     requiresOtp: true,
     challengeId: row.id,
     email: user.email,
-    message: `We sent a 6-digit code to ${user.email}`,
+    sent: Boolean(sent),
+    message: sent
+      ? `We sent a 6-digit code to ${user.email}`
+      : `Email is not configured on this server, so nothing was sent to ${user.email}. Set SMTP_PASS to a Gmail App Password.`,
   };
   if (!sent && process.env.NODE_ENV !== 'production') {
     payload.debugCode = code;

@@ -1,5 +1,6 @@
 import { camel, one, query } from '../config/db.js';
 import { isPushConfigured, sendPushToUser } from './pushService.js';
+import { isStaffUser } from '../utils/staff.js';
 
 const TYPE_PREF = {
   review: 'reviews',
@@ -41,7 +42,7 @@ async function recipient(userId, type) {
   );
   if (!row || row.status !== 'active') return null;
   const roles = row.roles || [];
-  if (roles.includes('app_admin')) return null;
+  if (isStaffUser(roles)) return null;
   const clubOnly = roles.includes('club_admin') && !roles.includes('athlete') && !roles.includes('coach');
   if (clubOnly && !['club', 'announcement', 'membership', 'event'].includes(type)) return null;
   return { prefs: row.notification_prefs || {}, roles };

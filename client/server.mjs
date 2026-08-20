@@ -26,6 +26,7 @@ const MIME = {
   '.woff2': 'font/woff2',
   '.txt': 'text/plain; charset=utf-8',
   '.webmanifest': 'application/manifest+json',
+  '.xml': 'application/xml',
 };
 
 function parseOrigin(value) {
@@ -58,7 +59,12 @@ function apiBase() {
 
 function sendFile(res, file) {
   const ext = path.extname(file).toLowerCase();
-  res.writeHead(200, { 'content-type': MIME[ext] || 'application/octet-stream' });
+  const name = path.basename(file);
+  const headers = { 'content-type': MIME[ext] || 'application/octet-stream' };
+  if (name === 'sw.js' || name === 'workbox-window.js' || ext === '.webmanifest') {
+    headers['cache-control'] = 'no-cache';
+  }
+  res.writeHead(200, headers);
   fs.createReadStream(file).pipe(res);
 }
 

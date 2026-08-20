@@ -1,11 +1,12 @@
-import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { afterJoinPath } from '../utils/roles';
-import { todayIsoDate } from '../utils/maf';
 import OtpVerify from '../components/OtpVerify';
 import { VersionBadge } from '../components/Badge';
 import { isBeta } from '../utils/appVersion';
+import api from '../api/client';
+import { clearClubInvite, pendingClubInvite, readClubInviteFromSearch, saveClubInvite } from '../utils/clubInvite';
 
 const ACCOUNT_TYPES = [
   { value: 'athlete', label: 'Athlete', hint: 'Sync training and get coached' },
@@ -14,31 +15,71 @@ const ACCOUNT_TYPES = [
 ];
 
 export default function Register() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [form, setForm] = useState({
-    firstName: '',
-    lastName: '',
     email: '',
     password: '',
+    passwordConfirm: '',
     invitationCode: '',
-    location: '',
-    clubName: '',
-    dateOfBirth: '',
     accountType: 'athlete',
   });
+  const [clubInvite, setClubInvite] = useState(null);
+  const [fromClubQr, setFromClubQr] = useState(() => Boolean(pendingClubInvite()));
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [otp, setOtp] = useState(null);
   const { register, verifyOtp, resendOtp } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+
+  useEffect(() => {
+    const fromUrl = readClubInviteFromSearch(searchParams);
+    const fromState = location.state?.clubInvite;
+    if (fromUrl) {
+      saveClubInvite(fromUrl);
+      const next = new URLSearchParams(searchParams);
+      next.delete('code');
+      setSearchParams(next, { replace: true });
+    }
+    const invite = fromUrl || fromState || pendingClubInvite();
+    if (fromState) saveClubInvite(fromState);
+    if (!invite) return;
+    setFromClubQr(true);
+    setForm((prev) => ({
+      ...prev,
+      invitationCode: invite.code,
+      accountType: invite.role === 'coach' ? 'coach' : 'athlete',
+    }));
+    api
+      .get('/clubs/invite-preview', {
+        params: { code: invite.code, club: invite.clubId, role: invite.role },
+      })
+      .then(({ data }) => {
+        setClubInvite(data);
+        saveClubInvite({ clubId: data.clubId, role: data.role, code: invite.code });
+      })
+      .catch((err) => {
+        setError(err.response?.data?.message || 'This club invite is no longer valid');
+      });
+  }, [searchParams, setSearchParams]);
 
   const set = (e) => {
     const { name, type, checked, value } = e.target;
     setForm({ ...form, [name]: type === 'checkbox' ? checked : value });
   };
 
+  const passwordMismatch = Boolean(form.passwordConfirm) && form.password !== form.passwordConfirm;
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
+    if (form.password !== form.passwordConfirm) {
+      return;
+    }
+    if (!form.invitationCode) {
+      setError('Invitation code is required');
+      return;
+    }
     setLoading(true);
     try {
       const roles =
@@ -47,11 +88,18 @@ export default function Register() {
           : form.accountType === 'coach'
             ? ['coach', 'athlete']
             : ['athlete'];
-      const data = await register({ ...form, roles });
+      const data = await register({
+        email: form.email,
+        password: form.password,
+        passwordConfirm: form.passwordConfirm,
+        invitationCode: form.invitationCode,
+        roles,
+      });
       if (data.requiresOtp) {
         setOtp(data);
         return;
       }
+      clearClubInvite();
       if (data.user) navigate(afterJoinPath(data.user));
     } catch (err) {
       setError(err.response?.data?.message || 'Registration failed');
@@ -81,6 +129,7 @@ export default function Register() {
             debugCode={otp.debugCode}
             onVerify={async (code) => {
               const user = await verifyOtp(otp.challengeId, code);
+              clearClubInvite();
               navigate(afterJoinPath(user));
             }}
             onResend={async () => {
@@ -90,55 +139,17 @@ export default function Register() {
           />
         ) : (
           <>
+            {!isBeta && <p className="text-center text-muted mb-6">Create your account</p>}
+            {fromClubQr && (
+              <p className="text-center text-sm text-brand mb-4">
+                {clubInvite
+                  ? `Joining ${clubInvite.clubName} as ${clubInvite.role === 'coach' ? 'a coach' : 'an athlete'}`
+                  : 'Joining this club…'}
+              </p>
+            )}
             {error && <div className="mb-4 rounded-xl border border-red-500/40 bg-red-500/10 text-red-200 p-3 text-sm">{error}</div>}
             <form onSubmit={handleSubmit} className="space-y-3">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label htmlFor="firstName">{form.accountType === 'club' ? 'Admin first name' : 'First name'}</label>
-                  <input id="firstName" name="firstName" value={form.firstName} onChange={set} required />
-                </div>
-                <div>
-                  <label htmlFor="lastName">{form.accountType === 'club' ? 'Admin last name' : 'Last name'}</label>
-                  <input id="lastName" name="lastName" value={form.lastName} onChange={set} required />
-                </div>
-              </div>
-              <div>
-                <label htmlFor="email">Email</label>
-                <input id="email" name="email" type="email" value={form.email} onChange={set} required />
-                {form.accountType !== 'club' && (
-                  <p className="text-xs text-muted mt-1">
-                    If you can, use the same email as your Strava account. It makes connecting easier.
-                  </p>
-                )}
-              </div>
-              <div>
-                <label htmlFor="password">Password</label>
-                <input id="password" name="password" type="password" value={form.password} onChange={set} required minLength={8} />
-              </div>
-              {form.accountType !== 'club' && (
-                <div>
-                  <label htmlFor="dateOfBirth">Date of birth</label>
-                  <input
-                    id="dateOfBirth"
-                    name="dateOfBirth"
-                    type="date"
-                    value={form.dateOfBirth}
-                    onChange={set}
-                    required
-                    max={todayIsoDate()}
-                  />
-                  <p className="text-xs text-muted mt-1">Used to set your age and MAF heart rate (180 − age).</p>
-                </div>
-              )}
-              <div>
-                <label htmlFor="invitationCode">Invitation code</label>
-                <input id="invitationCode" name="invitationCode" value={form.invitationCode} onChange={set} required autoComplete="off" />
-                <p className="text-xs text-muted mt-1">Reach out to an admin for an invitation code.</p>
-              </div>
-              <div>
-                <label htmlFor="location">Location</label>
-                <input id="location" name="location" value={form.location} onChange={set} />
-              </div>
+              {!fromClubQr && (
               <div>
                 <span className="block text-sm font-medium mb-1.5">Account type</span>
                 <div className="space-y-2">
@@ -160,15 +171,55 @@ export default function Register() {
                   ))}
                 </div>
               </div>
-              {form.accountType === 'club' && (
-                <>
-                  <div>
-                    <label htmlFor="clubName">Club name</label>
-                    <input id="clubName" name="clubName" value={form.clubName} onChange={set} required />
-                  </div>
-                </>
               )}
-              <button type="submit" className="btn-primary w-full" disabled={loading}>
+              <div>
+                <label htmlFor="email">Email</label>
+                <input id="email" name="email" type="email" value={form.email} onChange={set} required autoComplete="email" />
+                {form.accountType !== 'club' && (
+                  <p className="text-xs text-muted mt-1">
+                    If you can, use the same email as your Strava account. It makes connecting easier.
+                  </p>
+                )}
+              </div>
+              <div>
+                <label htmlFor="password">Password</label>
+                <input
+                  id="password"
+                  name="password"
+                  type="password"
+                  value={form.password}
+                  onChange={set}
+                  required
+                  minLength={8}
+                  autoComplete="new-password"
+                />
+              </div>
+              <div>
+                <label htmlFor="passwordConfirm">Confirm password</label>
+                <input
+                  id="passwordConfirm"
+                  name="passwordConfirm"
+                  type="password"
+                  value={form.passwordConfirm}
+                  onChange={set}
+                  required
+                  minLength={8}
+                  autoComplete="new-password"
+                  aria-invalid={passwordMismatch}
+                  className={passwordMismatch ? 'border-red-500 focus:border-red-500' : undefined}
+                />
+                {passwordMismatch && (
+                  <p className="text-xs text-red-300 mt-1">Passwords do not match</p>
+                )}
+              </div>
+              {!fromClubQr && (
+              <div>
+                <label htmlFor="invitationCode">Invitation code</label>
+                <input id="invitationCode" name="invitationCode" value={form.invitationCode} onChange={set} required autoComplete="off" />
+                <p className="text-xs text-muted mt-1">Reach out to an admin for an invitation code.</p>
+              </div>
+              )}
+              <button type="submit" className="btn-primary w-full" disabled={loading || passwordMismatch}>
                 {loading ? 'Sending code…' : 'Create account'}
               </button>
             </form>

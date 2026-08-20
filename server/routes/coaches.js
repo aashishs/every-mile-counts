@@ -2,9 +2,11 @@ import express from 'express';
 import { camel, camelMany, many, one, query } from '../config/db.js';
 import { protect, requireMembership, requireRole, rejectAppAdmin } from '../middleware/auth.js';
 import { asyncHandler } from '../middleware/error.js';
+import { ageFromDob, mafHeartRate } from '../utils/maf.js';
 import { createNotification } from '../services/notificationService.js';
+import { MAX_COACHES } from '../utils/limits.js';
+import { assertCoachSlot } from '../utils/invites.js';
 
-const MAX_COACHES = 3;
 const router = express.Router();
 router.use(protect, requireMembership, rejectAppAdmin);
 
@@ -71,13 +73,7 @@ router.post(
     if (coach.id === req.user.id) {
       return res.status(400).json({ message: 'You cannot add yourself as a coach' });
     }
-    const countRow = await one(
-      `SELECT COUNT(*)::int AS count FROM coach_assignments WHERE athlete_id = $1 AND status = 'active'`,
-      [req.user.id]
-    );
-    if (countRow.count >= MAX_COACHES) {
-      return res.status(400).json({ message: 'You can have at most three coaches' });
-    }
+    await assertCoachSlot(req.user.id, { coachId: coach.id });
     const sharedClub = camel(
       await one(
         `SELECT me.club_id
@@ -142,13 +138,14 @@ router.get(
     `;
     const selectSql = `
       SELECT ca.athlete_id, ca.club_id, u.first_name, u.last_name, u.email, u.avatar_url,
+             u.date_of_birth, u.age, u.maf_heart_rate,
              (SELECT COUNT(*) FROM activities a WHERE a.athlete_id = u.id)::int AS activity_count,
              (SELECT MAX(a.start_date) FROM activities a WHERE a.athlete_id = u.id) AS last_activity_at
       ${fromSql}
     `;
 
     if (athleteId) {
-      const row = camel(await one(selectSql, params));
+      const row = withAthleteMaf(camel(await one(selectSql, params)));
       return res.json({ athletes: row ? [row] : [], count: row ? 1 : 0 });
     }
 
@@ -162,7 +159,7 @@ router.get(
         `${selectSql} ORDER BY ${orderSql} LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
         [...params, limit, offset]
       )
-    );
+    ).map(withAthleteMaf);
     res.json({
       athletes,
       total,
@@ -190,3 +187,13 @@ router.delete(
 );
 
 export default router;
+
+function withAthleteMaf(row) {
+  if (!row) return row;
+  const age = ageFromDob(row.dateOfBirth) ?? row.age ?? null;
+  return {
+    ...row,
+    age,
+    mafHeartRate: mafHeartRate(age) ?? row.mafHeartRate ?? null,
+  };
+}

@@ -14,6 +14,7 @@ import {
   getActivityIcon,
   initialActivityType,
   rememberActivityType,
+  visibleActivityTypeOptions,
 } from '../utils/format';
 
 const emptyFilters = {
@@ -80,6 +81,14 @@ export default function Activities() {
   useEffect(() => {
     load();
   }, [typeFilter, page, applied, limit, sort, dir]);
+
+  useEffect(() => {
+    const allowed = visibleActivityTypeOptions(user).map((opt) => opt.value);
+    if (typeFilter !== 'all' && !allowed.includes(typeFilter)) {
+      setTypeFilter('all');
+      setPage(1);
+    }
+  }, [user?.syncActivityTypes]);
 
   const load = async () => {
     setLoading(true);
@@ -170,6 +179,7 @@ export default function Activities() {
           setTypeFilter(next);
           setPage(1);
         }}
+        options={visibleActivityTypeOptions(user)}
       />
 
       <div className="flex flex-wrap items-center justify-between gap-2 mb-3">

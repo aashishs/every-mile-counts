@@ -38,6 +38,37 @@ export function validateDateOfBirth(value) {
   return null;
 }
 
+export function todayInTimeZone(tz = process.env.APP_TZ || 'Asia/Kolkata') {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date());
+  const pick = (type) => Number(parts.find((p) => p.type === type)?.value);
+  return new Date(pick('year'), pick('month') - 1, pick('day'));
+}
+
+export function ageAndMafFromDob(value, on = new Date()) {
+  const age = ageFromDob(value, on);
+  return { age, mafHeartRate: mafHeartRate(age) };
+}
+
+export function isBirthdayOn(value, on = new Date()) {
+  const s = parseDateOfBirth(value);
+  if (!s) return false;
+  const [, month, day] = s.split('-').map(Number);
+  const onMonth = on.getMonth() + 1;
+  const onDay = on.getDate();
+  if (onMonth === month && onDay === day) return true;
+  if (month === 2 && day === 29 && onMonth === 2 && onDay === 28) {
+    const y = on.getFullYear();
+    const leap = (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
+    return !leap;
+  }
+  return false;
+}
+
 export function athleteHrContext(user = {}) {
   const dateOfBirth = user.dateOfBirth ?? user.date_of_birth ?? null;
   const age = user.age ?? ageFromDob(dateOfBirth);

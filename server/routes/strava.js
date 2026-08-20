@@ -1,7 +1,9 @@
 import express from 'express';
 import axios from 'axios';
+import { camel, one } from '../config/db.js';
 import { protect, requireMembership } from '../middleware/auth.js';
 import {
+  applySyncActivityTypes,
   completeStravaOAuth,
   getStravaConnection,
   handleStravaWebhookEvent,
@@ -10,7 +12,8 @@ import {
 } from '../services/stravaService.js';
 import { asyncHandler } from '../middleware/error.js';
 import { writeAudit } from '../services/auditService.js';
-import { getUserRoles, isAppAdminUser, isAthleteUser } from '../utils/membership.js';
+import { getUserRoles, isAppAdminUser, isAthleteUser, publicUser } from '../utils/membership.js';
+import { parseStoredSyncTypes } from '../utils/activityTypes.js';
 import { encryptionConfigured } from '../utils/crypto.js';
 import { clientUrl, requestPublicUrl, stravaRedirectUri } from '../utils/urls.js';
 
@@ -50,12 +53,23 @@ function oauthFailWhy(err) {
   return 'save';
 }
 
+function needsFirstTypePick(user, conn) {
+  return !user?.syncActivityTypesConfirmedAt && !conn?.connected && !conn?.lastSyncAt;
+}
+
 router.get(
   '/connect',
   protect,
   requireMembership,
   rejectClubAccount,
-  (req, res) => {
+  asyncHandler(async (req, res) => {
+    const existing = await getStravaConnection(req.user.id);
+    if (needsFirstTypePick(req.user, existing)) {
+      return res.status(400).json({
+        message: 'Choose which activity types to sync before connecting Strava.',
+        code: 'sync_types_required',
+      });
+    }
     if (!stravaConfigured() || !encryptionConfigured()) {
       const missing = stravaMissing();
       return res.status(503).json({
@@ -81,7 +95,7 @@ router.get(
       state: req.user.id,
     });
     res.json({ url: `https://www.strava.com/oauth/authorize?${params.toString()}` });
-  }
+  })
 );
 
 router.get(
@@ -164,6 +178,21 @@ router.post(
   })
 );
 
+router.post(
+  '/activity-types',
+  protect,
+  requireMembership,
+  rejectClubAccount,
+  asyncHandler(async (req, res) => {
+    const result = await applySyncActivityTypes(req.user.id, req.body?.types);
+    const row = camel(await one('SELECT * FROM users WHERE id = $1', [req.user.id]));
+    res.json({
+      ...result,
+      user: await publicUser(row, { roles: req.user.roles }),
+    });
+  })
+);
+
 router.get(
   '/status',
   protect,
@@ -187,6 +216,8 @@ router.get(
         : lastSyncError,
       needsReconnect,
       providerUserId: conn?.providerUserId,
+      needsFirstTypePick: needsFirstTypePick(req.user, conn),
+      syncActivityTypes: parseStoredSyncTypes(req.user.syncActivityTypes),
     });
   })
 );

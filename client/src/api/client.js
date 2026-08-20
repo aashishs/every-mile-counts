@@ -20,7 +20,7 @@ api.interceptors.response.use(
     if (error.response?.status === 401 && !stravaCall && error.response?.data?.code !== 'strava_reauth') {
       localStorage.removeItem('token');
       const path = window.location.pathname;
-      if (!['/login', '/register', '/forgot-password', '/reset-password'].includes(path)) {
+      if (!['/login', '/register', '/forgot-password', '/reset-password', '/join'].includes(path)) {
         window.location.href = '/login';
       }
     }

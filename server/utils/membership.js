@@ -1,5 +1,7 @@
 import { camel, many, one, query } from '../config/db.js';
 import { ageFromDob, mafHeartRate, parseDateOfBirth } from './maf.js';
+import { isStaffUser, isSuperAdminUser } from './staff.js';
+import { parseStoredSyncTypes } from './activityTypes.js';
 
 export function computeMembershipStatus(membership) {
   if (!membership) return null;
@@ -64,23 +66,22 @@ export async function getUserRoles(userId) {
 }
 
 export function isAppAdminUser(userOrRoles) {
-  const roles = Array.isArray(userOrRoles) ? userOrRoles : userOrRoles?.roles || [];
-  return roles.includes('app_admin');
+  return isSuperAdminUser(userOrRoles);
 }
 
 export function isClubOnlyUser(userOrRoles) {
   const roles = Array.isArray(userOrRoles) ? userOrRoles : userOrRoles?.roles || [];
-  return roles.includes('club_admin') && !roles.includes('athlete') && !roles.includes('coach') && !roles.includes('app_admin');
+  return roles.includes('club_admin') && !roles.includes('athlete') && !roles.includes('coach') && !isStaffUser(roles);
 }
 
 export function isAthleteUser(userOrRoles) {
   const roles = Array.isArray(userOrRoles) ? userOrRoles : userOrRoles?.roles || [];
-  return roles.includes('athlete') && !roles.includes('app_admin');
+  return roles.includes('athlete') && !isStaffUser(roles);
 }
 
 export async function grantAthleteUnlessClubAdmin(userId) {
   const roles = await getUserRoles(userId);
-  if (roles.includes('club_admin') || roles.includes('app_admin')) return;
+  if (roles.includes('club_admin') || isStaffUser(roles)) return;
   await query(
     `INSERT INTO user_roles (user_id, role) VALUES ($1, 'athlete') ON CONFLICT DO NOTHING`,
     [userId]
@@ -89,7 +90,7 @@ export async function grantAthleteUnlessClubAdmin(userId) {
 
 export async function stripTrainingRolesForClubAdmin(userId) {
   const roles = await getUserRoles(userId);
-  if (!roles.includes('club_admin') || roles.includes('app_admin')) return;
+  if (!roles.includes('club_admin') || isStaffUser(roles)) return;
   await query(`DELETE FROM user_roles WHERE user_id = $1 AND role IN ('athlete', 'coach')`, [userId]);
   await query(
     `UPDATE coach_assignments SET status = 'inactive'
@@ -98,16 +99,39 @@ export async function stripTrainingRolesForClubAdmin(userId) {
   );
 }
 
+export async function getAdminClub(userId) {
+  return camel(
+    await one(
+      `SELECT c.id, c.name
+       FROM clubs c
+       JOIN club_members cm ON cm.club_id = c.id
+       WHERE cm.user_id = $1 AND cm.role = 'club_admin' AND cm.status = 'active'
+       ORDER BY cm.requested_at ASC
+       LIMIT 1`,
+      [userId]
+    )
+  );
+}
+
 export async function publicUser(user, extras = {}) {
   if (!user) return null;
   const roles = extras.roles || (await getUserRoles(user.id));
   const dateOfBirth = parseDateOfBirth(user.dateOfBirth ?? user.date_of_birth);
   const age = ageFromDob(dateOfBirth);
+  const firstName = String(user.firstName ?? user.first_name ?? '').trim();
+  const lastName = String(user.lastName ?? user.last_name ?? '').trim();
+  let adminClubId = extras.adminClubId ?? null;
+  let adminClubName = extras.adminClubName ?? null;
+  if (roles.includes('club_admin') && extras.adminClubId === undefined) {
+    const club = await getAdminClub(user.id);
+    adminClubId = club?.id || null;
+    adminClubName = club?.name || null;
+  }
   return {
     id: user.id,
     email: user.email,
-    firstName: user.firstName ?? user.first_name,
-    lastName: user.lastName ?? user.last_name,
+    firstName,
+    lastName,
     avatarUrl: user.avatarUrl ?? user.avatar_url,
     bio: user.bio,
     location: user.location,
@@ -118,11 +142,15 @@ export async function publicUser(user, extras = {}) {
     maxHeartRate: user.maxHeartRate ?? user.max_heart_rate,
     restingHeartRate: user.restingHeartRate ?? user.resting_heart_rate,
     defaultActivityType: user.defaultActivityType ?? user.default_activity_type ?? 'Run',
+    syncActivityTypes: parseStoredSyncTypes(user.syncActivityTypes ?? user.sync_activity_types),
+    syncActivityTypesConfirmed: Boolean(user.syncActivityTypesConfirmedAt ?? user.sync_activity_types_confirmed_at),
     status: user.status,
     notificationPrefs: user.notificationPrefs ?? user.notification_prefs,
     roles,
     lastLoginAt: user.lastLoginAt ?? user.last_login_at,
     createdAt: user.createdAt ?? user.created_at,
     membership: extras.membership ?? null,
+    adminClubId,
+    adminClubName,
   };
 }

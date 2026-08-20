@@ -1,11 +1,17 @@
 import cron from 'node-cron';
 import { refreshMembershipStatuses } from '../services/membershipJob.js';
+import { appTimeZone, refreshAthleteAges } from '../services/ageJob.js';
 import { ensureStravaWebhookSubscription, syncAllConnectedStrava } from '../services/stravaService.js';
 
 export function startScheduler() {
+  const tz = appTimeZone();
   ensureStravaWebhookSubscription()
     .then((result) => console.log('[strava] webhook', result))
     .catch((err) => console.error('[strava] webhook subscribe failed', err.response?.data || err.message));
+
+  refreshAthleteAges({ birthdaysOnly: false })
+    .then((result) => console.log('[job] age/maf backfill', result))
+    .catch((err) => console.error('[job] age/maf backfill failed', err.message));
 
   cron.schedule('0 */3 * * *', async () => {
     try {
@@ -24,4 +30,17 @@ export function startScheduler() {
       console.error('[job] membership refresh failed', err.message);
     }
   });
+
+  cron.schedule(
+    '0 0 * * *',
+    async () => {
+      try {
+        const result = await refreshAthleteAges({ birthdaysOnly: true });
+        console.log('[job] birthday age/maf refresh', result);
+      } catch (err) {
+        console.error('[job] birthday age/maf refresh failed', err.message);
+      }
+    },
+    { timezone: tz }
+  );
 }

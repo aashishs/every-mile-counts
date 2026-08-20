@@ -1,13 +1,14 @@
+import './config/loadEnv.js';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
-import dotenv from 'dotenv';
 import rateLimit from 'express-rate-limit';
 import { connectDB } from './config/db.js';
 import { ensureSchemaPatches } from './db/ensureSchema.js';
 import { errorHandler } from './middleware/error.js';
 import { startScheduler } from './jobs/scheduler.js';
 import { isAllowedOrigin } from './utils/urls.js';
+import { verifyMailer } from './services/mailer.js';
 import authRoutes from './routes/auth.js';
 import userRoutes from './routes/users.js';
 import membershipRoutes from './routes/membership.js';
@@ -24,9 +25,9 @@ import adminRoutes from './routes/admin.js';
 import supportRoutes from './routes/support.js';
 import pushRoutes from './routes/push.js';
 
-dotenv.config();
 await connectDB();
 await ensureSchemaPatches();
+await verifyMailer();
 
 const app = express();
 app.set('trust proxy', 1);

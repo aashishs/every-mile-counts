@@ -161,9 +161,11 @@ export default function CoachAthleteActivities() {
         <div>
           <h2 className="page-title">{name}</h2>
           <p className="page-sub mb-0">
+            {athlete?.mafHeartRate ? `MAF ${athlete.mafHeartRate} bpm` : 'MAF —'}
+            {athlete?.age ? ` · age ${athlete.age}` : ''}
             {loading
-              ? 'Loading sessions…'
-              : `${total} session${total === 1 ? '' : 's'}${pendingTotal ? ` · ${pendingTotal} need review` : ''}`}
+              ? ' · Loading sessions…'
+              : ` · ${total} session${total === 1 ? '' : 's'}${pendingTotal ? ` · ${pendingTotal} need review` : ''}`}
           </p>
         </div>
         <Link to="/coaches" className="btn-outline btn-sm no-underline shrink-0 self-start">

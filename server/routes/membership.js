@@ -31,11 +31,12 @@ router.get(
   asyncHandler(async (req, res) => {
     const { type, status, q } = req.query;
     const params = [];
-    let sql = `SELECT ic.*, p.name AS plan_name, u.email AS created_by_email,
+    let sql = `SELECT ic.*, p.name AS plan_name, u.email AS created_by_email, c.name AS club_name,
                       (SELECT COUNT(*) FROM invitation_redemptions r WHERE r.code_id = ic.id)::int AS redemption_count
                FROM invitation_codes ic
                LEFT JOIN membership_plans p ON p.id = ic.plan_id
                LEFT JOIN users u ON u.id = ic.created_by
+               LEFT JOIN clubs c ON c.id = ic.club_id
                WHERE 1=1`;
     if (type && ['athlete', 'coach', 'club', 'universal'].includes(type)) {
       params.push(type);

@@ -1,6 +1,7 @@
 import { camelMany, many } from '../config/db.js';
 import { formatDistance, formatDuration, paceFromSpeed, startOfMonth, startOfWeek, startOfYear } from '../utils/format.js';
 import { athleteHrContext } from '../utils/maf.js';
+import { parseStoredSyncTypes } from '../utils/activityTypes.js';
 
 function num(v) {
   return v == null ? 0 : Number(v);
@@ -123,12 +124,13 @@ export function analyzeActivity(activity, athlete = {}) {
   };
 }
 
-export async function athleteDashboard(athleteId, athlete = {}, { type } = {}) {
+export async function athleteDashboard(athleteId, athlete = {}, { type, syncTypes } = {}) {
   const now = new Date();
   const week = startOfWeek(now);
   const month = startOfMonth(now);
   const year = startOfYear(now);
-  const filterType = type && type !== 'all' ? type : null;
+  const allowed = parseStoredSyncTypes(syncTypes ?? athlete.syncActivityTypes);
+  const filterType = type && type !== 'all' && allowed.includes(type) ? type : null;
 
   const activities = camelMany(
     await many(
@@ -141,8 +143,14 @@ export async function athleteDashboard(athleteId, athlete = {}, { type } = {}) {
     await many(`SELECT * FROM activities WHERE athlete_id = $1 ORDER BY start_date DESC`, [athleteId])
   );
 
-  const scopedYear = filterType ? activities.filter((a) => sportFamily(a) === filterType) : activities;
-  const scopedAll = filterType ? allTime.filter((a) => sportFamily(a) === filterType) : allTime;
+  const visible = (list) =>
+    list.filter((a) => {
+      const family = sportFamily(a);
+      if (!allowed.includes(family)) return false;
+      return filterType ? family === filterType : true;
+    });
+  const scopedYear = visible(activities);
+  const scopedAll = visible(allTime);
 
   const sum = (list, key) => list.reduce((a, b) => a + num(b[key]), 0);
   const inRange = (from) => scopedYear.filter((a) => a.startDate && new Date(a.startDate) >= from);
@@ -597,10 +605,11 @@ function monthlySeries(activities, fromYm, toYm) {
   });
 }
 
-export async function periodAnalysis(athleteId, period = '90', { type } = {}) {
+export async function periodAnalysis(athleteId, period = '90', { type, syncTypes } = {}) {
   const window = periodWindow(period);
   const { named, monthCount, since, prevSince, sinceYm, nowYm } = window;
-  const filterType = type && type !== 'all' ? type : null;
+  const allowed = parseStoredSyncTypes(syncTypes);
+  const filterType = type && type !== 'all' && allowed.includes(type) ? type : null;
   const metric = volumeMetric(filterType);
 
   const currentRaw = camelMany(
@@ -619,8 +628,14 @@ export async function periodAnalysis(athleteId, period = '90', { type } = {}) {
         )
       )
     : [];
-  const current = filterType ? currentRaw.filter((a) => sportFamily(a) === filterType) : currentRaw;
-  const previous = filterType ? previousRaw.filter((a) => sportFamily(a) === filterType) : previousRaw;
+  const inSyncTypes = (list) =>
+    list.filter((a) => {
+      const family = sportFamily(a);
+      if (!allowed.includes(family)) return false;
+      return filterType ? family === filterType : true;
+    });
+  const current = inSyncTypes(currentRaw);
+  const previous = inSyncTypes(previousRaw);
 
   const aggregate = (list) => ({
     count: list.length,
