@@ -35,6 +35,24 @@ const QUOTES = [
   'Train. Race. Repeat.',
 ];
 
+const MOTIVATE_QUOTES = [
+  'The session you skip today is the one you wish you had tomorrow.',
+  'You do not need a perfect window. You need twenty honest minutes.',
+  'Start easy. Starting is the whole battle.',
+  'Lace up before the excuses finish the sentence.',
+  'Fitness is built on the days you almost did not go.',
+  'A short run still counts. Zero does not.',
+  'The door is the hardest kilometre. After that, you are already training.',
+  'Do not wait to feel motivated. Movement is what creates it.',
+  'Today is still open. Put something on it.',
+  'Missed mornings are not a full day lost. Go now.',
+  'Your future self is watching this choice.',
+  'One easy session beats another blank square on the calendar.',
+  'You have shown up before. Show up again.',
+  'Make today count. Every mile counts.',
+  'If it is messy, go anyway. Messy miles still add up.',
+];
+
 function hash(text) {
   let value = 0;
   for (const ch of String(text)) {
@@ -43,10 +61,11 @@ function hash(text) {
   return Math.abs(value);
 }
 
-export function quoteForDay(userId, ymd) {
-  if (!QUOTES.length) return '';
-  const index = hash(`${userId || 'emc'}:${ymd || ''}`) % QUOTES.length;
-  return QUOTES[index];
+export function quoteForDay(userId, ymd, kind = 'done') {
+  const pool = kind === 'motivate' ? MOTIVATE_QUOTES : QUOTES;
+  if (!pool.length) return '';
+  const index = hash(`${kind}:${userId || 'emc'}:${ymd || ''}`) % pool.length;
+  return pool[index];
 }
 
 export function checkinStorageKey(userId, ymd) {
@@ -69,4 +88,4 @@ export function markCheckinSeen(userId, ymd) {
   }
 }
 
-export { QUOTES };
+export { QUOTES, MOTIVATE_QUOTES };

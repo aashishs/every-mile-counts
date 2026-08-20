@@ -38,9 +38,25 @@ function scoreLabel(score) {
   return 'Easy session';
 }
 
+function isRealSession(activity) {
+  return num(activity.distance) >= 100 || num(activity.movingTime ?? activity.moving_time) >= 60;
+}
+
+function ymdFromStamp(value) {
+  if (!value) return null;
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}/.test(value)) return value.slice(0, 10);
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+  return ymdInAppTz(d);
+}
+
+function activityYmd(activity) {
+  return ymdFromStamp(activity.startDateLocal) || ymdFromStamp(activity.startDate);
+}
+
 function todaySummary(activities) {
   const date = ymdInAppTz();
-  const todays = (activities || []).filter((act) => act.startDate && ymdInAppTz(act.startDate) === date);
+  const todays = (activities || []).filter((act) => isRealSession(act) && activityYmd(act) === date);
   if (!todays.length) {
     return { date, trained: false, count: 0, score: null, label: null, name: null, activityId: null };
   }
