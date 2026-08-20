@@ -9,8 +9,8 @@ self.addEventListener('push', (event) => {
   event.waitUntil(
     self.registration.showNotification(payload.title || 'Every Mile Counts', {
       body: payload.body || '',
-      icon: '/logo.png',
-      badge: '/logo.png',
+      icon: '/pwa-192-maskable.png',
+      badge: '/pwa-192-maskable.png',
       data,
     })
   );

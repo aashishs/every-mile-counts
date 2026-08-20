@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Every Mile Counts">
-  <rect width="512" height="512" rx="96" fill="#0f1419"/>
+  <rect width="512" height="512" fill="#0f1419"/>
   <path d="M72 352 L156 168 L248 300 L332 96 L440 348" fill="none" stroke="#0d9488" stroke-width="28" stroke-linecap="round" stroke-linejoin="round"/>
   <circle cx="440" cy="348" r="22" fill="#f97316"/>
   <text x="256" y="446" text-anchor="middle" fill="#ffffff" font-family="Barlow Condensed, Arial Narrow, sans-serif" font-size="92" font-weight="700" letter-spacing="18">EMC</text>
