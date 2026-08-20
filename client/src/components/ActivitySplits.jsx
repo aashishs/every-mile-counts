@@ -20,9 +20,11 @@ import {
   splitBarWidths,
   elevationSummary,
   fastestSplitPace,
+  fastestSplitSpeed,
   elapsedPaceSec,
+  elapsedSpeedKmh,
 } from '../utils/splits';
-import { activityMetric } from '../utils/format';
+import { activityMetric, effortKind } from '../utils/format';
 
 function formatClock(seconds) {
   const sec = Math.max(0, Math.round(Number(seconds) || 0));
@@ -60,11 +62,12 @@ function chartPoint(state) {
 }
 
 export default function ActivitySplits({ activity }) {
+  const kind = effortKind(activity?.type, activity?.sportType);
   const rows = useMemo(
     () => fillMissingElevation(normalizeSplits(activity?.splits), activity?.gpsPoints),
     [activity?.splits, activity?.gpsPoints]
   );
-  const bars = useMemo(() => splitBarWidths(rows), [rows]);
+  const bars = useMemo(() => splitBarWidths(rows, kind === 'speed' ? 'speed' : 'pace'), [rows, kind]);
   const series = useMemo(() => {
     const fromTrack = activitySeriesFromTrack(activity?.gpsPoints);
     return fromTrack.length ? fromTrack : paceSeriesFromSplits(rows);
@@ -74,17 +77,21 @@ export default function ActivitySplits({ activity }) {
 
   if (!rows.length && !series.length) return null;
 
-  const avgPace = Number(activity?.avgSpeed) > 0 ? 1000 / Number(activity.avgSpeed) : null;
+  const avgMps = Number(activity?.avgSpeed) > 0 ? Number(activity.avgSpeed) : null;
+  const avgPace = avgMps ? 1000 / avgMps : null;
+  const avgSpeedKmh = avgMps ? avgMps * 3.6 : null;
   const avgHr = Number(activity?.avgHeartrate) > 0 ? Number(activity.avgHeartrate) : null;
   const selected = pinned || hover;
-  const hasPace = series.some((row) => row.paceSec > 0);
+  const hasEffort = series.some((row) => row.paceSec > 0 || row.speedKmh > 0);
   const hasHr = series.some((row) => row.hr > 0);
   const elevStats = elevationSummary(series);
   const hasElev = Boolean(elevStats);
-  const fastest = fastestSplitPace(rows);
+  const fastestPace = fastestSplitPace(rows);
+  const fastestSpeed = fastestSplitSpeed(rows);
   const elapsed = Number(activity?.elapsedTime);
   const moving = Number(activity?.movingTime);
   const elapsedPace = elapsedPaceSec(activity);
+  const elapsedSpeed = elapsedSpeedKmh(activity);
   const paused = elapsed > 0 && moving > 0 && elapsed - moving >= 2;
   const seriesMaxHr = series.reduce((max, row) => (row.hr > max ? row.hr : max), 0);
   const maxHr = Number(activity?.maxHeartrate) > 0
@@ -92,16 +99,79 @@ export default function ActivitySplits({ activity }) {
     : seriesMaxHr > 0
       ? Math.round(seriesMaxHr)
       : null;
+  const seriesMaxSpeed = series.reduce((max, row) => (row.speedKmh > max ? row.speedKmh : max), 0);
+  const maxSpeed = Number(activity?.maxSpeed) > 0
+    ? Number(activity.maxSpeed) * 3.6
+    : seriesMaxSpeed || null;
   const hrAlreadyOnStats = activityMetric(activity?.type, activity?.sportType, activity?.distance) === 'duration';
-  const paceFooter = (
+  const swimMetres = kind === 'swim' && rows.every((row) => row.distanceM < 950);
+  const effortChart = kind === 'speed'
+    ? {
+      title: 'Speed',
+      yKey: 'speedKmh',
+      yAxisId: 'speed',
+      reversed: false,
+      yLabel: 'km/h',
+      tickFormatter: (v) => `${Math.round(v)}`,
+      avg: avgSpeedKmh,
+    }
+    : kind === 'swim'
+      ? {
+        title: 'Pace',
+        yKey: 'pace100',
+        yAxisId: 'pace',
+        reversed: true,
+        yLabel: '/100m',
+        tickFormatter: formatSplitClock,
+        avg: avgPace ? avgPace / 10 : null,
+      }
+      : kind === 'row'
+        ? {
+          title: 'Pace',
+          yKey: 'pace500',
+          yAxisId: 'pace',
+          reversed: true,
+          yLabel: '/500m',
+          tickFormatter: formatSplitClock,
+          avg: avgPace ? avgPace / 2 : null,
+        }
+        : {
+          title: 'Pace',
+          yKey: 'paceSec',
+          yAxisId: 'pace',
+          reversed: true,
+          yLabel: '/km',
+          tickFormatter: formatSplitClock,
+          avg: avgPace,
+        };
+  const effortFooter = (
     <StatRows
-      rows={[
-        paused && elapsedPace
-          ? { label: 'Avg Elapsed Pace', value: `${formatSplitClock(elapsedPace)} /km` }
-          : null,
-        paused ? { label: 'Elapsed Time', value: formatClock(elapsed) } : null,
-        fastest ? { label: 'Fastest Split', value: `${formatSplitClock(fastest)} /km` } : null,
-      ]}
+      rows={
+        kind === 'speed'
+          ? [
+            paused && elapsedSpeed ? { label: 'Avg Elapsed Speed', value: `${elapsedSpeed.toFixed(1)} km/h` } : null,
+            paused ? { label: 'Elapsed Time', value: formatClock(elapsed) } : null,
+            maxSpeed ? { label: 'Max Speed', value: `${maxSpeed.toFixed(1)} km/h` } : null,
+            fastestSpeed ? { label: 'Fastest Split', value: `${fastestSpeed.toFixed(1)} km/h` } : null,
+          ]
+          : kind === 'swim'
+            ? [
+              paused && elapsedPace ? { label: 'Avg Elapsed Pace', value: `${formatSplitClock(elapsedPace / 10)} /100m` } : null,
+              paused ? { label: 'Elapsed Time', value: formatClock(elapsed) } : null,
+              fastestPace ? { label: 'Fastest Split', value: `${formatSplitClock(fastestPace / 10)} /100m` } : null,
+            ]
+            : kind === 'row'
+              ? [
+                paused && elapsedPace ? { label: 'Avg Elapsed Pace', value: `${formatSplitClock(elapsedPace / 2)} /500m` } : null,
+                paused ? { label: 'Elapsed Time', value: formatClock(elapsed) } : null,
+                fastestPace ? { label: 'Fastest Split', value: `${formatSplitClock(fastestPace / 2)} /500m` } : null,
+              ]
+              : [
+                paused && elapsedPace ? { label: 'Avg Elapsed Pace', value: `${formatSplitClock(elapsedPace)} /km` } : null,
+                paused ? { label: 'Elapsed Time', value: formatClock(elapsed) } : null,
+                fastestPace ? { label: 'Fastest Split', value: `${formatSplitClock(fastestPace)} /km` } : null,
+              ]
+      }
     />
   );
 
@@ -121,8 +191,8 @@ export default function ActivitySplits({ activity }) {
           <div className="card mb-5 !p-3 sm:!p-4 overflow-hidden">
             <div className="text-[13px] sm:text-sm leading-none [text-size-adjust:100%]">
               <div className={`${splitGrid} pb-3 text-[13px] sm:text-sm text-muted font-medium`}>
-                <div>Km</div>
-                <div>Pace</div>
+                <div>{swimMetres ? 'm' : 'Km'}</div>
+                <div>{kind === 'speed' ? 'km/h' : 'Pace'}</div>
                 <div />
                 <div className="text-right">Elev</div>
                 <div className="text-right">HR</div>
@@ -139,8 +209,10 @@ export default function ActivitySplits({ activity }) {
                     }`}
                     onClick={() => pin({ km })}
                   >
-                    <span className={`${splitNum} text-muted`}>{row.kmLabel}</span>
-                    <span className={splitNum}>{formatSplitClock(row.paceSec)}</span>
+                    <span className={`${splitNum} text-muted`}>
+                      {swimMetres ? Math.round(row.distanceM) : row.kmLabel}
+                    </span>
+                    <span className={splitNum}>{formatSplitEffort(row, kind)}</span>
                     <span className="min-w-0">
                       <span className="block h-3 rounded-sm bg-brand/80" style={{ width: `${bars[i]}%` }} />
                     </span>
@@ -154,24 +226,24 @@ export default function ActivitySplits({ activity }) {
         </>
       )}
 
-      {series.length > 1 && (hasPace || hasHr || hasElev) && (
+      {series.length > 1 && (hasEffort || hasHr || hasElev) && (
         <>
-          {hasPace && (
+          {hasEffort && kind !== 'duration' && (
             <SessionChart
-              title="Pace"
+              title={effortChart.title}
               series={series}
               selected={selected}
-              yKey="paceSec"
-              yAxisId="pace"
+              yKey={effortChart.yKey}
+              yAxisId={effortChart.yAxisId}
               color="#2563eb"
               stroke="#60a5fa"
-              reversed
-              tickFormatter={formatSplitClock}
-              yLabel="/km"
-              avg={avgPace}
+              reversed={effortChart.reversed}
+              tickFormatter={effortChart.tickFormatter}
+              yLabel={effortChart.yLabel}
+              avg={effortChart.avg}
               onHover={setHover}
               onPin={pin}
-              footer={paceFooter}
+              footer={effortFooter}
             />
           )}
           {hasHr && (
@@ -227,9 +299,19 @@ export default function ActivitySplits({ activity }) {
   );
 }
 
+function formatSplitEffort(row, kind) {
+  if (kind === 'speed') return row.speedKmh > 0 ? row.speedKmh.toFixed(1) : '—';
+  if (kind === 'swim' && row.paceSec > 0) return formatSplitClock(row.paceSec / 10);
+  if (kind === 'row' && row.paceSec > 0) return formatSplitClock(row.paceSec / 2);
+  return formatSplitClock(row.paceSec);
+}
+
 function hoverPrimary(yKey, point) {
   if (!point) return null;
+  if (yKey === 'speedKmh' && point.speedKmh > 0) return `${Number(point.speedKmh).toFixed(1)} km/h`;
   if (yKey === 'paceSec' && point.paceSec > 0) return `${formatSplitClock(point.paceSec)} /km`;
+  if (yKey === 'pace100' && point.pace100 > 0) return `${formatSplitClock(point.pace100)} /100m`;
+  if (yKey === 'pace500' && point.pace500 > 0) return `${formatSplitClock(point.pace500)} /500m`;
   if (yKey === 'hr' && point.hr > 0) return `${Math.round(point.hr)} bpm`;
   if (yKey === 'elev' && point.elev != null) return `${Math.round(point.elev)} m`;
   return null;
@@ -240,11 +322,11 @@ function HoverCard({ active, payload, yKey }) {
   const point = payload[0]?.payload;
   const primary = hoverPrimary(yKey, point);
   if (!primary) return null;
-  const tone = yKey === 'paceSec'
-    ? 'bg-blue-600 text-white'
-    : yKey === 'hr'
-      ? 'bg-rose-500 text-white'
-      : 'bg-slate-300 text-[#111827]';
+  const tone = yKey === 'hr'
+    ? 'bg-rose-500 text-white'
+    : yKey === 'elev'
+      ? 'bg-slate-300 text-[#111827]'
+      : 'bg-blue-600 text-white';
   const sub = yKey === 'elev' ? 'text-slate-700' : 'text-white/80';
   return (
     <div className={`rounded-xl px-3 py-2 shadow-md pointer-events-none whitespace-nowrap ${tone}`}>

@@ -25,6 +25,7 @@ export function normalizeSplits(splits) {
       kmLabel: distanceM >= 950 ? String(index + 1) : (distanceM / 1000).toFixed(1).replace(/\.0$/, ''),
       distanceM,
       paceSec,
+      speedKmh: paceSec > 0 ? 3600 / paceSec : null,
       elevM: Number.isFinite(elevM) ? Math.round(elevM) : null,
       hr: split.hr != null && Number(split.hr) > 0 ? Math.round(Number(split.hr)) : null,
       movingTime: Number(split.movingTime ?? split.moving_time) || null,
@@ -60,15 +61,21 @@ export function fillMissingElevation(rows, track) {
   });
 }
 
-export function splitBarWidths(rows) {
-  const paces = rows.map((row) => row.paceSec).filter((n) => n > 0);
-  if (!paces.length) return rows.map(() => 24);
-  const minP = Math.min(...paces);
-  const maxP = Math.max(...paces);
+export function splitBarWidths(rows, mode = 'pace') {
+  const values = rows
+    .map((row) => (mode === 'speed' ? row.speedKmh : row.paceSec))
+    .filter((n) => n > 0);
+  if (!values.length) return rows.map(() => 24);
+  const minV = Math.min(...values);
+  const maxV = Math.max(...values);
   return rows.map((row) => {
-    if (!(row.paceSec > 0)) return 16;
-    if (maxP === minP) return 70;
-    return 18 + ((maxP - row.paceSec) / (maxP - minP)) * 82;
+    const value = mode === 'speed' ? row.speedKmh : row.paceSec;
+    if (!(value > 0)) return 16;
+    if (maxV === minV) return 70;
+    const ratio = mode === 'speed'
+      ? (value - minV) / (maxV - minV)
+      : (maxV - value) / (maxV - minV);
+    return 18 + ratio * 82;
   });
 }
 
@@ -100,11 +107,26 @@ export function fastestSplitPace(rows) {
   return Math.min(...pool.map((row) => row.paceSec));
 }
 
+export function fastestSplitSpeed(rows) {
+  const speedy = (rows || []).filter((row) => row?.speedKmh > 0);
+  const full = speedy.filter((row) => row.distanceM >= 950);
+  const pool = full.length ? full : speedy;
+  if (!pool.length) return null;
+  return Math.max(...pool.map((row) => row.speedKmh));
+}
+
 export function elapsedPaceSec(activity) {
   const distKm = Number(activity?.distance) / 1000;
   const elapsed = Number(activity?.elapsedTime);
   if (!(distKm > 0) || !(elapsed > 0)) return null;
   return elapsed / distKm;
+}
+
+export function elapsedSpeedKmh(activity) {
+  const dist = Number(activity?.distance);
+  const elapsed = Number(activity?.elapsedTime);
+  if (!(dist > 0) || !(elapsed > 0)) return null;
+  return (dist / elapsed) * 3.6;
 }
 
 export function nearestSeriesPoint(series, km) {
@@ -134,6 +156,9 @@ export function activitySeriesFromTrack(track) {
     series.push({
       km: distance[i] != null ? Number(distance[i]) / 1000 : i,
       paceSec: v > 0.4 ? 1000 / v : null,
+      pace100: v > 0.4 ? 100 / v : null,
+      pace500: v > 0.4 ? 500 / v : null,
+      speedKmh: v > 0.4 ? v * 3.6 : null,
       elev: altitude[i] != null ? Number(altitude[i]) : null,
       hr: heartrate[i] != null ? Number(heartrate[i]) : null,
     });
@@ -150,6 +175,9 @@ export function paceSeriesFromSplits(rows) {
     return {
       km,
       paceSec: row.paceSec,
+      pace100: row.paceSec > 0 ? row.paceSec / 10 : null,
+      pace500: row.paceSec > 0 ? row.paceSec / 2 : null,
+      speedKmh: row.speedKmh ?? (row.paceSec > 0 ? 3600 / row.paceSec : null),
       elev: row.elevM == null ? null : elev,
       hr: row.hr,
     };
