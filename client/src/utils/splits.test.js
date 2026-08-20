@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { fillMissingElevation, nearestSeriesPoint, normalizeSplits, splitBarWidths, elevationSummary } from './splits.js';
+import { fillMissingElevation, nearestSeriesPoint, normalizeSplits, splitBarWidths, elevationSummary, fastestSplitPace, elapsedPaceSec } from './splits.js';
 
 describe('splits', () => {
   it('labels full kilometres and a partial last split with elevation', () => {
@@ -44,5 +44,15 @@ describe('splits', () => {
     assert.equal(summary.max, 680);
     assert.equal(summary.gain, 70);
     assert.equal(elevationSummary([{ elev: 10 }, { elev: 10 }, { elev: 10 }]), null);
+  });
+
+  it('uses the fastest full-kilometre split', () => {
+    const rows = normalizeSplits([
+      { distance: 1000, pace: 400 },
+      { distance: 1000, pace: 297 },
+      { distance: 400, pace: 250 },
+    ]);
+    assert.equal(fastestSplitPace(rows), 297);
+    assert.equal(elapsedPaceSec({ distance: 10000, elapsedTime: 4460 }), 446);
   });
 });

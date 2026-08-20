@@ -57,10 +57,15 @@ export default defineConfig({
             },
           },
           {
-            urlPattern: ({ url }) => /tile\.openstreetmap\.org|basemaps\.cartocdn\.com/.test(url.hostname),
-            handler: 'NetworkOnly',
+            urlPattern: ({ url }) => url.hostname === 'tile.openstreetmap.org',
+            handler: 'CacheFirst',
             options: {
-              cacheName: 'emc-map-tiles',
+              cacheName: 'emc-osm-tiles',
+              expiration: {
+                maxEntries: 200,
+                maxAgeSeconds: 7 * 24 * 60 * 60,
+              },
+              cacheableResponse: { statuses: [0, 200] },
             },
           },
         ],
