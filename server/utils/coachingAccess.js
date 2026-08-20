@@ -122,9 +122,48 @@ export async function assertCanModifyProgram(user, program) {
   return program;
 }
 
-export async function loadProgramOwned(user, programId) {
-  const program = await loadProgram(programId);
-  return assertCanModifyProgram(user, program);
+export async function canViewWorkout(user, workout, program) {
+  if (!workout) return false;
+  if (user.id === workout.coachId || (workout.athleteId && user.id === workout.athleteId)) return true;
+  if (program) return canViewProgram(user, program);
+  if ((user.roles || []).includes('coach') && workout.athleteId && workout.clubId) {
+    const assignment = await getAssignment(user.id, workout.athleteId);
+    return Boolean(assignment && (await assignmentClubMatches(assignment, workout.clubId)));
+  }
+  return false;
+}
+
+export function canModifyWorkout(user, workout, program) {
+  if (!workout) return false;
+  if (user.id === workout.coachId) return true;
+  return Boolean(program && canModifyProgram(user, program));
+}
+
+export async function assertCanViewWorkout(user, workout, program) {
+  if (!workout) throw httpError(404, 'Workout not found');
+  if (!(await canViewWorkout(user, workout, program))) throw httpError(403, 'Access denied');
+  return workout;
+}
+
+export function workoutProgramView(workout, program) {
+  if (program) {
+    return {
+      id: program.id,
+      name: program.name,
+      status: program.status,
+      coachId: program.coachId,
+      athleteId: program.athleteId,
+      clubId: program.clubId,
+    };
+  }
+  return {
+    id: null,
+    name: 'Assigned activity',
+    status: 'active',
+    coachId: workout.coachId,
+    athleteId: workout.athleteId,
+    clubId: workout.clubId,
+  };
 }
 
 export async function coachClubIds(coachId) {

@@ -50,9 +50,13 @@ export default function CoachTraining() {
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-6">
         <div>
           <h2 className="page-title">Training</h2>
-          <p className="page-sub">All plans, plus the activities athletes still need to prepare</p>
+          <p className="page-sub">Plans, single activities, and athlete groups</p>
         </div>
-        <Link to="/coaches/programs/new" className="btn-primary no-underline text-center">New program</Link>
+        <div className="flex flex-col sm:flex-row gap-2">
+          <Link to="/coaches/groups" className="btn-outline no-underline text-center">Groups</Link>
+          <Link to="/coaches/activities/new" className="btn-outline no-underline text-center">Assign activity</Link>
+          <Link to="/coaches/programs/new" className="btn-primary no-underline text-center">New program</Link>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mb-6">
@@ -64,9 +68,28 @@ export default function CoachTraining() {
       </div>
 
       <section className="mb-8">
+        <div className="flex items-center justify-between gap-3 mb-3">
+          <h3 className="section-title mb-0">Groups</h3>
+          <Link to="/coaches/groups" className="text-sm text-brand no-underline">Manage</Link>
+        </div>
+        {!data.groups?.length ? (
+          <div className="card text-muted text-sm">Create a group to assign a plan or activity to several athletes at once, or to send them a note.</div>
+        ) : (
+          <div className="grid sm:grid-cols-2 gap-2">
+            {data.groups.map((g) => (
+              <button key={g.id} type="button" className="card w-full text-left hover:border-brand" onClick={() => navigate('/coaches/groups')}>
+                <div className="font-semibold">{g.name}</div>
+                <div className="text-xs text-muted mt-1">{g.clubName} · {g.athleteCount || g.athletes?.length || 0} athletes</div>
+              </button>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="mb-8">
         <h3 className="section-title mb-3">For athletes to prepare</h3>
         {!data.toPrepare?.length ? (
-          <div className="card text-muted text-sm">No upcoming activities on active plans. Add workouts to a plan, or activate a draft.</div>
+          <div className="card text-muted text-sm">No upcoming activities. Assign a session, add workouts to a plan, or activate a draft.</div>
         ) : (
           <div className="space-y-2">
             {data.toPrepare.slice(0, 12).map((w) => (

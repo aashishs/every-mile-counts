@@ -8,15 +8,18 @@ import {
   assertAssignmentInClub,
   assertCanModifyProgram,
   assertCanViewProgram,
+  assertCanViewWorkout,
   assertCoachInClub,
   canModifyProgram,
+  canModifyWorkout,
   getAssignment,
   httpError,
   loadProgram,
   reviewVisibilitySql,
+  workoutProgramView,
 } from '../utils/coachingAccess.js';
 import { PROGRAM_STATUSES, WORKOUT_TYPES, normalizeWorkoutType } from '../utils/workoutTypes.js';
-import { createNotification } from '../services/notificationService.js';
+import { createNotification, notifyMany } from '../services/notificationService.js';
 import {
   clubReviewsForAthlete,
   currentPhaseAndWeek,
@@ -32,6 +35,16 @@ import {
   linkActivityManually,
   rejectMatch,
 } from '../services/workoutMatchService.js';
+import {
+  assertGroupOwned,
+  cloneProgramForAthlete,
+  createGroup,
+  deleteGroup,
+  hydrateGroup,
+  listCoachGroups,
+  resolveTargets,
+  updateGroup,
+} from '../services/coachGroupService.js';
 
 const router = express.Router();
 router.use(protect, requireMembership, rejectAppAdmin);
@@ -116,9 +129,13 @@ async function hydrateProgram(program) {
 async function loadWorkoutForUser(req, workoutId) {
   const detail = await loadWorkoutDetail(workoutId);
   if (!detail) throw httpError(404, 'Workout not found');
-  const program = await loadProgram(detail.workout.programId);
-  await assertCanViewProgram(req.user, program);
+  const program = detail.workout.programId ? await loadProgram(detail.workout.programId) : null;
+  await assertCanViewWorkout(req.user, detail.workout, program);
   return { ...detail, program };
+}
+
+function liveWorkoutSql(alias = 'p') {
+  return `(w.program_id IS NULL OR ${alias}.status = 'active')`;
 }
 
 router.get(
@@ -129,6 +146,72 @@ router.get(
       workoutTypes: WORKOUT_TYPES,
       programStatuses: PROGRAM_STATUSES,
     });
+  })
+);
+
+router.get(
+  '/groups',
+  requireRole('coach'),
+  asyncHandler(async (req, res) => {
+    res.json({ groups: await listCoachGroups(req.user.id) });
+  })
+);
+
+router.post(
+  '/groups',
+  requireRole('coach'),
+  asyncHandler(async (req, res) => {
+    const group = await createGroup(req.user, req.body || {});
+    res.status(201).json({ group });
+  })
+);
+
+router.get(
+  '/groups/:id',
+  requireRole('coach'),
+  asyncHandler(async (req, res) => {
+    const group = await assertGroupOwned(req.user, req.params.id);
+    res.json({ group: await hydrateGroup(group) });
+  })
+);
+
+router.patch(
+  '/groups/:id',
+  requireRole('coach'),
+  asyncHandler(async (req, res) => {
+    res.json({ group: await updateGroup(req.user, req.params.id, req.body || {}) });
+  })
+);
+
+router.delete(
+  '/groups/:id',
+  requireRole('coach'),
+  asyncHandler(async (req, res) => {
+    await deleteGroup(req.user, req.params.id);
+    res.json({ message: 'Group deleted' });
+  })
+);
+
+router.post(
+  '/groups/:id/notify',
+  requireRole('coach'),
+  asyncHandler(async (req, res) => {
+    const group = await assertGroupOwned(req.user, req.params.id);
+    const hydrated = await hydrateGroup(group);
+    const title = String(req.body.title || '').trim();
+    const body = String(req.body.body || '').trim();
+    if (!title) throw httpError(400, 'Message title is required');
+    if (!hydrated.athletes.length) throw httpError(400, 'Add athletes to this group first');
+    await notifyMany(
+      hydrated.athletes.map((a) => a.athleteId),
+      {
+        type: 'training',
+        title,
+        body: body || `${req.user.firstName} sent a note to ${group.name}.`,
+        data: { groupId: group.id, url: '/training' },
+      }
+    );
+    res.json({ sent: hydrated.athletes.length });
   })
 );
 
@@ -154,10 +237,10 @@ router.get(
     }
     const upcoming = camelMany(
       await many(
-        `SELECT w.*, p.name AS program_name
+        `SELECT w.*, COALESCE(p.name, 'Assigned activity') AS program_name
          FROM planned_workouts w
-         JOIN training_programs p ON p.id = w.program_id
-         WHERE w.athlete_id = $1 AND p.status = 'active'
+         LEFT JOIN training_programs p ON p.id = w.program_id
+         WHERE w.athlete_id = $1 AND ${liveWorkoutSql()}
            AND w.scheduled_date >= CURRENT_DATE
            AND w.completion_status IN ('planned', 'pending_match')
          ORDER BY w.scheduled_date
@@ -221,13 +304,13 @@ router.get(
     const toPrepare = camelMany(
       await many(
         `SELECT w.id, w.program_id, w.scheduled_date, w.name, w.sport, w.workout_type, w.distance, w.duration,
-                w.completion_status, w.athlete_id, p.name AS program_name, p.status AS program_status,
+                w.completion_status, w.athlete_id, COALESCE(p.name, 'Assigned activity') AS program_name, COALESCE(p.status, 'active') AS program_status,
                 u.first_name, u.last_name
          FROM planned_workouts w
-         JOIN training_programs p ON p.id = w.program_id
+         LEFT JOIN training_programs p ON p.id = w.program_id
          LEFT JOIN users u ON u.id = w.athlete_id
          WHERE w.coach_id = $1
-           AND p.status = 'active'
+           AND ${liveWorkoutSql()}
            AND w.scheduled_date >= CURRENT_DATE
            AND w.completion_status IN ('planned', 'pending_match')
            AND LOWER(w.workout_type) <> 'rest'
@@ -239,22 +322,22 @@ router.get(
 
     const today = camelMany(
       await many(
-        `SELECT w.*, u.first_name, u.last_name, p.name AS program_name
+        `SELECT w.*, u.first_name, u.last_name, COALESCE(p.name, 'Assigned activity') AS program_name
          FROM planned_workouts w
-         JOIN training_programs p ON p.id = w.program_id
+         LEFT JOIN training_programs p ON p.id = w.program_id
          LEFT JOIN users u ON u.id = w.athlete_id
-         WHERE w.coach_id = $1 AND p.status = 'active' AND w.scheduled_date = CURRENT_DATE
+         WHERE w.coach_id = $1 AND ${liveWorkoutSql()} AND w.scheduled_date = CURRENT_DATE
          ORDER BY u.last_name NULLS LAST`,
         [req.user.id]
       )
     );
     const missed = camelMany(
       await many(
-        `SELECT w.*, u.first_name, u.last_name, p.name AS program_name
+        `SELECT w.*, u.first_name, u.last_name, COALESCE(p.name, 'Assigned activity') AS program_name
          FROM planned_workouts w
-         JOIN training_programs p ON p.id = w.program_id
+         LEFT JOIN training_programs p ON p.id = w.program_id
          LEFT JOIN users u ON u.id = w.athlete_id
-         WHERE w.coach_id = $1 AND p.status = 'active' AND w.completion_status = 'missed'
+         WHERE w.coach_id = $1 AND ${liveWorkoutSql()} AND w.completion_status = 'missed'
          ORDER BY w.scheduled_date DESC
          LIMIT 20`,
         [req.user.id]
@@ -277,13 +360,15 @@ router.get(
       completionPct: p.workoutCount ? Math.round((p.completedCount / p.workoutCount) * 100) : 0,
     }));
 
+    const groups = await listCoachGroups(req.user.id);
     const summaries = athletes.map((row) => {
       const athletePrograms = programsWithPrep.filter((p) => p.athleteId === row.athleteId);
+      const singles = toPrepare.filter((w) => w.athleteId === row.athleteId && !w.programId);
       return {
         ...row,
         programs: athletePrograms,
         activePlanCount: athletePrograms.filter((p) => p.status === 'active').length,
-        toPrepareCount: athletePrograms.reduce((sum, p) => sum + (p.toPrepareCount || 0), 0),
+        toPrepareCount: athletePrograms.reduce((sum, p) => sum + (p.toPrepareCount || 0), 0) + singles.length,
         todayWorkouts: today.filter((w) => w.athleteId === row.athleteId),
       };
     });
@@ -293,6 +378,7 @@ router.get(
       athleteCount: athletes.length,
       counts,
       programs: programsWithPrep,
+      groups,
       toPrepare,
       today,
       upcoming: toPrepare.filter((w) => asDate(w.scheduledDate) !== todayYmd()),
@@ -327,11 +413,11 @@ router.get(
     const toPrepare = camelMany(
       await many(
         `SELECT w.id, w.program_id, w.scheduled_date, w.name, w.sport, w.workout_type, w.distance, w.duration,
-                w.completion_status, p.name AS program_name
+                w.completion_status, COALESCE(p.name, 'Assigned activity') AS program_name
          FROM planned_workouts w
-         JOIN training_programs p ON p.id = w.program_id
-         WHERE p.athlete_id = $2 AND p.status = 'active'
-           AND (p.coach_id = $1 OR (p.club_id IS NOT DISTINCT FROM $3))
+         LEFT JOIN training_programs p ON p.id = w.program_id
+         WHERE w.athlete_id = $2 AND ${liveWorkoutSql()}
+           AND (p.coach_id = $1 OR w.coach_id = $1 OR (w.club_id IS NOT DISTINCT FROM $3) OR (p.club_id IS NOT DISTINCT FROM $3))
            AND w.scheduled_date >= CURRENT_DATE
            AND w.completion_status IN ('planned', 'pending_match')
            AND LOWER(w.workout_type) <> 'rest'
@@ -382,12 +468,12 @@ router.get(
     const workouts = camelMany(
       await many(
         `SELECT w.id, w.scheduled_date, w.name, w.sport, w.workout_type, w.completion_status,
-                w.distance, w.duration, p.name AS program_name
+                w.distance, w.duration, COALESCE(p.name, 'Assigned activity') AS program_name
          FROM planned_workouts w
-         JOIN training_programs p ON p.id = w.program_id
+         LEFT JOIN training_programs p ON p.id = w.program_id
          WHERE w.athlete_id = $1
            AND w.scheduled_date BETWEEN $2 AND $3
-           AND p.status IN ('active', 'paused', 'completed')
+           AND (w.program_id IS NULL OR p.status IN ('active', 'paused', 'completed'))
            ${clubSql}
          ORDER BY w.scheduled_date`,
         params
@@ -509,8 +595,40 @@ router.post(
   requireRole('coach'),
   asyncHandler(async (req, res) => {
     const program = await loadProgramOwnedOrThrow(req);
-    const athleteId = req.body.athleteId;
-    if (!athleteId) throw httpError(400, 'Choose an athlete');
+    const groupId = req.body.groupId || null;
+    const athleteIds = Array.isArray(req.body.athleteIds) ? req.body.athleteIds : [];
+    if (groupId || athleteIds.length > 1) {
+      const targets = await resolveTargets(req.user, {
+        groupId,
+        athleteIds,
+        clubId: program.clubId,
+      });
+      const copies = [];
+      for (const athlete of targets.athletes) {
+        if (program.athleteId === athlete.athleteId) {
+          copies.push(program);
+          continue;
+        }
+        const copy = await cloneProgramForAthlete(program, athlete.athleteId, targets.group?.id || null);
+        await createNotification({
+          userId: athlete.athleteId,
+          type: 'training',
+          title: 'New training plan',
+          body: `${req.user.firstName} assigned ${copy.name} to ${targets.group ? `${targets.group.name}` : 'you'}.`,
+          data: { programId: copy.id, url: `/training/programs/${copy.id}` },
+        });
+        copies.push(copy);
+      }
+      return res.json({
+        assigned: copies.length,
+        groupId: targets.group?.id || null,
+        programs: copies,
+        program: copies[0] ? await hydrateProgram(copies[0]) : await hydrateProgram(program),
+      });
+    }
+
+    const athleteId = req.body.athleteId || athleteIds[0];
+    if (!athleteId) throw httpError(400, 'Choose an athlete or a group');
     const assignment = await assertAssignedCoach(req.user.id, athleteId);
     await assertAssignmentInClub(assignment, program.clubId);
     const startDate = asDate(req.body.startDate) || program.startDate;
@@ -761,6 +879,50 @@ router.post(
   })
 );
 
+router.post(
+  '/workouts',
+  requireRole('coach'),
+  asyncHandler(async (req, res) => {
+    const payload = workoutPayload(req.body, { sport: 'Run' });
+    if (!payload.scheduledDate) throw httpError(400, 'Workout date is required');
+    const targets = await resolveTargets(req.user, {
+      athleteId: req.body.athleteId,
+      groupId: req.body.groupId,
+      athleteIds: req.body.athleteIds,
+      clubId: req.body.clubId,
+    });
+    await assertCoachInClub(req.user.id, targets.clubId);
+    const created = [];
+    for (const athlete of targets.athletes) {
+      const workout = camel(
+        await one(
+          `INSERT INTO planned_workouts (
+             program_id, athlete_id, coach_id, club_id, group_id, scheduled_date, name, sport, workout_type,
+             distance, duration, target_pace, target_hr_zone, target_hr, target_power, rpe,
+             warmup, main_set, cooldown, instructions, coach_notes
+           ) VALUES (NULL,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+           RETURNING *`,
+          [
+            athlete.athleteId, req.user.id, targets.clubId, targets.group?.id || null,
+            payload.scheduledDate, payload.name, payload.sport, payload.workoutType,
+            payload.distance, payload.duration, payload.targetPace, payload.targetHrZone, payload.targetHr, payload.targetPower, payload.rpe,
+            payload.warmup, payload.mainSet, payload.cooldown, payload.instructions, payload.coachNotes,
+          ]
+        )
+      );
+      await createNotification({
+        userId: athlete.athleteId,
+        type: 'training',
+        title: 'Workout scheduled',
+        body: `${payload.name || payload.workoutType} on ${payload.scheduledDate}${targets.group ? ` · ${targets.group.name}` : ''}.`,
+        data: { workoutId: workout.id, url: `/training/workouts/${workout.id}` },
+      });
+      created.push(workout);
+    }
+    res.status(201).json({ workouts: created, count: created.length });
+  })
+);
+
 router.get(
   '/workouts/:id',
   asyncHandler(async (req, res) => {
@@ -784,8 +946,8 @@ router.get(
       : [];
     res.json({
       workout,
-      program: { id: program.id, name: program.name, status: program.status, coachId: program.coachId, athleteId: program.athleteId, clubId: program.clubId },
-      canEdit: canModifyProgram(req.user, program),
+      program: workoutProgramView(workout, program),
+      canEdit: canModifyWorkout(req.user, workout, program),
       matches,
       accepted,
       suggested,
@@ -801,7 +963,8 @@ router.patch(
   asyncHandler(async (req, res) => {
     const current = camel(await one('SELECT * FROM planned_workouts WHERE id = $1', [req.params.id]));
     if (!current) throw httpError(404, 'Workout not found');
-    const program = await loadProgramOwnedOrThrow(req, current.programId);
+    const program = current.programId ? await loadProgramOwnedOrThrow(req, current.programId) : null;
+    if (!canModifyWorkout(req.user, current, program)) throw httpError(403, 'Not authorized to modify this workout');
     const pastLocked = asDate(current.scheduledDate) < todayYmd() && !['planned', 'pending_match'].includes(current.completionStatus);
     const payload = pastLocked
       ? { ...current, coachNotes: req.body.coachNotes != null ? req.body.coachNotes : current.coachNotes, instructions: req.body.instructions != null ? req.body.instructions : current.instructions }
@@ -820,9 +983,9 @@ router.patch(
         ]
       )
     );
-    if (program.athleteId && program.status === 'active' && !pastLocked) {
+    if ((program?.athleteId || current.athleteId) && (program ? program.status === 'active' : true) && !pastLocked) {
       await createNotification({
-        userId: program.athleteId,
+        userId: program?.athleteId || current.athleteId,
         type: 'training',
         title: 'Workout updated',
         body: `${updated.name || updated.workoutType} on ${asDate(updated.scheduledDate)} was changed.`,
@@ -839,7 +1002,8 @@ router.delete(
   asyncHandler(async (req, res) => {
     const current = camel(await one('SELECT * FROM planned_workouts WHERE id = $1', [req.params.id]));
     if (!current) throw httpError(404, 'Workout not found');
-    await loadProgramOwnedOrThrow(req, current.programId);
+    const program = current.programId ? await loadProgram(current.programId) : null;
+    if (!canModifyWorkout(req.user, current, program)) throw httpError(403, 'Not authorized to modify this workout');
     await query('DELETE FROM planned_workouts WHERE id = $1', [current.id]);
     res.json({ message: 'Workout deleted' });
   })
@@ -851,7 +1015,8 @@ router.post(
   asyncHandler(async (req, res) => {
     const current = camel(await one('SELECT * FROM planned_workouts WHERE id = $1', [req.params.id]));
     if (!current) throw httpError(404, 'Workout not found');
-    await loadProgramOwnedOrThrow(req, current.programId);
+    const program = current.programId ? await loadProgramOwnedOrThrow(req, current.programId) : null;
+    if (!canModifyWorkout(req.user, current, program)) throw httpError(403, 'Not authorized to modify this workout');
     const date = asDate(req.body.scheduledDate) || current.scheduledDate;
     const copy = camel(
       await one(
@@ -876,7 +1041,7 @@ router.post(
   '/workouts/:id/skip',
   asyncHandler(async (req, res) => {
     const { workout, program } = await loadWorkoutForUser(req, req.params.id);
-    if (!canModifyProgram(req.user, program) && req.user.id !== program.athleteId) {
+    if (!canModifyWorkout(req.user, workout, program) && req.user.id !== (program?.athleteId || workout.athleteId)) {
       throw httpError(403, 'Access denied');
     }
     const updated = camel(
@@ -894,7 +1059,7 @@ router.post(
   '/workouts/:id/matches/:matchId/confirm',
   asyncHandler(async (req, res) => {
     const { workout, program } = await loadWorkoutForUser(req, req.params.id);
-    if (!canModifyProgram(req.user, program) && req.user.id !== program.athleteId) {
+    if (!canModifyWorkout(req.user, workout, program) && req.user.id !== (program?.athleteId || workout.athleteId)) {
       throw httpError(403, 'Access denied');
     }
     const match = camel(await one('SELECT * FROM workout_activity_matches WHERE id = $1 AND planned_workout_id = $2', [req.params.matchId, workout.id]));
@@ -908,7 +1073,7 @@ router.post(
   '/workouts/:id/matches/:matchId/reject',
   asyncHandler(async (req, res) => {
     const { workout, program } = await loadWorkoutForUser(req, req.params.id);
-    if (!canModifyProgram(req.user, program) && req.user.id !== program.athleteId) {
+    if (!canModifyWorkout(req.user, workout, program) && req.user.id !== (program?.athleteId || workout.athleteId)) {
       throw httpError(403, 'Access denied');
     }
     const match = camel(await one('SELECT * FROM workout_activity_matches WHERE id = $1 AND planned_workout_id = $2', [req.params.matchId, workout.id]));
@@ -921,7 +1086,7 @@ router.post(
   '/workouts/:id/link-activity',
   asyncHandler(async (req, res) => {
     const { workout, program } = await loadWorkoutForUser(req, req.params.id);
-    if (!canModifyProgram(req.user, program) && req.user.id !== program.athleteId) {
+    if (!canModifyWorkout(req.user, workout, program) && req.user.id !== (program?.athleteId || workout.athleteId)) {
       throw httpError(403, 'Access denied');
     }
     if (!req.body.activityId) throw httpError(400, 'Choose an activity');

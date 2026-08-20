@@ -33,9 +33,9 @@ function pathActive(pathname, to) {
   if (to === '/dashboard') return pathname === '/dashboard';
   if (to === '/admin') return pathname === '/admin' || pathname.startsWith('/admin/');
   if (to === '/support-desk') return pathname === '/support-desk' || pathname.startsWith('/support-desk/');
-  if (to === '/coaches') return pathname === '/coaches' || (pathname.startsWith('/coaches/') && !pathname.startsWith('/coaches/training') && !pathname.startsWith('/coaches/programs'));
+  if (to === '/coaches') return pathname === '/coaches' || (pathname.startsWith('/coaches/') && !pathname.startsWith('/coaches/training') && !pathname.startsWith('/coaches/programs') && !pathname.startsWith('/coaches/groups') && !pathname.startsWith('/coaches/activities'));
   if (to === '/coaches/training') {
-    return pathname.startsWith('/coaches/training') || pathname.startsWith('/coaches/programs') || /\/coaches\/athletes\/[^/]+\/training/.test(pathname);
+    return pathname.startsWith('/coaches/training') || pathname.startsWith('/coaches/programs') || pathname.startsWith('/coaches/groups') || pathname.startsWith('/coaches/activities') || /\/coaches\/athletes\/[^/]+\/training/.test(pathname);
   }
   if (to === '/training') return pathname === '/training' || pathname.startsWith('/training/');
   if (to === '/clubs') return pathname === '/clubs' || pathname.startsWith('/clubs/');

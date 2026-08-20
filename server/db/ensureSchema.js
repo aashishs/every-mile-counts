@@ -334,6 +334,39 @@ async function ensureTrainingPlanSchema() {
   `);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_workout_matches_workout ON workout_activity_matches (planned_workout_id, status)`);
 
+  await pool.query(`ALTER TABLE planned_workouts ALTER COLUMN program_id DROP NOT NULL`);
+  await pool.query(`ALTER TABLE planned_workouts ADD COLUMN IF NOT EXISTS group_id UUID`);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS coach_groups (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      coach_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      club_id UUID NOT NULL REFERENCES clubs(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      description TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_coach_groups_coach ON coach_groups (coach_id, club_id)`);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS coach_group_members (
+      group_id UUID NOT NULL REFERENCES coach_groups(id) ON DELETE CASCADE,
+      athlete_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (group_id, athlete_id)
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_coach_group_members_athlete ON coach_group_members (athlete_id)`);
+  await pool.query(`
+    DO $$ BEGIN
+      ALTER TABLE planned_workouts
+        ADD CONSTRAINT planned_workouts_group_id_fkey
+        FOREIGN KEY (group_id) REFERENCES coach_groups(id) ON DELETE SET NULL;
+    EXCEPTION WHEN duplicate_object THEN NULL;
+    END $$
+  `);
+
   await pool.query(`ALTER TABLE activity_reviews ADD COLUMN IF NOT EXISTS program_id UUID REFERENCES training_programs(id) ON DELETE SET NULL`);
   await pool.query(`ALTER TABLE activity_reviews ADD COLUMN IF NOT EXISTS planned_workout_id UUID REFERENCES planned_workouts(id) ON DELETE SET NULL`);
 

@@ -392,7 +392,7 @@ router.get(
                 w.completion_status, w.program_id, w.coach_id, w.club_id, p.name AS program_name
          FROM workout_activity_matches m
          JOIN planned_workouts w ON w.id = m.planned_workout_id
-         JOIN training_programs p ON p.id = w.program_id
+         LEFT JOIN training_programs p ON p.id = w.program_id
          WHERE m.activity_id = $1 AND m.status IN ('auto', 'confirmed')
          LIMIT 1`,
         [activity.id]

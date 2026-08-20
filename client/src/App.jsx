@@ -22,6 +22,8 @@ import WorkoutDetail from './pages/WorkoutDetail';
 import CoachTraining from './pages/CoachTraining';
 import CoachProgramEditor from './pages/CoachProgramEditor';
 import CoachAthleteTraining from './pages/CoachAthleteTraining';
+import CoachGroups from './pages/CoachGroups';
+import CoachAssignActivity from './pages/CoachAssignActivity';
 import Clubs from './pages/Clubs';
 import ClubDetail from './pages/ClubDetail';
 import Notifications from './pages/Notifications';
@@ -51,6 +53,8 @@ export default function App() {
           <Route path="/analysis" element={<ProtectedRoute><AthleteRoute><Analysis /></AthleteRoute></ProtectedRoute>} />
           <Route path="/coaches" element={<ProtectedRoute><NotAppAdmin><Coaches /></NotAppAdmin></ProtectedRoute>} />
           <Route path="/coaches/training" element={<ProtectedRoute><NotAppAdmin><CoachTraining /></NotAppAdmin></ProtectedRoute>} />
+          <Route path="/coaches/groups" element={<ProtectedRoute><NotAppAdmin><CoachGroups /></NotAppAdmin></ProtectedRoute>} />
+          <Route path="/coaches/activities/new" element={<ProtectedRoute><NotAppAdmin><CoachAssignActivity /></NotAppAdmin></ProtectedRoute>} />
           <Route path="/coaches/programs/new" element={<ProtectedRoute><NotAppAdmin><CoachProgramEditor /></NotAppAdmin></ProtectedRoute>} />
           <Route path="/coaches/programs/:id" element={<ProtectedRoute><NotAppAdmin><CoachProgramEditor /></NotAppAdmin></ProtectedRoute>} />
           <Route path="/coaches/athletes/:athleteId/training" element={<ProtectedRoute><NotAppAdmin><CoachAthleteTraining /></NotAppAdmin></ProtectedRoute>} />

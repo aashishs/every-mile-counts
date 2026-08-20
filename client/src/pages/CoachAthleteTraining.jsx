@@ -57,7 +57,8 @@ export default function CoachAthleteTraining() {
           <h2 className="page-title mb-1">{athlete.firstName} {athlete.lastName}</h2>
           <p className="page-sub mb-0">All plans and activities this athlete still needs to prepare</p>
         </div>
-        <Link to="/coaches/programs/new" className="btn-outline no-underline text-center">New program</Link>
+          <Link to={`/coaches/activities/new?athleteId=${athleteId}`} className="btn-outline no-underline text-center">Assign activity</Link>
+          <Link to="/coaches/programs/new" className="btn-outline no-underline text-center">New program</Link>
       </div>
 
       {current ? (

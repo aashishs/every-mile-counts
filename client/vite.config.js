@@ -21,8 +21,8 @@ export default defineConfig({
       ],
       manifest: {
         id: '/',
-        name: 'Every Mile Counts',
-        short_name: 'EMC',
+        name: 'EveryMileCounts',
+        short_name: 'EveryMileCounts',
         description: 'Endurance app for athletes, coaches, and clubs. Sync Strava, track training, and get coached.',
         theme_color: '#0d9488',
         background_color: '#0f1419',

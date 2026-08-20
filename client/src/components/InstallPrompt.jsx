@@ -78,7 +78,7 @@ export default function InstallPrompt() {
       <div className="card flex items-start gap-3 shadow-card py-3 px-4">
         <img src="/pwa-192.png" alt="" className="w-11 h-11 rounded-xl shrink-0" />
         <div className="min-w-0 flex-1">
-          <div className="font-semibold text-sm">Install Every Mile Counts</div>
+          <div className="font-semibold text-sm">Install EveryMileCounts</div>
           <p className="text-xs text-muted mt-0.5 mb-0">
             {deferred
               ? 'Add it to your app list for quicker access, like a native app.'

@@ -78,9 +78,9 @@ export async function matchActivityToWorkout(activityId) {
     await many(
       `SELECT w.*
        FROM planned_workouts w
-       JOIN training_programs p ON p.id = w.program_id
+       LEFT JOIN training_programs p ON p.id = w.program_id
        WHERE w.athlete_id = $1
-         AND p.status = 'active'
+         AND (w.program_id IS NULL OR p.status = 'active')
          AND w.scheduled_date BETWEEN ($2::date - INTERVAL '1 day') AND ($2::date + INTERVAL '1 day')
          AND w.completion_status IN ('planned', 'pending_match', 'partial')
          AND LOWER(w.workout_type) <> 'rest'
@@ -238,25 +238,27 @@ export async function markMissedWorkouts() {
     await many(
       `UPDATE planned_workouts w
        SET completion_status = 'missed', updated_at = NOW()
-       FROM training_programs p
-       WHERE w.program_id = p.id
-         AND p.status = 'active'
-         AND w.completion_status IN ('planned', 'pending_match')
+       WHERE w.completion_status IN ('planned', 'pending_match')
          AND LOWER(w.workout_type) <> 'rest'
          AND w.scheduled_date < CURRENT_DATE
          AND w.athlete_id IS NOT NULL
+         AND (
+           w.program_id IS NULL
+           OR EXISTS (SELECT 1 FROM training_programs p WHERE p.id = w.program_id AND p.status = 'active')
+         )
        RETURNING w.id, w.athlete_id, w.coach_id, w.name, w.workout_type, w.program_id, w.scheduled_date`
     )
   );
   await query(
     `UPDATE planned_workouts w
      SET completion_status = 'completed', updated_at = NOW()
-     FROM training_programs p
-     WHERE w.program_id = p.id
-       AND p.status = 'active'
-       AND w.completion_status = 'planned'
+     WHERE w.completion_status = 'planned'
        AND LOWER(w.workout_type) = 'rest'
-       AND w.scheduled_date < CURRENT_DATE`
+       AND w.scheduled_date < CURRENT_DATE
+       AND (
+         w.program_id IS NULL
+         OR EXISTS (SELECT 1 FROM training_programs p WHERE p.id = w.program_id AND p.status = 'active')
+       )`
   );
 
   const byAthlete = new Map();

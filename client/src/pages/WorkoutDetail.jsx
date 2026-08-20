@@ -27,8 +27,8 @@ export default function WorkoutDetail() {
       const { data: payload } = await api.get(`/training/workouts/${id}`);
       setData(payload);
       setError('');
-      if (payload.program?.athleteId) {
-        const list = await api.get('/activities', { params: { athleteId: payload.program.athleteId, limit: 20 } });
+      if (payload.program?.athleteId || payload.workout?.athleteId) {
+        const list = await api.get('/activities', { params: { athleteId: payload.program?.athleteId || payload.workout.athleteId, limit: 20 } });
         setActivities(list.data.activities || []);
       }
     } catch (err) {
@@ -61,8 +61,10 @@ export default function WorkoutDetail() {
   if (!data) return <Layout><p className="text-muted">Loading…</p></Layout>;
 
   const { workout, program, comparison, suggested, accepted, reviews, canEdit } = data;
-  const isAthlete = user.id === program.athleteId;
-  const workoutPath = canEdit ? `/coaches/programs/${program.id}` : `/training/programs/${program.id}`;
+  const isAthlete = user.id === (program?.athleteId || workout.athleteId);
+  const workoutPath = program?.id
+    ? (canEdit ? `/coaches/programs/${program.id}` : `/training/programs/${program.id}`)
+    : (isAthlete ? '/training' : '/coaches/training');
   const myReview = (reviews || []).find((r) => r.coachId === user.id);
 
   const publishReview = async (e) => {
@@ -73,7 +75,7 @@ export default function WorkoutDetail() {
     try {
       await api.post('/reviews', {
         activityId: accepted.activityId,
-        programId: program.id,
+        programId: program?.id || undefined,
         plannedWorkoutId: workout.id,
         ...reviewForm,
         status: 'published',

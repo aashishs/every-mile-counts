@@ -218,11 +218,11 @@ export async function clubReviewsForAthlete(viewerId, athleteId, clubId, { limit
 export async function loadWorkoutDetail(workoutId) {
   const workout = camel(
     await one(
-      `SELECT w.*, p.name AS program_name, p.status AS program_status, p.athlete_id AS program_athlete_id,
+      `SELECT w.*, COALESCE(p.name, 'Assigned activity') AS program_name, COALESCE(p.status, 'active') AS program_status, p.athlete_id AS program_athlete_id,
               ph.name AS phase_name, tw.week_number,
               c.name AS club_name
        FROM planned_workouts w
-       JOIN training_programs p ON p.id = w.program_id
+       LEFT JOIN training_programs p ON p.id = w.program_id
        LEFT JOIN training_phases ph ON ph.id = w.phase_id
        LEFT JOIN training_weeks tw ON tw.id = w.week_id
        LEFT JOIN clubs c ON c.id = w.club_id

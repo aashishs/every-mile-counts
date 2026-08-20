@@ -48,8 +48,21 @@ export default function MyTraining() {
       <p className="page-sub">What to prepare today, and how each plan is going</p>
       {error && <div className="card text-rose-200 mb-4">{error}</div>}
 
-      {!current ? (
-        <div className="card text-muted">No active training plan yet. Your coach can assign one from Coaching.</div>
+      {!current && !data?.upcoming?.length && !data?.today?.length ? (
+        <div className="card text-muted mb-6">No training assigned yet. Your coach can give you a plan or a single activity.</div>
+      ) : !current ? (
+        <section className="mb-6">
+          <h3 className="section-title mb-3">Today</h3>
+          {!today.length ? (
+            <div className="card text-muted text-sm">No workout scheduled today.</div>
+          ) : (
+            <div className="space-y-2">
+              {today.map((w) => (
+                <WorkoutRow key={w.id} workout={w} onOpen={() => navigate(`/training/workouts/${w.id}`)} />
+              ))}
+            </div>
+          )}
+        </section>
       ) : (
         <>
           <div className="card mb-5">

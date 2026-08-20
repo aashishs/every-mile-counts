@@ -2,37 +2,14 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import Layout from '../components/Layout';
+import WorkoutForm, { emptyWorkout, payloadFromForm, workoutFormFromRecord } from '../components/WorkoutForm';
 import { ACTIVITY_TYPE_OPTIONS, formatDate, getActivityIcon } from '../utils/format';
 import {
   COMPLETION_LABEL,
-  inputToPace,
   metersToKmInput,
-  minutesFromSeconds,
-  paceToInput,
   PROGRAM_STATUS_LABEL,
-  secondsFromMinutes,
   statusClass,
-  WORKOUT_TYPES,
 } from '../utils/training';
-
-const emptyWorkout = {
-  name: '',
-  sport: 'Run',
-  workoutType: 'Easy',
-  scheduledDate: '',
-  distance: '',
-  duration: '',
-  targetPace: '',
-  targetHrZone: '',
-  targetHr: '',
-  targetPower: '',
-  rpe: '',
-  warmup: '',
-  mainSet: '',
-  cooldown: '',
-  instructions: '',
-  coachNotes: '',
-};
 
 export default function CoachProgramEditor() {
   const { id } = useParams();
@@ -57,6 +34,8 @@ export default function CoachProgramEditor() {
   const [weekId, setWeekId] = useState('');
   const [editingWorkout, setEditingWorkout] = useState(null);
   const [athleteId, setAthleteId] = useState('');
+  const [groupId, setGroupId] = useState('');
+  const [groups, setGroups] = useState([]);
 
   const loadProgram = async (programId) => {
     const { data } = await api.get(`/training/programs/${programId}`);
@@ -79,6 +58,7 @@ export default function CoachProgramEditor() {
   useEffect(() => {
     api.get('/clubs/mine').then((res) => setClubs(res.data.clubs || res.data || [])).catch(() => setClubs([]));
     api.get('/coaches/my-athletes', { params: { limit: 100 } }).then((res) => setAthletes(res.data.athletes || [])).catch(() => setAthletes([]));
+    api.get('/training/groups').then((res) => setGroups(res.data.groups || [])).catch(() => setGroups([]));
   }, []);
 
   useEffect(() => {
@@ -149,6 +129,7 @@ export default function CoachProgramEditor() {
   if (error && !program) return <Layout><div className="card text-rose-200">{error}</div></Layout>;
 
   const clubAthletes = athletes.filter((a) => !form.clubId || a.clubId === form.clubId || !a.clubId);
+  const clubGroups = groups.filter((g) => !form.clubId || g.clubId === form.clubId);
   const progress = program.progress || {};
 
   return (
@@ -193,6 +174,21 @@ export default function CoachProgramEditor() {
           </div>
         </div>
         <div>
+          <label>Assign group</label>
+          <div className="flex gap-2">
+            <select value={groupId} onChange={(e) => setGroupId(e.target.value)}>
+              <option value="">Choose group in this club</option>
+              {clubGroups.map((g) => (
+                <option key={g.id} value={g.id}>{g.name} ({g.athleteCount || g.athletes?.length || 0})</option>
+              ))}
+            </select>
+            <button className="btn-primary" type="button" disabled={!groupId} onClick={() => run(() => api.post(`/training/programs/${program.id}/assign`, { groupId }))}>
+              Assign copies
+            </button>
+          </div>
+          <p className="text-xs text-muted mt-2 mb-0">Each athlete in the group gets their own copy of this plan.</p>
+        </div>
+        <div className="md:col-span-2">
           <label>Program status</label>
           <div className="flex flex-wrap gap-2">
             {program.status === 'draft' && <button className="btn-outline btn-sm" type="button" onClick={() => run(() => api.post(`/training/programs/${program.id}/status`, { status: 'active' }))}>Activate</button>}
@@ -256,25 +252,7 @@ export default function CoachProgramEditor() {
                     <button className="btn-outline btn-sm" type="button" onClick={() => {
                       setEditingWorkout(w);
                       setWeekId(week.id);
-                      setWorkoutForm({
-                        ...emptyWorkout,
-                        name: w.name || '',
-                        sport: w.sport,
-                        workoutType: w.workoutType,
-                        scheduledDate: String(w.scheduledDate).slice(0, 10),
-                        distance: metersToKmInput(w.distance),
-                        duration: minutesFromSeconds(w.duration),
-                        targetPace: paceToInput(w.targetPace),
-                        targetHrZone: w.targetHrZone || '',
-                        targetHr: w.targetHr || '',
-                        targetPower: w.targetPower || '',
-                        rpe: w.rpe || '',
-                        warmup: w.warmup || '',
-                        mainSet: w.mainSet || '',
-                        cooldown: w.cooldown || '',
-                        instructions: w.instructions || '',
-                        coachNotes: w.coachNotes || '',
-                      });
+                      setWorkoutForm(workoutFormFromRecord(w, { distance: metersToKmInput(w.distance) }));
                     }}>Edit</button>
                     <button className="btn-outline btn-sm" type="button" onClick={() => run(() => api.post(`/training/workouts/${w.id}/duplicate`))}>Copy</button>
                     <button className="btn-outline btn-sm" type="button" onClick={() => run(() => api.delete(`/training/workouts/${w.id}`))}>Delete</button>
@@ -309,47 +287,3 @@ export default function CoachProgramEditor() {
   );
 }
 
-function payloadFromForm(form) {
-  return {
-    ...form,
-    distance: form.distance === '' ? null : Number(form.distance),
-    duration: secondsFromMinutes(form.duration),
-    targetPace: inputToPace(form.targetPace),
-    targetHrZone: form.targetHrZone === '' ? null : Number(form.targetHrZone),
-    targetHr: form.targetHr === '' ? null : Number(form.targetHr),
-    targetPower: form.targetPower === '' ? null : Number(form.targetPower),
-    rpe: form.rpe === '' ? null : Number(form.rpe),
-  };
-}
-
-function WorkoutForm({ form, setForm, onSave, onCancel }) {
-  const set = (key) => (e) => setForm({ ...form, [key]: e.target.value });
-  return (
-    <form className="mt-4 grid md:grid-cols-2 gap-3" onSubmit={(e) => { e.preventDefault(); onSave(); }}>
-      <input placeholder="Workout name" value={form.name} onChange={set('name')} />
-      <input type="date" required value={form.scheduledDate} onChange={set('scheduledDate')} />
-      <select value={form.sport} onChange={set('sport')}>
-        {ACTIVITY_TYPE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-      </select>
-      <select value={form.workoutType} onChange={set('workoutType')}>
-        {WORKOUT_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
-      </select>
-      <input type="number" step="0.1" placeholder="Distance km" value={form.distance} onChange={set('distance')} />
-      <input type="number" placeholder="Duration minutes" value={form.duration} onChange={set('duration')} />
-      <input placeholder="Pace mm:ss /km" value={form.targetPace} onChange={set('targetPace')} />
-      <input type="number" min="1" max="5" placeholder="HR zone 1-5" value={form.targetHrZone} onChange={set('targetHrZone')} />
-      <input type="number" placeholder="Target HR" value={form.targetHr} onChange={set('targetHr')} />
-      <input type="number" placeholder="Target power" value={form.targetPower} onChange={set('targetPower')} />
-      <input type="number" min="1" max="10" placeholder="RPE 1-10" value={form.rpe} onChange={set('rpe')} />
-      <textarea className="md:col-span-2" placeholder="Warm-up" value={form.warmup} onChange={set('warmup')} />
-      <textarea className="md:col-span-2" placeholder="Main workout" value={form.mainSet} onChange={set('mainSet')} />
-      <textarea className="md:col-span-2" placeholder="Cool-down" value={form.cooldown} onChange={set('cooldown')} />
-      <textarea className="md:col-span-2" placeholder="Instructions" value={form.instructions} onChange={set('instructions')} />
-      <textarea className="md:col-span-2" placeholder="Coach notes" value={form.coachNotes} onChange={set('coachNotes')} />
-      <div className="md:col-span-2 flex gap-2">
-        <button className="btn-primary" type="submit">Save workout</button>
-        <button className="btn-outline" type="button" onClick={onCancel}>Cancel</button>
-      </div>
-    </form>
-  );
-}
