@@ -5,8 +5,11 @@ import { protect, requireMembership } from '../middleware/auth.js';
 import {
   applySyncActivityTypes,
   completeStravaOAuth,
+  disconnectStrava,
   getStravaConnection,
   handleStravaWebhookEvent,
+  setCoachShareConsent,
+  setPendingCoachShare,
   stravaWebhookVerifyToken,
   syncStravaActivities,
 } from '../services/stravaService.js';
@@ -70,6 +73,14 @@ router.get(
         code: 'sync_types_required',
       });
     }
+    const wantShare = ['1', 'true', 'yes'].includes(String(req.query.coachShare || '').toLowerCase());
+    if (!wantShare && !existing?.coachShareConsentedAt) {
+      return res.status(400).json({
+        message: 'Confirm that assigned coaches may view activities imported from Strava.',
+        code: 'coach_share_required',
+      });
+    }
+    await setPendingCoachShare(req.user.id, Boolean(wantShare || existing?.coachShareConsentedAt));
     if (!stravaConfigured() || !encryptionConfigured()) {
       const missing = stravaMissing();
       return res.status(503).json({
@@ -91,7 +102,7 @@ router.get(
       redirect_uri: redirectUri,
       response_type: 'code',
       approval_prompt: 'force',
-      scope: 'read,read_all,profile:read_all,activity:read,activity:read_all',
+      scope: 'activity:read,activity:read_all',
       state: req.user.id,
     });
     res.json({ url: `https://www.strava.com/oauth/authorize?${params.toString()}` });
@@ -101,7 +112,7 @@ router.get(
 router.get(
   '/callback',
   asyncHandler(async (req, res) => {
-    const { code, state, error } = req.query;
+    const { code, state, error, scope } = req.query;
     const appUrl = clientUrl() || requestPublicUrl(req);
     if (!appUrl) {
       return res.status(500).send('Set CLIENT_URL on the API to your public web URL.');
@@ -127,7 +138,7 @@ router.get(
         }),
         { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
       );
-      await completeStravaOAuth(state, tokenRes.data);
+      await completeStravaOAuth(state, tokenRes.data, { grantedScope: scope ? String(scope) : '' });
       await writeAudit({ userId: state, action: 'strava_connect', entityType: 'oauth' });
       res.redirect(302, `${appUrl}/dashboard?strava=connected`);
       syncStravaActivities(state, { full: true }).catch((err) => {
@@ -218,6 +229,46 @@ router.get(
       providerUserId: conn?.providerUserId,
       needsFirstTypePick: needsFirstTypePick(req.user, conn),
       syncActivityTypes: parseStoredSyncTypes(req.user.syncActivityTypes),
+      coachShareConsented: Boolean(conn?.coachShareConsentedAt),
+      grantedScope: conn?.grantedScope || null,
+    });
+  })
+);
+
+router.post(
+  '/coach-share',
+  protect,
+  requireMembership,
+  rejectClubAccount,
+  asyncHandler(async (req, res) => {
+    const enabled = Boolean(req.body?.enabled);
+    await setCoachShareConsent(req.user.id, enabled);
+    await writeAudit({
+      userId: req.user.id,
+      action: enabled ? 'strava_coach_share_on' : 'strava_coach_share_off',
+      entityType: 'oauth',
+    });
+    const conn = await getStravaConnection(req.user.id);
+    res.json({
+      coachShareConsented: Boolean(conn?.coachShareConsentedAt),
+      message: enabled
+        ? 'Assigned coaches can view your Strava-imported activities.'
+        : 'Assigned coaches can no longer view your Strava-imported activities.',
+    });
+  })
+);
+
+router.post(
+  '/disconnect',
+  protect,
+  requireMembership,
+  rejectClubAccount,
+  asyncHandler(async (req, res) => {
+    await disconnectStrava(req.user.id, { revoke: true });
+    await writeAudit({ userId: req.user.id, action: 'strava_disconnect', entityType: 'oauth' });
+    res.json({
+      connected: false,
+      message: 'Strava disconnected. Imported Strava activities were removed from Every Mile Counts.',
     });
   })
 );

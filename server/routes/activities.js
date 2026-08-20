@@ -9,6 +9,7 @@ import { mappedFromFile, mappedFromManual, saveManualActivity } from '../service
 import { asyncHandler } from '../middleware/error.js';
 import { familySqlClause, parseStoredSyncTypes } from '../utils/activityTypes.js';
 import { assignmentClubMatches, getAssignment } from '../utils/coachingAccess.js';
+import { canViewerSeeActivity, stravaShareClause, stravaShareFilterSql } from '../utils/stravaShare.js';
 
 const router = express.Router();
 router.use(protect, requireMembership, rejectAppAdmin);
@@ -118,6 +119,8 @@ router.get(
       filters.push(`a.distance <= $${i++}`);
       params.push(maxKm * 1000);
     }
+    const shareClause = stravaShareClause(req, ownerId);
+    if (shareClause) filters.push(shareClause);
     const where = filters.join(' AND ');
     const count = await one(`SELECT COUNT(*)::int AS total FROM activities a WHERE ${where}`, params);
     const total = count.total;
@@ -136,7 +139,7 @@ router.get(
       )
     );
     res.json({
-      activities,
+      activities: activities.map(publicListActivity),
       total,
       page: safePage,
       pages,
@@ -244,6 +247,9 @@ router.get(
     if (!(await canViewAthlete(req, first.athleteId))) {
       return res.status(403).json({ message: 'Not authorized' });
     }
+    if (!(await canViewerSeeActivity(req, first)) || !(await canViewerSeeActivity(req, second))) {
+      return res.status(403).json({ message: 'This athlete has not shared Strava activities with coaches.' });
+    }
     const comparison = compareActivities(first, second, athleteHrContext(first));
     res.json(comparison);
   })
@@ -267,6 +273,7 @@ router.get(
     const dirSql = String(req.query.dir).toLowerCase() === 'asc' ? 'ASC' : 'DESC';
     const athleteId = req.params.athleteId;
     const coachId = req.user.id;
+    const shareSql = stravaShareFilterSql(req, athleteId);
     const reviewedSql = `EXISTS (
       SELECT 1 FROM activity_reviews r
       WHERE r.activity_id = a.id AND r.coach_id = $2 AND r.status = 'published'
@@ -284,11 +291,11 @@ router.get(
     }[sortKey];
     const countParams = review === 'all' ? [athleteId] : [athleteId, coachId];
     const count = await one(
-      `SELECT COUNT(*)::int AS total FROM activities a WHERE a.athlete_id = $1 ${reviewClause}`,
+      `SELECT COUNT(*)::int AS total FROM activities a WHERE a.athlete_id = $1 ${shareSql} ${reviewClause}`,
       countParams
     );
     const pending = await one(
-      `SELECT COUNT(*)::int AS total FROM activities a WHERE a.athlete_id = $1 AND NOT ${reviewedSql}`,
+      `SELECT COUNT(*)::int AS total FROM activities a WHERE a.athlete_id = $1 ${shareSql} AND NOT ${reviewedSql}`,
       [athleteId, coachId]
     );
     const total = count.total;
@@ -299,7 +306,7 @@ router.get(
       await many(
         `SELECT a.*, ${reviewedSql} AS reviewed_by_me
          FROM activities a
-         WHERE a.athlete_id = $1 ${reviewClause}
+         WHERE a.athlete_id = $1 ${shareSql} ${reviewClause}
          ORDER BY ${orderSql}
          LIMIT $3 OFFSET $4`,
         [athleteId, coachId, limit, offset]
@@ -307,7 +314,7 @@ router.get(
     );
     const glance = await coachAthleteGlance(athleteId, coachId);
     res.json({
-      activities,
+      activities: activities.map(publicListActivity),
       glance,
       total,
       pendingTotal: pending.total,
@@ -335,6 +342,9 @@ router.get(
     if (!activity) return res.status(404).json({ message: 'Activity not found' });
     if (!(await canViewAthlete(req, activity.athleteId))) {
       return res.status(403).json({ message: 'Not authorized' });
+    }
+    if (!(await canViewerSeeActivity(req, activity))) {
+      return res.status(403).json({ message: 'This athlete has not shared Strava activities with coaches.' });
     }
 
     const detailed = await enrichStravaActivity(activity);
@@ -427,7 +437,12 @@ router.get(
       ...safeActivity
     } = detailed;
     res.json({
-      activity: { ...safeActivity, age: hr.age, mafHeartRate: hr.mafHeartRate },
+      activity: {
+        ...safeActivity,
+        sourceActivityId: detailed.sourceActivityId || detailed.raw?.id || null,
+        age: hr.age,
+        mafHeartRate: hr.mafHeartRate,
+      },
       plannedWorkout,
       insights: isCoach ? insights : undefined,
       athleteInsights: req.user.id === activity.athleteId ? {
@@ -445,6 +460,11 @@ router.get(
     });
   })
 );
+
+function publicListActivity(row) {
+  const { raw, gpsPoints, email, polyline, ...rest } = row || {};
+  return rest;
+}
 
 function activityTypeSql(type) {
   const blob = `LOWER(COALESCE(a.type,'') || ' ' || COALESCE(a.sport_type,''))`;

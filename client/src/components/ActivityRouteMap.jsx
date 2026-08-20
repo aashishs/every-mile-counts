@@ -65,8 +65,8 @@ export default function ActivityRouteMap({ activity }) {
   return (
     <section className="mb-6">
       <h3 className="section-title mb-3">Route</h3>
-      <div className="overflow-hidden rounded-2xl border border-line">
-        <div ref={el} className="activity-map h-64 md:h-80 w-full bg-ink" />
+      <div className="overflow-hidden rounded-2xl border border-line min-w-0">
+        <div ref={el} className="activity-map h-64 md:h-80 w-full max-w-full bg-ink" />
       </div>
     </section>
   );

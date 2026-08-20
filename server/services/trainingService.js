@@ -1,5 +1,6 @@
 import { camel, camelMany, many, one } from '../config/db.js';
 import { isRestType } from '../utils/workoutTypes.js';
+import { STRAVA_COACH_SHARE_SQL, stravaVisibleSql } from '../utils/stravaShare.js';
 
 function pct(part, whole) {
   if (!whole) return 0;
@@ -89,7 +90,7 @@ export function currentPhaseAndWeek(program, tree, date = todayYmd()) {
   };
 }
 
-export async function programProgress(programId) {
+export async function programProgress(programId, viewerId) {
   const workouts = camelMany(
     await many('SELECT * FROM planned_workouts WHERE program_id = $1', [programId])
   );
@@ -111,8 +112,9 @@ export async function programProgress(programId) {
        FROM workout_activity_matches m
        JOIN planned_workouts w ON w.id = m.planned_workout_id
        JOIN activities a ON a.id = m.activity_id
-       WHERE w.program_id = $1 AND m.status IN ('auto', 'confirmed')`,
-      [programId]
+       WHERE w.program_id = $1 AND m.status IN ('auto', 'confirmed')
+         AND ${stravaVisibleSql('$2')}`,
+      [programId, viewerId]
     )
   );
 
@@ -175,9 +177,10 @@ export async function programProgress(programId) {
 export async function recentActivitiesForAthlete(athleteId, limit = 5) {
   return camelMany(
     await many(
-      `SELECT id, name, type, sport_type, distance, moving_time, start_date, avg_heartrate, avg_speed
-       FROM activities
+      `SELECT id, name, type, sport_type, distance, moving_time, start_date, avg_heartrate, avg_speed, source, source_activity_id
+       FROM activities a
        WHERE athlete_id = $1
+         AND ${STRAVA_COACH_SHARE_SQL}
        ORDER BY start_date DESC NULLS LAST
        LIMIT $2`,
       [athleteId, limit]
@@ -215,7 +218,7 @@ export async function clubReviewsForAthlete(viewerId, athleteId, clubId, { limit
   );
 }
 
-export async function loadWorkoutDetail(workoutId) {
+export async function loadWorkoutDetail(workoutId, viewerId) {
   const workout = camel(
     await one(
       `SELECT w.*, COALESCE(p.name, 'Assigned activity') AS program_name, COALESCE(p.status, 'active') AS program_status, p.athlete_id AS program_athlete_id,
@@ -238,8 +241,9 @@ export async function loadWorkoutDetail(workoutId) {
        FROM workout_activity_matches m
        JOIN activities a ON a.id = m.activity_id
        WHERE m.planned_workout_id = $1
+         AND ${stravaVisibleSql('$2')}
        ORDER BY m.matched_at DESC`,
-      [workoutId]
+      [workoutId, viewerId]
     )
   );
   const accepted = matches.find((m) => m.status === 'auto' || m.status === 'confirmed') || null;

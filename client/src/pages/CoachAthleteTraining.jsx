@@ -4,6 +4,7 @@ import api from '../api/client';
 import Layout from '../components/Layout';
 import MonthCalendar, { ymd } from '../components/MonthCalendar';
 import { formatDate, formatDateShort, getActivityIcon } from '../utils/format';
+import { ViewOnStrava } from '../components/StravaBrand';
 import { calendarDot, COMPLETION_LABEL, formatKm, PROGRAM_STATUS_LABEL, statusClass, ymdToday } from '../utils/training';
 
 export default function CoachAthleteTraining() {
@@ -141,10 +142,15 @@ export default function CoachAthleteTraining() {
         <section className="mb-6">
           <h3 className="section-title mb-3">Recent activities</h3>
           {recentActivities.map((a) => (
-            <Link key={a.id} to={`/activities/${a.id}`} className="card flex justify-between mb-2 no-underline text-inherit">
-              <span>{getActivityIcon(a.type)} {a.name || a.type}</span>
-              <span className="text-xs text-muted">{formatDateShort(a.startDate)}</span>
-            </Link>
+            <div key={a.id} className="card flex justify-between mb-2 items-center gap-3">
+              <Link to={`/activities/${a.id}`} className="no-underline text-inherit min-w-0 truncate">
+                {getActivityIcon(a.type)} {a.name || a.type}
+              </Link>
+              <span className="text-xs text-muted flex items-center gap-2 shrink-0">
+                <ViewOnStrava activity={a} />
+                {formatDateShort(a.startDate)}
+              </span>
+            </div>
           ))}
         </section>
       )}

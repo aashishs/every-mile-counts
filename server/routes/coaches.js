@@ -6,6 +6,7 @@ import { ageFromDob, mafHeartRate } from '../utils/maf.js';
 import { createNotification } from '../services/notificationService.js';
 import { MAX_COACHES } from '../utils/limits.js';
 import { assertCoachSlot } from '../utils/invites.js';
+import { STRAVA_COACH_SHARE_SQL } from '../utils/stravaShare.js';
 
 const router = express.Router();
 router.use(protect, requireMembership, rejectAppAdmin);
@@ -139,8 +140,8 @@ router.get(
     const selectSql = `
       SELECT ca.athlete_id, ca.club_id, u.first_name, u.last_name, u.email, u.avatar_url,
              u.date_of_birth, u.age, u.maf_heart_rate,
-             (SELECT COUNT(*) FROM activities a WHERE a.athlete_id = u.id)::int AS activity_count,
-             (SELECT MAX(a.start_date) FROM activities a WHERE a.athlete_id = u.id) AS last_activity_at
+             (SELECT COUNT(*) FROM activities a WHERE a.athlete_id = u.id AND ${STRAVA_COACH_SHARE_SQL})::int AS activity_count,
+             (SELECT MAX(a.start_date) FROM activities a WHERE a.athlete_id = u.id AND ${STRAVA_COACH_SHARE_SQL}) AS last_activity_at
       ${fromSql}
     `;
 

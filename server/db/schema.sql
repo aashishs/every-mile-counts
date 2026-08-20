@@ -211,6 +211,9 @@ CREATE TABLE IF NOT EXISTS oauth_connections (
   last_sync_at TIMESTAMPTZ,
   last_sync_status TEXT,
   last_sync_error TEXT,
+  granted_scope TEXT,
+  pending_coach_share BOOLEAN NOT NULL DEFAULT FALSE,
+  coach_share_consented_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE (user_id, provider)

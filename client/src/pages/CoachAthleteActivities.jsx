@@ -11,6 +11,7 @@ import {
   getActivityIcon,
 } from '../utils/format';
 import { PROGRAM_STATUS_LABEL, statusClass } from '../utils/training';
+import { ViewOnStrava } from '../components/StravaBrand';
 
 const FILTERS = [
   { id: 'all', label: 'Recent' },
@@ -44,31 +45,36 @@ function openActivity(navigate, athleteId, id) {
 
 function SessionRow({ activity, athleteId, navigate }) {
   return (
-    <button
-      type="button"
-      className="card w-full text-left hover:border-brand py-3"
-      onClick={() => openActivity(navigate, athleteId, activity.id)}
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="font-semibold truncate">
-            {getActivityIcon(activity.type)} {activity.name || activity.type || 'Session'}
+    <div className="card">
+      <button
+        type="button"
+        className="w-full text-left bg-transparent border-0 p-0 text-inherit"
+        onClick={() => openActivity(navigate, athleteId, activity.id)}
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="font-semibold truncate">
+              {getActivityIcon(activity.type)} {activity.name || activity.type || 'Session'}
+            </div>
+            <div className="text-xs text-muted mt-1 flex flex-wrap gap-x-2">
+              <span>{formatDateShort(activity.startDate)}</span>
+              <span>{formatActivityPrimary(activity)}</span>
+              <span>{formatDuration(activity.movingTime || activity.elapsedTime)}</span>
+              {formatEffort(activity) ? <span>{formatEffort(activity)}</span> : null}
+              {activity.avgHeartrate ? <span>{Math.round(activity.avgHeartrate)} bpm</span> : null}
+            </div>
           </div>
-          <div className="text-xs text-muted mt-1 flex flex-wrap gap-x-2">
-            <span>{formatDateShort(activity.startDate)}</span>
-            <span>{formatActivityPrimary(activity)}</span>
-            <span>{formatDuration(activity.movingTime || activity.elapsedTime)}</span>
-            {formatEffort(activity) ? <span>{formatEffort(activity)}</span> : null}
-            {activity.avgHeartrate ? <span>{Math.round(activity.avgHeartrate)} bpm</span> : null}
-          </div>
+          {activity.reviewedByMe ? (
+            <span className="text-[11px] font-semibold text-brand shrink-0">Reviewed</span>
+          ) : (
+            <span className="text-[11px] font-semibold text-orange-200 shrink-0">Review</span>
+          )}
         </div>
-        {activity.reviewedByMe ? (
-          <span className="text-[11px] font-semibold text-brand shrink-0">Reviewed</span>
-        ) : (
-          <span className="text-[11px] font-semibold text-orange-200 shrink-0">Review</span>
-        )}
+      </button>
+      <div className="mt-1">
+        <ViewOnStrava activity={activity} />
       </div>
-    </button>
+    </div>
   );
 }
 
@@ -198,6 +204,12 @@ export default function CoachAthleteActivities() {
 
       {error && <div className="card mb-4 text-sm text-orange-300">{error}</div>}
 
+      {!error && glance?.stravaConnected && glance.stravaSharedWithCoach === false && (
+        <div className="card mb-4 text-sm text-muted">
+          This athlete has not allowed coaches to view Strava-imported activities. Manual and file-imported sessions still appear.
+        </div>
+      )}
+
       {!error && glance && (
         <>
           <div className="hero-week">
@@ -270,34 +282,39 @@ export default function CoachAthleteActivities() {
       )}
 
       {!error && glance?.lastActivity && filter === 'all' && page === 1 && (
-        <button
-          type="button"
-          className="card w-full text-left mb-5 hover:border-brand"
-          onClick={() => openActivity(navigate, athleteId, glance.lastActivity.id)}
-        >
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <div className="stat-label">Last session</div>
-              <div className="font-display text-2xl font-bold tracking-tight mt-1">
-                {getActivityIcon(glance.lastActivity.type)} {glance.lastActivity.name || glance.lastActivity.type}
+        <div className="card mb-5">
+          <button
+            type="button"
+            className="w-full text-left bg-transparent border-0 p-0 text-inherit"
+            onClick={() => openActivity(navigate, athleteId, glance.lastActivity.id)}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="stat-label">Last session</div>
+                <div className="font-display text-2xl font-bold tracking-tight mt-1">
+                  {getActivityIcon(glance.lastActivity.type)} {glance.lastActivity.name || glance.lastActivity.type}
+                </div>
+                <div className="text-sm text-muted mt-2 flex flex-wrap gap-x-3 gap-y-1">
+                  <span>{formatDateShort(glance.lastActivity.startDate)}</span>
+                  <span>{formatActivityPrimary(glance.lastActivity)}</span>
+                  <span>{formatDuration(glance.lastActivity.movingTime || glance.lastActivity.elapsedTime)}</span>
+                  {formatEffort(glance.lastActivity) ? <span>{formatEffort(glance.lastActivity)}</span> : null}
+                  {glance.lastActivity.avgHeartrate ? <span>{Math.round(glance.lastActivity.avgHeartrate)} bpm</span> : null}
+                </div>
               </div>
-              <div className="text-sm text-muted mt-2 flex flex-wrap gap-x-3 gap-y-1">
-                <span>{formatDateShort(glance.lastActivity.startDate)}</span>
-                <span>{formatActivityPrimary(glance.lastActivity)}</span>
-                <span>{formatDuration(glance.lastActivity.movingTime || glance.lastActivity.elapsedTime)}</span>
-                {formatEffort(glance.lastActivity) ? <span>{formatEffort(glance.lastActivity)}</span> : null}
-                {glance.lastActivity.avgHeartrate ? <span>{Math.round(glance.lastActivity.avgHeartrate)} bpm</span> : null}
-              </div>
+              <span className="text-sm font-semibold shrink-0">
+                {glance.lastActivity.reviewedByMe ? (
+                  <span className="text-brand">Reviewed</span>
+                ) : (
+                  <span className="text-orange-200">Review</span>
+                )}
+              </span>
             </div>
-            <span className="text-sm font-semibold shrink-0">
-              {glance.lastActivity.reviewedByMe ? (
-                <span className="text-brand">Reviewed</span>
-              ) : (
-                <span className="text-orange-200">Review</span>
-              )}
-            </span>
+          </button>
+          <div className="mt-1">
+            <ViewOnStrava activity={glance.lastActivity} />
           </div>
-        </button>
+        </div>
       )}
 
       {!error && filter === 'all' && glance?.needsReview?.some((a) => a.id !== glance.lastActivity?.id) && (

@@ -1,0 +1,10 @@
+<!-- Replace with official Powered by Strava artwork from https://developers.strava.com/guidelines/ before Strava app review. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="180" height="28" viewBox="0 0 180 28" role="img" aria-label="Powered by Strava">
+  <title>Powered by Strava</title>
+  <text x="0" y="18" fill="#8b9cb3" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="8" font-weight="700" letter-spacing="1.2">POWERED BY</text>
+  <g transform="translate(78,3)" fill="#FC5200">
+    <path d="M12.4 0 5 17h5.1L12.4 10.3 15.1 17h5.1L12.4 0z"/>
+    <path d="M21 17 18.5 22.1 16 17h-3.9L18.5 29l6.4-12H21z"/>
+  </g>
+  <text x="112" y="20" fill="#FC5200" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="14" font-weight="700" letter-spacing="0.4">STRAVA</text>
+</svg>

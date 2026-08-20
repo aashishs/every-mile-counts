@@ -4,6 +4,7 @@ import api from '../api/client';
 import Layout from '../components/Layout';
 import ActivityTypeFilter from '../components/ActivityTypeFilter';
 import AddActivityModal from '../components/AddActivityModal';
+import { PoweredByStrava, ViewOnStrava } from '../components/StravaBrand';
 import { useAuth } from '../context/AuthContext';
 import {
   formatDate,
@@ -261,7 +262,7 @@ export default function Activities() {
         <div className="card text-center text-muted py-12">
           {hasExtraFilters ? 'No activities match these filters.' : (
             <>
-              <p className="mb-4">No activities yet. Add one, import a GPX, or connect Strava from Home.</p>
+              <p className="mb-4">No activities yet. Add one, import a GPX, or Connect with Strava from Home.</p>
               <button className="btn-primary" type="button" onClick={() => setAdding(true)}>Add activity</button>
             </>
           )}
@@ -270,23 +271,27 @@ export default function Activities() {
         <>
           <div className="space-y-2 md:hidden">
             {activities.map((act) => (
-              <button
-                key={act.id}
-                type="button"
-                className="card w-full text-left hover:border-brand"
-                onClick={() => navigate(`/activities/${act.id}`)}
-              >
-                <div className="font-semibold truncate">{act.name || 'Session'}</div>
-                <div className="text-xs text-muted mt-1">
-                  {formatDateShort(act.startDate)} · {getActivityIcon(act.type)} {act.type || 'Session'}
+              <div key={act.id} className="card">
+                <button
+                  type="button"
+                  className="w-full text-left bg-transparent border-0 p-0 text-inherit"
+                  onClick={() => navigate(`/activities/${act.id}`)}
+                >
+                  <div className="font-semibold truncate">{act.name || 'Session'}</div>
+                  <div className="text-xs text-muted mt-1">
+                    {formatDateShort(act.startDate)} · {getActivityIcon(act.type)} {act.type || 'Session'}
+                  </div>
+                  <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted mt-3">
+                    <span>{formatDistance(act.distance)}</span>
+                    <span>{formatDuration(act.movingTime || act.elapsedTime)}</span>
+                    <span>{formatEffort(act) || '—'}</span>
+                    <span>{act.avgHeartrate ? `${Math.round(act.avgHeartrate)} bpm` : 'No HR'}</span>
+                  </div>
+                </button>
+                <div className="mt-1">
+                  <ViewOnStrava activity={act} />
                 </div>
-                <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted mt-3">
-                  <span>{formatDistance(act.distance)}</span>
-                  <span>{formatDuration(act.movingTime || act.elapsedTime)}</span>
-                  <span>{formatEffort(act) || '—'}</span>
-                  <span>{act.avgHeartrate ? `${Math.round(act.avgHeartrate)} bpm` : 'No HR'}</span>
-                </div>
-              </button>
+              </div>
             ))}
           </div>
           <div className="card overflow-x-auto hidden md:block">
@@ -316,6 +321,7 @@ export default function Activities() {
                     <td className="p-3 whitespace-nowrap text-muted">{formatDate(act.startDate)}</td>
                     <td className="p-3">
                       <div className="font-semibold text-slate-100">{act.name || 'Session'}</div>
+                      <ViewOnStrava activity={act} className="text-xs" />
                     </td>
                     <td className="p-3 whitespace-nowrap">
                       {getActivityIcon(act.type)} {act.type || '—'}
@@ -355,6 +361,9 @@ export default function Activities() {
           }}
         />
       )}
+      <div className="mt-8">
+        <PoweredByStrava />
+      </div>
     </Layout>
   );
 }

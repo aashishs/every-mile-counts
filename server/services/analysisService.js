@@ -2,6 +2,7 @@ import { camel, camelMany, many, one } from '../config/db.js';
 import { formatDistance, formatDuration, paceFromSpeed, formatEffort, effortKind, startOfMonth, startOfWeek, startOfYear } from '../utils/format.js';
 import { athleteHrContext } from '../utils/maf.js';
 import { parseStoredSyncTypes } from '../utils/activityTypes.js';
+import { STRAVA_COACH_SHARE_SQL, getCoachShareState } from '../utils/stravaShare.js';
 
 function num(v) {
   return v == null ? 0 : Number(v);
@@ -784,8 +785,8 @@ export async function periodAnalysis(athleteId, period = '90', { type, syncTypes
   };
 }
 
-const GLANCE_COLS = `id, name, type, sport_type, start_date, distance, moving_time, elapsed_time,
-  avg_speed, avg_heartrate, elevation_gain`;
+const GLANCE_COLS = `a.id, a.name, a.type, a.sport_type, a.start_date, a.distance, a.moving_time, a.elapsed_time,
+  a.avg_speed, a.avg_heartrate, a.elevation_gain, a.source, a.source_activity_id`;
 
 function packVolume(list) {
   const distance = list.reduce((a, b) => a + num(b.distance), 0);
@@ -802,6 +803,7 @@ function packVolume(list) {
 }
 
 export async function coachAthleteGlance(athleteId, coachId) {
+  const share = await getCoachShareState(athleteId);
   const now = new Date();
   const weekStart = startOfWeek(now);
   const days7 = new Date(now);
@@ -817,9 +819,10 @@ export async function coachAthleteGlance(athleteId, coachId) {
   const recent = camelMany(
     await many(
       `SELECT ${GLANCE_COLS}
-       FROM activities
-       WHERE athlete_id = $1 AND start_date >= $2
-       ORDER BY start_date DESC`,
+       FROM activities a
+       WHERE a.athlete_id = $1 AND a.start_date >= $2
+         AND ${STRAVA_COACH_SHARE_SQL}
+       ORDER BY a.start_date DESC`,
       [athleteId, days60]
     )
   );
@@ -866,6 +869,7 @@ export async function coachAthleteGlance(athleteId, coachId) {
               ) AS reviewed_by_me
        FROM activities a
        WHERE a.athlete_id = $1
+         AND ${STRAVA_COACH_SHARE_SQL}
        ORDER BY a.start_date DESC NULLS LAST
        LIMIT 1`,
       [athleteId, coachId]
@@ -877,6 +881,7 @@ export async function coachAthleteGlance(athleteId, coachId) {
       `SELECT ${GLANCE_COLS}
        FROM activities a
        WHERE a.athlete_id = $1
+         AND ${STRAVA_COACH_SHARE_SQL}
          AND NOT EXISTS (
            SELECT 1 FROM activity_reviews r
            WHERE r.activity_id = a.id AND r.coach_id = $2 AND r.status = 'published'
@@ -901,6 +906,8 @@ export async function coachAthleteGlance(athleteId, coachId) {
     byType,
     lastActivity,
     needsReview,
+    stravaConnected: share.connected,
+    stravaSharedWithCoach: share.consented,
   };
 }
 

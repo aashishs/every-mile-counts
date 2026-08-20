@@ -35,6 +35,7 @@ import {
   linkActivityManually,
   rejectMatch,
 } from '../services/workoutMatchService.js';
+import { canViewerSeeActivity } from '../utils/stravaShare.js';
 import {
   assertGroupOwned,
   cloneProgramForAthlete,
@@ -125,9 +126,9 @@ async function syncWorkoutOwners(program) {
   );
 }
 
-async function hydrateProgram(program) {
+async function hydrateProgram(program, viewerId) {
   const tree = await programTree(program.id);
-  const progress = await programProgress(program.id);
+  const progress = await programProgress(program.id, viewerId);
   const cursor = currentPhaseAndWeek(program, tree);
   const athlete = program.athleteId
     ? camel(await one('SELECT id, first_name, last_name, email, avatar_url FROM users WHERE id = $1', [program.athleteId]))
@@ -138,7 +139,7 @@ async function hydrateProgram(program) {
 }
 
 async function loadWorkoutForUser(req, workoutId) {
-  const detail = await loadWorkoutDetail(workoutId);
+  const detail = await loadWorkoutDetail(workoutId, req.user.id);
   if (!detail) throw httpError(404, 'Workout not found');
   const program = detail.workout.programId ? await loadProgram(detail.workout.programId) : null;
   await assertCanViewWorkout(req.user, detail.workout, program);
@@ -243,7 +244,7 @@ router.get(
     const active = programs.find((p) => p.status === 'active') || programs[0] || null;
     let detail = null;
     if (active) {
-      detail = await hydrateProgram(active);
+      detail = await hydrateProgram(active, req.user.id);
       detail.reviews = await clubReviewsForAthlete(req.user.id, req.user.id, active.clubId);
     }
     const upcoming = camelMany(
@@ -417,10 +418,10 @@ router.get(
     const ownActive = programs.find((p) => p.owned && p.status === 'active');
     const clubActive = programs.find((p) => p.status === 'active');
     const detail = ownActive
-      ? await hydrateProgram(ownActive)
+      ? await hydrateProgram(ownActive, req.user.id)
       : clubActive
-        ? await hydrateProgram(clubActive)
-        : (programs[0] ? await hydrateProgram(programs[0]) : null);
+        ? await hydrateProgram(clubActive, req.user.id)
+        : (programs[0] ? await hydrateProgram(programs[0], req.user.id) : null);
     const toPrepare = camelMany(
       await many(
         `SELECT w.id, w.program_id, w.scheduled_date, w.name, w.sport, w.workout_type, w.distance, w.duration,
@@ -540,7 +541,7 @@ router.post(
         ]
       )
     );
-    res.status(201).json({ program: await hydrateProgram(program) });
+    res.status(201).json({ program: await hydrateProgram(program, req.user.id) });
   })
 );
 
@@ -550,7 +551,7 @@ router.get(
     const program = await loadProgram(req.params.id);
     await assertCanViewProgram(req.user, program);
     res.json({
-      program: await hydrateProgram(program),
+      program: await hydrateProgram(program, req.user.id),
       canEdit: canModifyProgram(req.user, program),
     });
   })
@@ -586,7 +587,7 @@ router.patch(
         [program.id, next.name, next.description, next.sport, next.startDate, next.endDate, next.targetEventId, next.targetEventName, req.user.id]
       )
     );
-    res.json({ program: await hydrateProgram(updated) });
+    res.json({ program: await hydrateProgram(updated, req.user.id) });
   })
 );
 
@@ -634,7 +635,7 @@ router.post(
         assigned: copies.length,
         groupId: targets.group?.id || null,
         programs: copies,
-        program: copies[0] ? await hydrateProgram(copies[0]) : await hydrateProgram(program),
+        program: copies[0] ? await hydrateProgram(copies[0], req.user.id) : await hydrateProgram(program, req.user.id),
       });
     }
 
@@ -669,7 +670,7 @@ router.post(
       body: `${req.user.firstName} assigned ${updated.name} to you.`,
       data: { programId: updated.id, url: `/training/programs/${updated.id}` },
     });
-    res.json({ program: await hydrateProgram(updated) });
+    res.json({ program: await hydrateProgram(updated, req.user.id) });
   })
 );
 
@@ -713,7 +714,7 @@ router.post(
         data: { programId: program.id, url: `/training/programs/${program.id}` },
       });
     }
-    res.json({ program: await hydrateProgram(updated) });
+    res.json({ program: await hydrateProgram(updated, req.user.id) });
   })
 );
 
@@ -1032,8 +1033,11 @@ router.get(
   '/workouts/:id',
   asyncHandler(async (req, res) => {
     const { workout, program, matches, accepted, suggested } = await loadWorkoutForUser(req, req.params.id);
-    const activity = accepted
+    const rawActivity = accepted
       ? camel(await one('SELECT * FROM activities WHERE id = $1', [accepted.activityId]))
+      : null;
+    const activity = rawActivity && (await canViewerSeeActivity(req, rawActivity))
+      ? rawActivity
       : null;
     const comparison = await comparisonForWorkout(workout, activity);
     const reviews = accepted

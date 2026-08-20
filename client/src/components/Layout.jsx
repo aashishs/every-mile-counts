@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { NavLink, useLocation, useNavigate } from 'react-router-dom';
+import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { isOpsAdminAccount, isStaffAccount, isSuperAdminAccount, isSupportAdminAccount, isAthleteAccount } from '../utils/roles';
 import { VersionBadge } from './Badge';
@@ -169,6 +169,7 @@ export default function Layout({ children }) {
           <button className="btn-outline btn-sm w-full" onClick={handleLogout}>
             Sign out
           </button>
+          <Link to="/privacy" className="block text-center text-xs text-muted no-underline mt-3">Privacy</Link>
         </div>
       </aside>
 
@@ -222,6 +223,7 @@ export default function Layout({ children }) {
               <button className="btn-outline btn-sm w-full" onClick={handleLogout}>
                 Sign out
               </button>
+              <Link to="/privacy" className="block text-center text-xs text-muted no-underline mt-3">Privacy</Link>
             </div>
           </aside>
         </div>
