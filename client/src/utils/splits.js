@@ -92,6 +92,21 @@ export function elevationSummary(series) {
   return { gain: Math.round(gain), max: Math.round(max), min: Math.round(min) };
 }
 
+export function fastestSplitPace(rows) {
+  const paced = (rows || []).filter((row) => row?.paceSec > 0);
+  const full = paced.filter((row) => row.distanceM >= 950);
+  const pool = full.length ? full : paced;
+  if (!pool.length) return null;
+  return Math.min(...pool.map((row) => row.paceSec));
+}
+
+export function elapsedPaceSec(activity) {
+  const distKm = Number(activity?.distance) / 1000;
+  const elapsed = Number(activity?.elapsedTime);
+  if (!(distKm > 0) || !(elapsed > 0)) return null;
+  return elapsed / distKm;
+}
+
 export function nearestSeriesPoint(series, km) {
   if (!Array.isArray(series) || !series.length || km == null) return null;
   let best = series[0];

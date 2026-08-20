@@ -19,7 +19,34 @@ import {
   activitySeriesFromTrack,
   splitBarWidths,
   elevationSummary,
+  fastestSplitPace,
+  elapsedPaceSec,
 } from '../utils/splits';
+import { activityMetric } from '../utils/format';
+
+function formatClock(seconds) {
+  const sec = Math.max(0, Math.round(Number(seconds) || 0));
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+function StatRows({ rows }) {
+  const visible = (rows || []).filter((row) => row?.value);
+  if (!visible.length) return null;
+  return (
+    <div className="pt-4 mt-1 border-t border-line space-y-3">
+      {visible.map((row) => (
+        <div key={row.label} className="flex items-baseline justify-between gap-3">
+          <span className="text-muted">{row.label}</span>
+          <span className="font-display text-xl font-bold tabular-nums">{row.value}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 function formatElev(value) {
   if (value == null || Number.isNaN(Number(value))) return '—';
@@ -54,59 +81,81 @@ export default function ActivitySplits({ activity }) {
   const hasHr = series.some((row) => row.hr > 0);
   const elevStats = elevationSummary(series);
   const hasElev = Boolean(elevStats);
+  const fastest = fastestSplitPace(rows);
+  const elapsed = Number(activity?.elapsedTime);
+  const moving = Number(activity?.movingTime);
+  const elapsedPace = elapsedPaceSec(activity);
+  const paused = elapsed > 0 && moving > 0 && elapsed - moving >= 2;
+  const seriesMaxHr = series.reduce((max, row) => (row.hr > max ? row.hr : max), 0);
+  const maxHr = Number(activity?.maxHeartrate) > 0
+    ? Math.round(Number(activity.maxHeartrate))
+    : seriesMaxHr > 0
+      ? Math.round(seriesMaxHr)
+      : null;
+  const hrAlreadyOnStats = activityMetric(activity?.type, activity?.sportType, activity?.distance) === 'duration';
+  const paceFooter = (
+    <StatRows
+      rows={[
+        paused && elapsedPace
+          ? { label: 'Avg Elapsed Pace', value: `${formatSplitClock(elapsedPace)} /km` }
+          : null,
+        paused ? { label: 'Elapsed Time', value: formatClock(elapsed) } : null,
+        fastest ? { label: 'Fastest Split', value: `${formatSplitClock(fastest)} /km` } : null,
+      ]}
+    />
+  );
 
   const pin = (point) => {
     if (!point) return;
     setPinned(nearestSeriesPoint(series, point.km) || point);
   };
+  const splitGrid =
+    'grid w-full grid-cols-[1.7rem_2.8rem_minmax(0,1fr)_2.4rem_2.4rem] gap-x-2 sm:grid-cols-[2rem_3.1rem_minmax(0,1fr)_2.75rem_2.75rem] sm:gap-x-3';
+  const splitNum = 'min-w-0 tabular-nums text-[13px] sm:text-sm font-medium leading-none';
 
   return (
     <section className="mb-6">
       {!!rows.length && (
         <>
           <h3 className="section-title mb-3">Splits</h3>
-          <div className="card overflow-x-auto mb-5">
-            <table className="w-full text-sm min-w-[480px]">
-              <thead>
-                <tr className="text-left text-muted">
-                  <th className="pb-3 pr-2 font-semibold">Km</th>
-                  <th className="pb-3 pr-2 font-semibold">Pace</th>
-                  <th className="pb-3 pr-3 font-semibold w-[36%]" />
-                  <th className="pb-3 pr-2 font-semibold text-right">Elev</th>
-                  <th className="pb-3 font-semibold text-right">HR</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((row, i) => {
-                  const km = rows.slice(0, i + 1).reduce((sum, item) => sum + item.distanceM / 1000, 0);
-                  const active = pinned && Math.abs((pinned.km || 0) - km) < 0.51;
-                  return (
-                    <tr
-                      key={`${row.kmLabel}-${i}`}
-                      className={`border-t border-line/70 cursor-pointer ${active ? 'bg-brand/10' : 'hover:bg-hover/50'}`}
-                      onClick={() => pin({ km })}
-                    >
-                      <td className="py-2.5 pr-2 tabular-nums text-muted">{row.kmLabel}</td>
-                      <td className="py-2.5 pr-2 tabular-nums font-semibold">{formatSplitClock(row.paceSec)}</td>
-                      <td className="py-2.5 pr-3">
-                        <div className="h-3 rounded-sm bg-brand/80" style={{ width: `${bars[i]}%` }} />
-                      </td>
-                      <td className="py-2.5 pr-2 tabular-nums text-right text-muted">
-                        {formatElev(row.elevM)}{row.elevM != null ? ' m' : ''}
-                      </td>
-                      <td className="py-2.5 tabular-nums text-right">{row.hr ?? '—'}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+          <div className="card mb-5 !p-3 sm:!p-4 overflow-hidden">
+            <div className="text-[13px] sm:text-sm leading-none [text-size-adjust:100%]">
+              <div className={`${splitGrid} pb-3 text-[13px] sm:text-sm text-muted font-medium`}>
+                <div>Km</div>
+                <div>Pace</div>
+                <div />
+                <div className="text-right">Elev</div>
+                <div className="text-right">HR</div>
+              </div>
+              {rows.map((row, i) => {
+                const km = rows.slice(0, i + 1).reduce((sum, item) => sum + item.distanceM / 1000, 0);
+                const active = pinned && Math.abs((pinned.km || 0) - km) < 0.51;
+                return (
+                  <button
+                    key={`${row.kmLabel}-${i}`}
+                    type="button"
+                    className={`${splitGrid} items-center border-t border-line/70 px-0 py-2.5 text-left text-[13px] sm:text-sm font-medium ${
+                      active ? 'bg-brand/10' : ''
+                    }`}
+                    onClick={() => pin({ km })}
+                  >
+                    <span className={`${splitNum} text-muted`}>{row.kmLabel}</span>
+                    <span className={splitNum}>{formatSplitClock(row.paceSec)}</span>
+                    <span className="min-w-0">
+                      <span className="block h-3 rounded-sm bg-brand/80" style={{ width: `${bars[i]}%` }} />
+                    </span>
+                    <span className={`${splitNum} text-right text-muted`}>{formatElev(row.elevM)}</span>
+                    <span className={`${splitNum} text-right`}>{row.hr ?? '—'}</span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </>
       )}
 
       {series.length > 1 && (hasPace || hasHr || hasElev) && (
         <>
-          <Readout point={selected} pinned={Boolean(pinned)} onClear={() => setPinned(null)} />
           {hasPace && (
             <SessionChart
               title="Pace"
@@ -118,24 +167,36 @@ export default function ActivitySplits({ activity }) {
               stroke="#60a5fa"
               reversed
               tickFormatter={formatSplitClock}
+              yLabel="/km"
               avg={avgPace}
               onHover={setHover}
               onPin={pin}
+              footer={paceFooter}
             />
           )}
           {hasHr && (
             <SessionChart
-              title="Heart rate"
+              title="Heart Rate"
               series={series}
               selected={selected}
               yKey="hr"
               yAxisId="hr"
-              color="#ea580c"
-              stroke="#fb923c"
+              color="#e11d48"
+              stroke="#fb7185"
               tickFormatter={(v) => `${Math.round(v)}`}
+              yLabel="bpm"
               avg={avgHr}
               onHover={setHover}
               onPin={pin}
+              footer={(
+                <StatRows
+                  rows={[
+                    !hrAlreadyOnStats && maxHr
+                      ? { label: 'Max Heart Rate', value: `${maxHr} bpm` }
+                      : null,
+                  ]}
+                />
+              )}
             />
           )}
           {hasElev && (
@@ -152,16 +213,11 @@ export default function ActivitySplits({ activity }) {
               onHover={setHover}
               onPin={pin}
               footer={(
-                <div className="grid grid-cols-2 gap-3 pt-3 mt-1 border-t border-line">
-                  <div>
-                    <div className="stat-label">Elevation gain</div>
-                    <div className="font-display text-2xl font-bold mt-1">{elevStats.gain} m</div>
-                  </div>
-                  <div className="text-right">
-                    <div className="stat-label">Max elevation</div>
-                    <div className="font-display text-2xl font-bold mt-1">{elevStats.max} m</div>
-                  </div>
-                </div>
+                <StatRows
+                  rows={[
+                    { label: 'Max Elevation', value: `${elevStats.max} m` },
+                  ]}
+                />
               )}
             />
           )}
@@ -171,31 +227,31 @@ export default function ActivitySplits({ activity }) {
   );
 }
 
-function Readout({ point, pinned, onClear }) {
-  if (!point) {
-    return (
-      <p className="text-xs text-muted mb-3">Tap or click a chart (or a split) to pin the exact values at that point.</p>
-    );
-  }
+function hoverPrimary(yKey, point) {
+  if (!point) return null;
+  if (yKey === 'paceSec' && point.paceSec > 0) return `${formatSplitClock(point.paceSec)} /km`;
+  if (yKey === 'hr' && point.hr > 0) return `${Math.round(point.hr)} bpm`;
+  if (yKey === 'elev' && point.elev != null) return `${Math.round(point.elev)} m`;
+  return null;
+}
+
+function HoverCard({ active, payload, yKey }) {
+  if (!active || !payload?.length) return null;
+  const point = payload[0]?.payload;
+  const primary = hoverPrimary(yKey, point);
+  if (!primary) return null;
+  const tone = yKey === 'paceSec'
+    ? 'bg-blue-600 text-white'
+    : yKey === 'hr'
+      ? 'bg-rose-500 text-white'
+      : 'bg-slate-300 text-[#111827]';
+  const sub = yKey === 'elev' ? 'text-slate-700' : 'text-white/80';
   return (
-    <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
-      <div className="rounded-xl bg-brand px-3 py-2 text-white shadow-card min-w-[160px]">
-        <div className="font-display text-2xl font-bold leading-none">
-          {point.km != null ? `${Number(point.km).toFixed(2)} km` : '—'}
-        </div>
-        <div className="text-sm mt-2 space-y-0.5">
-          {point.paceSec ? <div>{formatSplitClock(point.paceSec)} /km</div> : null}
-          {point.hr ? <div>{Math.round(point.hr)} bpm</div> : null}
-          {point.elev != null ? <div>{Math.round(point.elev)} m elev</div> : null}
-        </div>
+    <div className={`rounded-xl px-3 py-2 shadow-md pointer-events-none whitespace-nowrap ${tone}`}>
+      <div className="font-display text-xl font-bold leading-none tabular-nums">{primary}</div>
+      <div className={`text-xs mt-1 tabular-nums ${sub}`}>
+        {point.km != null ? `${Number(point.km).toFixed(2)} km` : ''}
       </div>
-      {pinned ? (
-        <button type="button" className="btn-outline btn-sm" onClick={onClear}>
-          Clear pin
-        </button>
-      ) : (
-        <p className="text-xs text-muted mb-0">Click to pin this point</p>
-      )}
     </div>
   );
 }
@@ -221,12 +277,15 @@ function SessionChart({
     <>
       <h3 className="section-title mb-3">{title}</h3>
       <div className="card mb-5">
-        <div className="h-64">
+        <div className="h-72 touch-none">
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart
               data={series}
-              margin={{ top: 8, right: 8, left: 4, bottom: 0 }}
-              onMouseMove={(state) => onHover(chartPoint(state))}
+              margin={{ top: 52, right: 12, left: 4, bottom: 0 }}
+              onMouseMove={(state) => {
+                const point = chartPoint(state);
+                if (point) onHover(point);
+              }}
               onMouseLeave={() => onHover(null)}
               onClick={(state) => onPin(chartPoint(state))}
             >
@@ -252,7 +311,14 @@ function SessionChart({
               {overlayElev ? (
                 <YAxis yAxisId="elevOverlay" orientation="right" hide domain={['dataMin', 'dataMax']} />
               ) : null}
-              <Tooltip cursor={{ stroke: '#e2e8f0', strokeWidth: 1 }} content={() => null} />
+              <Tooltip
+                cursor={{ stroke: '#e2e8f0', strokeWidth: 1.5 }}
+                content={<HoverCard yKey={yKey} />}
+                isAnimationActive={false}
+                allowEscapeViewBox={{ x: true, y: true }}
+                offset={10}
+                wrapperStyle={{ outline: 'none', zIndex: 10 }}
+              />
               {overlayElev ? (
                 <Area
                   yAxisId="elevOverlay"
