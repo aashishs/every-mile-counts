@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import Layout from '../components/Layout';
 import { useAuth } from '../context/AuthContext';
+import ConsistencyPanel from '../components/ConsistencyPanel';
 import {
   formatDate,
   formatDateShort,
@@ -60,6 +61,8 @@ export default function CoachAthleteActivities() {
   const [dir, setDir] = useState('desc');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [adherence, setAdherence] = useState(null);
+  const [adherencePeriod, setAdherencePeriod] = useState('30');
   const assigned = Boolean(athlete);
 
   useEffect(() => {
@@ -109,6 +112,7 @@ export default function CoachAthleteActivities() {
         setTotal(data.total || 0);
         setPages(data.pages || 1);
         setPendingTotal(data.pendingTotal || 0);
+        setAdherence(data.adherence || null);
         if (data.page && data.page !== page) setPage(data.page);
       } catch (err) {
         if (!cancelled) {
@@ -163,6 +167,7 @@ export default function CoachAthleteActivities() {
           <p className="page-sub mb-0">
             {athlete?.mafHeartRate ? `MAF ${athlete.mafHeartRate} bpm` : 'MAF —'}
             {athlete?.age ? ` · age ${athlete.age}` : ''}
+            {athlete?.weeklyTargetDays ? ` · ${athlete.weeklyTargetDays} days/week` : ''}
             {loading
               ? ' · Loading sessions…'
               : ` · ${total} session${total === 1 ? '' : 's'}${pendingTotal ? ` · ${pendingTotal} need review` : ''}`}
@@ -174,6 +179,16 @@ export default function CoachAthleteActivities() {
       </div>
 
       {error && <div className="card mb-4 text-sm text-orange-300">{error}</div>}
+
+      {!error && adherence && (
+        <ConsistencyPanel
+          windows={adherence}
+          period={adherencePeriod}
+          onPeriodChange={setAdherencePeriod}
+          showPeriods
+          footnote={`Scored against this athlete's ${adherence.weeklyTargetDays || athlete?.weeklyTargetDays || 5}-day week. The weekly streak only breaks after a finished week misses that target.`}
+        />
+      )}
 
       {!error && (
         <div className="flex flex-col gap-3 mb-4">

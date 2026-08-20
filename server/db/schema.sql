@@ -35,6 +35,8 @@ CREATE TABLE IF NOT EXISTS users (
   sync_activity_types JSONB NOT NULL DEFAULT '["Run","Ride","Swim","Walk","Hike","Workout","WeightTraining","Yoga","HIIT"]'::jsonb,
   sync_activity_types_confirmed_at TIMESTAMPTZ,
   email_verified_at TIMESTAMPTZ,
+  weekly_target_days INTEGER NOT NULL DEFAULT 5
+    CHECK (weekly_target_days >= 3 AND weekly_target_days <= 7),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

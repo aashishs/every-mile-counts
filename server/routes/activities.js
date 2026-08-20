@@ -1,12 +1,13 @@
 import express from 'express';
 import { camel, camelMany, many, one, query } from '../config/db.js';
 import { protect, requireMembership, rejectAppAdmin } from '../middleware/auth.js';
-import { analyzeActivity, athleteDashboard, compareActivities, periodAnalysis } from '../services/analysisService.js';
+import { analyzeActivity, athleteDashboard, compareActivities, periodAnalysis, sportFamily } from '../services/analysisService.js';
 import { athleteHrContext } from '../utils/maf.js';
 import { syncUserActivities } from '../services/syncService.js';
 import { mappedFromFile, mappedFromManual, saveManualActivity } from '../services/activityImportService.js';
 import { asyncHandler } from '../middleware/error.js';
 import { familySqlClause, parseStoredSyncTypes } from '../utils/activityTypes.js';
+import { computeAdherenceWindows, parseWeeklyTargetDays } from '../utils/adherence.js';
 
 const router = express.Router();
 router.use(protect, requireMembership, rejectAppAdmin);
@@ -164,6 +165,7 @@ router.get(
     const data = await periodAnalysis(req.user.id, req.query.period || '90', {
       type: req.query.type,
       syncTypes: req.user.syncActivityTypes,
+      weeklyTargetDays: req.user.weeklyTargetDays,
     });
     res.json(data);
   })
@@ -303,10 +305,26 @@ router.get(
         [athleteId, coachId, limit, offset]
       )
     );
-    const analysis = await periodAnalysis(req.params.athleteId, 30);
+    const athlete = camel(
+      await one(
+        `SELECT sync_activity_types, weekly_target_days FROM users WHERE id = $1`,
+        [athleteId]
+      )
+    );
+    const since = new Date();
+    since.setDate(since.getDate() - 400);
+    const recentRows = camelMany(
+      await many(
+        `SELECT start_date, type, sport_type FROM activities WHERE athlete_id = $1 AND start_date >= $2 ORDER BY start_date`,
+        [athleteId, since]
+      )
+    );
+    const allowed = parseStoredSyncTypes(athlete?.syncActivityTypes);
+    const visible = recentRows.filter((row) => allowed.includes(sportFamily(row)));
+    const adherence = computeAdherenceWindows(visible, parseWeeklyTargetDays(athlete?.weeklyTargetDays));
     res.json({
       activities,
-      analysis,
+      adherence,
       total,
       pendingTotal: pending.total,
       page: safePage,

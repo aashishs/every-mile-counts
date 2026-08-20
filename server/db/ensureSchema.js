@@ -212,4 +212,11 @@ export async function ensureSchemaPatches() {
     `ALTER TABLE invitation_codes ADD COLUMN IF NOT EXISTS club_id UUID REFERENCES clubs(id) ON DELETE CASCADE`
   );
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_invitation_codes_club ON invitation_codes (club_id)`);
+
+  await pool.query(
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS weekly_target_days INTEGER NOT NULL DEFAULT 5`
+  );
+  await pool.query(
+    `UPDATE users SET weekly_target_days = 5 WHERE weekly_target_days IS NULL OR weekly_target_days < 3 OR weekly_target_days > 7`
+  );
 }

@@ -4,6 +4,7 @@ import api from '../api/client';
 import Layout from '../components/Layout';
 import { useAuth } from '../context/AuthContext';
 import { formatDate, formatDateShort, formatDistance, getActivityIcon } from '../utils/format';
+import ConsistencyPanel from '../components/ConsistencyPanel';
 
 const PAGE_SIZES = [10, 20, 50, 100];
 
@@ -14,6 +15,8 @@ const SORT_OPTIONS = [
   { sort: 'lastActivity', dir: 'asc', label: 'Last activity (oldest)' },
   { sort: 'activities', dir: 'desc', label: 'Most activities' },
   { sort: 'activities', dir: 'asc', label: 'Fewest activities' },
+  { sort: 'consistency', dir: 'desc', label: 'Consistency (highest)' },
+  { sort: 'consistency', dir: 'asc', label: 'Consistency (lowest)' },
 ];
 
 const INBOX_SORT_OPTIONS = [
@@ -343,12 +346,13 @@ export default function Coaches() {
                       <span>{a.activityCount ?? 0} activities</span>
                       <span>Last {a.lastActivityAt ? formatDateShort(a.lastActivityAt) : '—'}</span>
                       <span>{a.mafHeartRate ? `MAF ${a.mafHeartRate}` : 'MAF —'}</span>
+                      {a.adherence && <ConsistencyPanel adherence={a.adherence} compact />}
                     </div>
                   </button>
                 ))}
               </div>
               <div className="card overflow-x-auto mb-3 hidden md:block">
-                <table className="w-full text-sm min-w-[640px]">
+                <table className="w-full text-sm min-w-[760px]">
                   <thead>
                     <tr className="text-left border-b border-line">
                       <th className="p-3">
@@ -360,6 +364,9 @@ export default function Coaches() {
                       </th>
                       <th className="p-3">
                         <SortHeader label="Last activity" column="lastActivity" sort={sort} dir={dir} onSort={changeSort} />
+                      </th>
+                      <th className="p-3">
+                        <SortHeader label="Consistency" column="consistency" sort={sort} dir={dir} onSort={changeSort} />
                       </th>
                       <th className="p-3 text-muted font-semibold">MAF</th>
                     </tr>
@@ -378,6 +385,9 @@ export default function Coaches() {
                         <td className="p-3 whitespace-nowrap">{a.activityCount ?? 0}</td>
                         <td className="p-3 whitespace-nowrap text-muted">
                           {a.lastActivityAt ? formatDate(a.lastActivityAt) : '—'}
+                        </td>
+                        <td className="p-3 whitespace-nowrap">
+                          {a.adherence ? <ConsistencyPanel adherence={a.adherence} compact /> : '—'}
                         </td>
                         <td className="p-3 whitespace-nowrap">{a.mafHeartRate ? `${a.mafHeartRate}` : '—'}</td>
                       </tr>

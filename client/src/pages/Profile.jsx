@@ -37,6 +37,7 @@ export default function Profile() {
     restingHeartRate: user.restingHeartRate || '',
     dateOfBirth: parseDateOfBirth(user.dateOfBirth) || '',
     defaultActivityType: user.defaultActivityType || DEFAULT_ACTIVITY_TYPE,
+    weeklyTargetDays: user.weeklyTargetDays || 5,
     notificationPrefs: user.notificationPrefs || {},
     clubName: user.adminClubName || '',
   });
@@ -381,6 +382,21 @@ export default function Profile() {
                   <option key={opt.value} value={opt.value}>{opt.label}</option>
                 ))}
               </select>
+            </div>
+            <div>
+              <label htmlFor="weeklyTargetDays">Training days per week</label>
+              <select
+                id="weeklyTargetDays"
+                value={form.weeklyTargetDays}
+                onChange={(e) => setForm({ ...form, weeklyTargetDays: Number(e.target.value) })}
+              >
+                {[3, 4, 5, 6, 7].map((n) => (
+                  <option key={n} value={n}>{n} days</option>
+                ))}
+              </select>
+              <p className="text-xs text-muted mt-1">
+                Consistency is scored against this target. Default is 5, which is a common endurance-training week.
+              </p>
             </div>
           </>
         )}

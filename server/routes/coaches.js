@@ -6,6 +6,9 @@ import { ageFromDob, mafHeartRate } from '../utils/maf.js';
 import { createNotification } from '../services/notificationService.js';
 import { MAX_COACHES } from '../utils/limits.js';
 import { assertCoachSlot } from '../utils/invites.js';
+import { parseStoredSyncTypes } from '../utils/activityTypes.js';
+import { computeAdherenceWindows, parseWeeklyTargetDays } from '../utils/adherence.js';
+import { sportFamily } from '../services/analysisService.js';
 
 const router = express.Router();
 router.use(protect, requireMembership, rejectAppAdmin);
@@ -108,7 +111,7 @@ router.get(
     const pageSizes = [10, 20, 50, 100];
     const limit = pageSizes.includes(Number(req.query.limit)) ? Number(req.query.limit) : 10;
     const page = Math.max(1, Number(req.query.page) || 1);
-    const sortKey = ['name', 'lastActivity', 'activities'].includes(String(req.query.sort))
+    const sortKey = ['name', 'lastActivity', 'activities', 'consistency'].includes(String(req.query.sort))
       ? String(req.query.sort)
       : 'name';
     const dir = String(req.query.dir).toLowerCase() === 'desc' ? 'desc' : 'asc';
@@ -122,6 +125,7 @@ router.get(
           : 'last_activity_at DESC NULLS LAST, last_name ASC',
       activities:
         dir === 'asc' ? 'activity_count ASC, last_name ASC' : 'activity_count DESC, last_name ASC',
+      consistency: 'last_name ASC, first_name ASC',
     }[sortKey];
 
     const where = ['ca.coach_id = $1', `ca.status = 'active'`];
@@ -138,7 +142,7 @@ router.get(
     `;
     const selectSql = `
       SELECT ca.athlete_id, ca.club_id, u.first_name, u.last_name, u.email, u.avatar_url,
-             u.date_of_birth, u.age, u.maf_heart_rate,
+             u.date_of_birth, u.age, u.maf_heart_rate, u.weekly_target_days, u.sync_activity_types,
              (SELECT COUNT(*) FROM activities a WHERE a.athlete_id = u.id)::int AS activity_count,
              (SELECT MAX(a.start_date) FROM activities a WHERE a.athlete_id = u.id) AS last_activity_at
       ${fromSql}
@@ -146,7 +150,8 @@ router.get(
 
     if (athleteId) {
       const row = withAthleteMaf(camel(await one(selectSql, params)));
-      return res.json({ athletes: row ? [row] : [], count: row ? 1 : 0 });
+      const athletes = row ? await attachAdherence([row]) : [];
+      return res.json({ athletes, count: athletes.length });
     }
 
     const count = await one(`SELECT COUNT(*)::int AS total ${fromSql}`, params);
@@ -154,12 +159,26 @@ router.get(
     const pages = Math.max(1, Math.ceil(total / limit) || 1);
     const safePage = Math.min(page, pages);
     const offset = (safePage - 1) * limit;
-    const athletes = camelMany(
-      await many(
-        `${selectSql} ORDER BY ${orderSql} LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
-        [...params, limit, offset]
-      )
-    ).map(withAthleteMaf);
+    let athletes;
+    if (sortKey === 'consistency') {
+      const all = camelMany(await many(`${selectSql} ORDER BY last_name ASC, first_name ASC`, params)).map(withAthleteMaf);
+      const scored = await attachAdherence(all);
+      scored.sort((a, b) => {
+        const av = a.adherence?.score ?? -1;
+        const bv = b.adherence?.score ?? -1;
+        return dir === 'asc' ? av - bv : bv - av;
+      });
+      athletes = scored.slice(offset, offset + limit);
+    } else {
+      athletes = await attachAdherence(
+        camelMany(
+          await many(
+            `${selectSql} ORDER BY ${orderSql} LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+            [...params, limit, offset]
+          )
+        ).map(withAthleteMaf)
+      );
+    }
     res.json({
       athletes,
       total,
@@ -195,5 +214,37 @@ function withAthleteMaf(row) {
     ...row,
     age,
     mafHeartRate: mafHeartRate(age) ?? row.mafHeartRate ?? null,
+    weeklyTargetDays: parseWeeklyTargetDays(row.weeklyTargetDays),
   };
+}
+
+async function attachAdherence(athletes) {
+  if (!athletes.length) return athletes;
+  const ids = athletes.map((row) => row.athleteId).filter(Boolean);
+  if (!ids.length) return athletes;
+  const since = new Date();
+  since.setDate(since.getDate() - 400);
+  const rows = camelMany(
+    await many(
+      `SELECT athlete_id, start_date, type, sport_type
+       FROM activities
+       WHERE athlete_id = ANY($1::uuid[]) AND start_date >= $2`,
+      [ids, since]
+    )
+  );
+  const byAthlete = new Map();
+  for (const row of rows) {
+    if (!byAthlete.has(row.athleteId)) byAthlete.set(row.athleteId, []);
+    byAthlete.get(row.athleteId).push(row);
+  }
+  return athletes.map((athlete) => {
+    const allowed = parseStoredSyncTypes(athlete.syncActivityTypes);
+    const list = (byAthlete.get(athlete.athleteId) || []).filter((row) => allowed.includes(sportFamily(row)));
+    const windows = computeAdherenceWindows(list, athlete.weeklyTargetDays);
+    return {
+      ...athlete,
+      weeklyTargetDays: windows.weeklyTargetDays,
+      adherence: windows.periods['30'],
+    };
+  });
 }

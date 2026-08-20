@@ -2,6 +2,7 @@ import { camelMany, many } from '../config/db.js';
 import { formatDistance, formatDuration, paceFromSpeed, startOfMonth, startOfWeek, startOfYear } from '../utils/format.js';
 import { athleteHrContext } from '../utils/maf.js';
 import { parseStoredSyncTypes } from '../utils/activityTypes.js';
+import { computeAdherence, computeAdherenceWindows, parseWeeklyTargetDays } from '../utils/adherence.js';
 
 function num(v) {
   return v == null ? 0 : Number(v);
@@ -174,10 +175,10 @@ export async function athleteDashboard(athleteId, athlete = {}, { type, syncType
     weeklyTrend[key].elevation += num(act.elevationGain);
   }
 
-  const daysWithActivity = new Set(
-    recent.map((a) => new Date(a.startDate).toISOString().slice(0, 10))
-  ).size;
-  const consistency = Math.round((daysWithActivity / 30) * 100);
+  const weeklyTargetDays = parseWeeklyTargetDays(athlete.weeklyTargetDays);
+  const adherence = computeAdherenceWindows(scopedAll, weeklyTargetDays);
+  const monthAdherence = adherence.periods['30'];
+  const consistency = monthAdherence.score;
 
   const personalRecords = detectPersonalRecords(scopedAll, filterType);
   const byActivityType = buildActivityTypeHighlights(filterType ? scopedAll : allTime);
@@ -280,7 +281,9 @@ export async function athleteDashboard(athleteId, athlete = {}, { type, syncType
       movingTime: sum(scopedAll, 'movingTime'),
     },
     consistency,
-    recoveryIndicator: consistency > 80 ? 'high load — watch recovery' : consistency > 40 ? 'steady' : 'building',
+    weeklyTargetDays,
+    adherence,
+    recoveryIndicator: monthAdherence.recoveryIndicator,
     personalRecords,
     byActivityType,
     distanceSports,
@@ -504,6 +507,7 @@ function periodMonths(period) {
   const p = String(period ?? '90').toLowerCase();
   if (p === 'all' || p === '0') return null;
   const n = Number(p);
+  if (n === 30 || n === 1) return 1;
   if (n === 180 || n === 6) return 6;
   if (n === 365 || n === 12) return 12;
   return 3;
@@ -605,7 +609,7 @@ function monthlySeries(activities, fromYm, toYm) {
   });
 }
 
-export async function periodAnalysis(athleteId, period = '90', { type, syncTypes } = {}) {
+export async function periodAnalysis(athleteId, period = '90', { type, syncTypes, weeklyTargetDays } = {}) {
   const window = periodWindow(period);
   const { named, monthCount, since, prevSince, sinceYm, nowYm } = window;
   const allowed = parseStoredSyncTypes(syncTypes);
@@ -669,6 +673,13 @@ export async function periodAnalysis(athleteId, period = '90', { type, syncTypes
   const monthlyBreakdown = monthlySeries(current, chartFromYm, nowYm);
 
   const allTime = camelMany(await many(`SELECT * FROM activities WHERE athlete_id = $1`, [athleteId]));
+  const scopedHistory = inSyncTypes(allTime);
+  const rollingDays = named === 1 ? 30 : named === 3 ? 90 : named === 6 ? 180 : named === 12 ? 365 : null;
+  const adherence = computeAdherence({
+    activities: scopedHistory,
+    weeklyTargetDays,
+    periodDays: rollingDays,
+  });
 
   return {
     period: named ? `${named}m` : 'all',
@@ -676,6 +687,7 @@ export async function periodAnalysis(athleteId, period = '90', { type, syncTypes
     periodStart: since || localMidnightFirst(chartFromYm),
     filterType: filterType || 'all',
     metric,
+    adherence,
     current: {
       ...cur,
       formatted: {

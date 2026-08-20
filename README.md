@@ -9,7 +9,7 @@ Athletes sync Garmin or Strava, analyze training, join clubs, work with up to th
 - **RBAC:** athlete, coach, club administrator, application administrator
 - **Membership:** invitation codes, plans (1–24 months, lifetime, custom), expiry notices, club read-only mode
 - **Activity sync:** Strava OAuth (history + webhooks + periodic backup), Garmin, manual GPX/TCX, duplicate-safe upserts
-- **Athlete dashboard:** weekly/monthly/yearly mileage, PRs, consistency, coaches, goals, events
+- **Athlete dashboard:** weekly/monthly/yearly mileage, PRs, consistency vs weekly training-day target, streaks, coaches, goals, events
 - **Analysis:** pace, HR zones, cadence, elevation, training load, period comparison, charts
 - **Clubs:** profiles, join/approve, coaches required before members, announcements, events, leaderboard
 - **Coaching:** max 3 coaches, review requests, coach-only insights, structured feedback

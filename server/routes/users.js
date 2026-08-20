@@ -35,6 +35,7 @@ router.patch(
       'restingHeartRate',
       'notificationPrefs',
       'defaultActivityType',
+      'weeklyTargetDays',
     ];
     const map = {
       firstName: 'first_name',
@@ -45,6 +46,7 @@ router.patch(
       restingHeartRate: 'resting_heart_rate',
       notificationPrefs: 'notification_prefs',
       defaultActivityType: 'default_activity_type',
+      weeklyTargetDays: 'weekly_target_days',
     };
     const allowedTypes = ACTIVITY_TYPES;
     if (req.body.defaultActivityType !== undefined && !allowedTypes.includes(req.body.defaultActivityType)) {
@@ -54,6 +56,12 @@ router.patch(
       const selected = parseStoredSyncTypes(req.user.syncActivityTypes);
       if (!selected.includes(req.body.defaultActivityType)) {
         return res.status(400).json({ message: 'Default activity must be one of your selected sports' });
+      }
+    }
+    if (req.body.weeklyTargetDays !== undefined) {
+      const n = Number(req.body.weeklyTargetDays);
+      if (!Number.isInteger(n) || n < 3 || n > 7) {
+        return res.status(400).json({ message: 'Training days per week must be between 3 and 7' });
       }
     }
     if (req.body.firstName !== undefined && !String(req.body.firstName).trim()) {
@@ -121,7 +129,9 @@ router.patch(
               ? null
               : ['firstName', 'lastName'].includes(key)
                 ? String(req.body[key]).trim()
-                : req.body[key]
+                : key === 'weeklyTargetDays'
+                  ? Number(req.body[key])
+                  : req.body[key]
         );
       }
     }

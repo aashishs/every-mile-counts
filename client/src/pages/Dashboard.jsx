@@ -8,6 +8,7 @@ import { useAuth } from '../context/AuthContext';
 import { formatDate, formatTime, getActivityIcon, initialActivityType, rememberActivityType, visibleActivityTypeOptions } from '../utils/format';
 import { isAthleteAccount } from '../utils/roles';
 import StravaCard from '../components/StravaCard';
+import ConsistencyPanel from '../components/ConsistencyPanel';
 
 function greeting() {
   const h = new Date().getHours();
@@ -35,6 +36,7 @@ export default function Dashboard() {
   const [data, setData] = useState(null);
   const [searchParams] = useSearchParams();
   const [type, setType] = useState(() => initialActivityType(user, searchParams.get('type')));
+  const [adherencePeriod, setAdherencePeriod] = useState('30');
   const alertKey = searchParams.get('strava');
 
   useEffect(() => {
@@ -85,6 +87,7 @@ export default function Dashboard() {
 
   const sportTotal = (data?.distanceSports || []).find((s) => s.type === type);
   const nextEvent = data?.upcomingEvents?.[0];
+  const selectedAdherence = data?.adherence?.periods?.[adherencePeriod] || null;
 
   return (
     <Layout>
@@ -132,11 +135,20 @@ export default function Dashboard() {
               </Link>
             </div>
             <div className="flex flex-wrap gap-2 mt-5">
-              <span className="rounded-full bg-black/25 px-3 py-1 text-xs font-semibold">{data.consistency}% consistent</span>
+              <span className="rounded-full bg-black/25 px-3 py-1 text-xs font-semibold">
+                {(selectedAdherence?.score ?? data.consistency)}% vs {(selectedAdherence?.weeklyTargetDays || data.weeklyTargetDays || 5)}d/wk
+              </span>
               <span className="rounded-full bg-black/25 px-3 py-1 text-xs font-semibold">{data.recoveryIndicator || 'Recovery'}</span>
               <span className="rounded-full bg-black/25 px-3 py-1 text-xs font-semibold">{data.totals.activities} sessions</span>
             </div>
           </div>
+
+          <ConsistencyPanel
+            windows={data.adherence}
+            period={adherencePeriod}
+            onPeriodChange={setAdherencePeriod}
+            showPeriods
+          />
 
           <div className="grid grid-cols-3 gap-2 mb-5">
             <Stat label="Month" value={data.mileage.formatted.monthly} />

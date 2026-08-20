@@ -5,10 +5,12 @@ import api from '../api/client';
 import Layout from '../components/Layout';
 import ActivityTypeFilter from '../components/ActivityTypeFilter';
 import PersonalRecords from '../components/PersonalRecords';
+import ConsistencyPanel from '../components/ConsistencyPanel';
 import { useAuth } from '../context/AuthContext';
 import { formatDistance, formatDuration, initialActivityType, rememberActivityType, visibleActivityTypeOptions } from '../utils/format';
 
 const PERIODS = [
+  { value: '30', label: 'Last month' },
   { value: '90', label: 'Last 3 months' },
   { value: '180', label: 'Last 6 months' },
   { value: '365', label: 'Last year' },
@@ -97,6 +99,8 @@ export default function Analysis() {
             {!duration && <Stat label="Time" value={data.current.formatted.time} delta={data.comparison.timePct} />}
             <Stat label="Elevation" value={data.current.formatted.elevation} />
           </div>
+
+          <ConsistencyPanel adherence={data.adherence} />
 
           <div className="space-y-6 mb-6">
             <div className="card h-80">
