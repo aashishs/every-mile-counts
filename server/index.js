@@ -27,7 +27,6 @@ import pushRoutes from './routes/push.js';
 
 await connectDB();
 await ensureSchemaPatches();
-await verifyMailer();
 
 const app = express();
 app.set('trust proxy', 1);
@@ -49,11 +48,14 @@ app.use(
     max: 400,
     standardHeaders: true,
     legacyHeaders: false,
-    skip: (req) => req.path === '/api/strava/webhook',
+    skip: (req) => req.path === '/api/strava/webhook' || req.path === '/api/health' || req.path === '/health',
   })
 );
 
 app.get('/api/health', (_req, res) => {
+  res.json({ status: 'ok', app: 'Every Mile Counts' });
+});
+app.get('/health', (_req, res) => {
   res.json({ status: 'ok', app: 'Every Mile Counts' });
 });
 
@@ -76,7 +78,8 @@ app.use('/api/push', pushRoutes);
 app.use(errorHandler);
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-  console.log(`Every Mile Counts API running on port ${PORT}`);
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Every Mile Counts API running on 0.0.0.0:${PORT}`);
   startScheduler();
+  verifyMailer().catch((err) => console.error('SMTP verify failed:', err.message));
 });

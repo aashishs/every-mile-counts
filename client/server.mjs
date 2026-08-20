@@ -166,7 +166,11 @@ function proxyApi(req, res) {
 const server = http.createServer((req, res) => {
   const urlPath = (req.url || '/').split('?')[0];
   if (urlPath === '/health') {
-    res.writeHead(200, { 'content-type': 'application/json' });
+    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+    if (req.method === 'HEAD' || req.method === 'OPTIONS') {
+      res.end();
+      return;
+    }
     res.end(JSON.stringify({ ok: true, api: Boolean(apiBase()), apiUrl: apiBase() }));
     return;
   }

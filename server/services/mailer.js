@@ -23,10 +23,16 @@ function transport() {
   const user = mailUser();
   const pass = smtpPass();
   const gmail = user.toLowerCase().endsWith('@gmail.com');
+  const timeouts = {
+    connectionTimeout: 8000,
+    greetingTimeout: 8000,
+    socketTimeout: 15000,
+  };
   if (gmail) {
     return nodemailer.createTransport({
       service: 'gmail',
       auth: { user, pass },
+      ...timeouts,
     });
   }
   return nodemailer.createTransport({
@@ -34,6 +40,7 @@ function transport() {
     port: Number(process.env.SMTP_PORT || 587),
     secure: process.env.SMTP_SECURE === 'true',
     auth: { user, pass },
+    ...timeouts,
   });
 }
 
