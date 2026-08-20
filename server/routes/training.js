@@ -55,6 +55,15 @@ function asDate(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
 }
 
+function mondayOf(ymd) {
+  const [y, m, d] = String(ymd).split('-').map(Number);
+  if (!y || !m || !d) return ymd;
+  const date = new Date(Date.UTC(y, m - 1, d));
+  const day = date.getUTCDay();
+  date.setUTCDate(date.getUTCDate() + (day === 0 ? -6 : 1 - day));
+  return date.toISOString().slice(0, 10);
+}
+
 function asNumber(value) {
   if (value === '' || value == null) return null;
   const n = Number(value);
@@ -86,7 +95,9 @@ function workoutPayload(body, fallback = {}) {
     return transform ? transform(body[key]) : body[key];
   };
   return {
-    name: take('name', (v) => String(v).trim()),
+    name: take('name', (v) => String(v).trim())
+      || (body.workoutType != null ? normalizeWorkoutType(body.workoutType) : fallback.workoutType)
+      || 'Easy',
     sport,
     workoutType: body.workoutType != null ? normalizeWorkoutType(body.workoutType) : fallback.workoutType || 'Easy',
     scheduledDate: asDate(body.scheduledDate) || fallback.scheduledDate,
@@ -803,6 +814,100 @@ router.delete(
     await loadProgramOwnedOrThrow(req, week.programId);
     await query('DELETE FROM training_weeks WHERE id = $1', [week.id]);
     res.json({ message: 'Week deleted' });
+  })
+);
+
+async function ensureProgramWeek(program, scheduledDate) {
+  const date = scheduledDate || program.startDate || todayYmd();
+  let week = camel(
+    await one(
+      `SELECT * FROM training_weeks
+       WHERE program_id = $1
+         AND start_date IS NOT NULL
+         AND start_date <= $2::date
+         AND start_date + 6 >= $2::date
+       ORDER BY week_number, created_at
+       LIMIT 1`,
+      [program.id, date]
+    )
+  );
+  if (week) {
+    const phase = camel(await one('SELECT * FROM training_phases WHERE id = $1', [week.phaseId]));
+    return { phase, week };
+  }
+
+  let phase = camel(
+    await one(
+      'SELECT * FROM training_phases WHERE program_id = $1 ORDER BY sort_order DESC, created_at DESC LIMIT 1',
+      [program.id]
+    )
+  );
+  if (!phase) {
+    phase = camel(
+      await one(
+        `INSERT INTO training_phases (program_id, name, sort_order) VALUES ($1, 'Sessions', 0) RETURNING *`,
+        [program.id]
+      )
+    );
+  }
+
+  const weekStart = mondayOf(date);
+  week = camel(
+    await one(
+      'SELECT * FROM training_weeks WHERE program_id = $1 AND start_date = $2 LIMIT 1',
+      [program.id, weekStart]
+    )
+  );
+  if (week) return { phase: camel(await one('SELECT * FROM training_phases WHERE id = $1', [week.phaseId])), week };
+
+  const count = await one(
+    'SELECT COALESCE(MAX(week_number), 0) + 1 AS next FROM training_weeks WHERE phase_id = $1',
+    [phase.id]
+  );
+  week = camel(
+    await one(
+      `INSERT INTO training_weeks (program_id, phase_id, week_number, start_date)
+       VALUES ($1,$2,$3,$4) RETURNING *`,
+      [program.id, phase.id, count.next, weekStart]
+    )
+  );
+  return { phase, week };
+}
+
+router.post(
+  '/programs/:id/workouts',
+  requireRole('coach'),
+  asyncHandler(async (req, res) => {
+    const program = await loadProgramOwnedOrThrow(req);
+    const payload = workoutPayload(req.body, { sport: program.sport });
+    if (!payload.scheduledDate) throw httpError(400, 'Choose a date for this session');
+    const { phase, week } = await ensureProgramWeek(program, payload.scheduledDate);
+    const workout = camel(
+      await one(
+        `INSERT INTO planned_workouts (
+           program_id, phase_id, week_id, athlete_id, coach_id, club_id, scheduled_date, name, sport, workout_type,
+           distance, duration, target_pace, target_hr_zone, target_hr, target_power, rpe,
+           warmup, main_set, cooldown, instructions, coach_notes
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+         RETURNING *`,
+        [
+          program.id, phase.id, week.id, program.athleteId, program.coachId, program.clubId,
+          payload.scheduledDate, payload.name, payload.sport, payload.workoutType,
+          payload.distance, payload.duration, payload.targetPace, payload.targetHrZone, payload.targetHr, payload.targetPower, payload.rpe,
+          payload.warmup, payload.mainSet, payload.cooldown, payload.instructions, payload.coachNotes,
+        ]
+      )
+    );
+    if (program.athleteId && program.status === 'active') {
+      await createNotification({
+        userId: program.athleteId,
+        type: 'training',
+        title: 'Workout scheduled',
+        body: `${payload.name || payload.workoutType} on ${payload.scheduledDate}.`,
+        data: { workoutId: workout.id, programId: program.id, url: `/training/workouts/${workout.id}` },
+      });
+    }
+    res.status(201).json({ workout });
   })
 );
 

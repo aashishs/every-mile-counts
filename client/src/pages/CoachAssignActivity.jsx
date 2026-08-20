@@ -3,7 +3,9 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../api/client';
 import Layout from '../components/Layout';
 import ClubField, { coachClubList, onlyClubId } from '../components/ClubField';
+import { SearchSelect } from '../components/SearchMultiSelect';
 import WorkoutForm, { emptyWorkout, payloadFromForm } from '../components/WorkoutForm';
+import { ymdToday } from '../utils/training';
 
 export default function CoachAssignActivity() {
   const navigate = useNavigate();
@@ -12,8 +14,14 @@ export default function CoachAssignActivity() {
   const [athletes, setAthletes] = useState([]);
   const [groups, setGroups] = useState([]);
   const [error, setError] = useState('');
-  const [target, setTarget] = useState({ clubId: '', athleteId: params.get('athleteId') || '', groupId: params.get('groupId') || '' });
-  const [form, setForm] = useState({ ...emptyWorkout, scheduledDate: new Date().toISOString().slice(0, 10) });
+  const [busy, setBusy] = useState(false);
+  const [mode, setMode] = useState(params.get('groupId') ? 'group' : 'athlete');
+  const [target, setTarget] = useState({
+    clubId: '',
+    athleteId: params.get('athleteId') || '',
+    groupId: params.get('groupId') || '',
+  });
+  const [form, setForm] = useState({ ...emptyWorkout, scheduledDate: ymdToday() });
 
   useEffect(() => {
     api.get('/clubs/mine').then((res) => {
@@ -21,7 +29,7 @@ export default function CoachAssignActivity() {
       setClubs(list);
       const lockedClub = onlyClubId(list);
       if (lockedClub) {
-        setTarget((current) => current.clubId ? current : { ...current, clubId: lockedClub });
+        setTarget((current) => (current.clubId ? current : { ...current, clubId: lockedClub }));
       }
     }).catch(() => setClubs([]));
     api.get('/coaches/my-athletes', { params: { limit: 100 } }).then((res) => setAthletes(res.data.athletes || [])).catch(() => setAthletes([]));
@@ -47,28 +55,63 @@ export default function CoachAssignActivity() {
     () => groups.filter((g) => !target.clubId || g.clubId === target.clubId),
     [groups, target.clubId]
   );
+  const athleteOptions = useMemo(
+    () => clubAthletes.map((a) => ({
+      id: a.athleteId,
+      label: `${a.firstName || ''} ${a.lastName || ''}`.trim() || 'Athlete',
+    })),
+    [clubAthletes]
+  );
+  const groupOptions = useMemo(
+    () => clubGroups.map((g) => ({
+      id: g.id,
+      label: `${g.name} · ${g.athleteCount || g.athletes?.length || 0} athletes`,
+    })),
+    [clubGroups]
+  );
+
+  const setModeAndClear = (next) => {
+    setMode(next);
+    setError('');
+    setTarget((current) => ({
+      ...current,
+      athleteId: next === 'athlete' ? current.athleteId : '',
+      groupId: next === 'group' ? current.groupId : '',
+    }));
+  };
 
   const save = async () => {
     setError('');
-    if (!target.groupId && !target.athleteId) {
-      setError('Choose an athlete or a group');
+    if (mode === 'athlete' && !target.athleteId) {
+      setError('Choose an athlete');
+      return;
+    }
+    if (mode === 'group' && !target.groupId) {
+      setError('Choose a group');
+      return;
+    }
+    if (mode === 'group' && selectedGroup && !(selectedGroup.athletes || []).length && !selectedGroup.athleteCount) {
+      setError('This group has no athletes yet. Add members on Groups first.');
       return;
     }
     if (!selectedGroup && !target.clubId) {
       setError('Choose a club');
       return;
     }
+    setBusy(true);
     try {
       const payload = {
         ...payloadFromForm(form),
         clubId: selectedGroup?.clubId || target.clubId,
-        groupId: target.groupId || undefined,
-        athleteId: target.groupId ? undefined : target.athleteId || undefined,
+        groupId: mode === 'group' ? target.groupId : undefined,
+        athleteId: mode === 'athlete' ? target.athleteId : undefined,
       };
       const { data } = await api.post('/training/workouts', payload);
       navigate('/coaches/training', { replace: true, state: { assigned: data.count } });
     } catch (err) {
-      setError(err.response?.data?.message || 'Could not assign activity');
+      setError(err.response?.data?.message || 'Could not schedule this session');
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -77,40 +120,88 @@ export default function CoachAssignActivity() {
       <p className="text-xs text-muted mb-2">
         <Link to="/coaches/training" className="text-brand no-underline">Training</Link>
       </p>
-      <h2 className="page-title">Assign activity</h2>
-      <p className="page-sub">One session for an athlete or a whole group — no full plan needed</p>
+      <h2 className="page-title">Schedule a session</h2>
+      <p className="page-sub">One workout for an athlete or a group. No full plan needed.</p>
       {error && <div className="card text-rose-200 mb-4">{error}</div>}
 
-      <div className="card grid md:grid-cols-2 gap-3 mb-4">
-        <ClubField
-          clubs={clubs}
-          value={target.clubId}
-          disabled={Boolean(selectedGroup) || clubs.length === 1}
-          onChange={(clubId) => setTarget({ clubId, athleteId: '', groupId: '' })}
-        />
-        <select value={target.groupId} onChange={(e) => setTarget({ ...target, groupId: e.target.value, athleteId: '' })}>
-          <option value="">One athlete (or pick a group)</option>
-          {clubGroups.map((g) => (
-            <option key={g.id} value={g.id}>{g.name} · {g.athleteCount || g.athletes?.length || 0} athletes</option>
-          ))}
-        </select>
-        {!target.groupId && (
-          <select className="md:col-span-2" value={target.athleteId} onChange={(e) => setTarget({ ...target, athleteId: e.target.value })}>
-            <option value="">Athlete</option>
-            {clubAthletes.map((a) => (
-              <option key={a.athleteId} value={a.athleteId}>{a.firstName} {a.lastName}</option>
-            ))}
-          </select>
-        )}
-        {selectedGroup ? (
-          <p className="md:col-span-2 text-sm text-muted mb-0">
-            {selectedGroup.clubName} · {(selectedGroup.athletes || []).map((a) => `${a.firstName} ${a.lastName}`).join(', ') || 'No athletes yet'}
-          </p>
-        ) : null}
+      <div className="card mb-4">
+        <h3 className="section-title">1. Who is this for?</h3>
+        <div className="grid md:grid-cols-2 gap-3">
+          <ClubField
+            clubs={clubs}
+            value={target.clubId}
+            disabled={Boolean(selectedGroup) || clubs.length === 1}
+            onChange={(nextClubId) => setTarget({ clubId: nextClubId, athleteId: '', groupId: '' })}
+          />
+          <div>
+            <label>Assign to</label>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                className={mode === 'athlete' ? 'btn-primary flex-1' : 'btn-outline flex-1'}
+                onClick={() => setModeAndClear('athlete')}
+              >
+                One athlete
+              </button>
+              <button
+                type="button"
+                className={mode === 'group' ? 'btn-primary flex-1' : 'btn-outline flex-1'}
+                onClick={() => setModeAndClear('group')}
+              >
+                A group
+              </button>
+            </div>
+          </div>
+          {mode === 'athlete' ? (
+            <div className="md:col-span-2">
+              <label>Athlete</label>
+              <SearchSelect
+                options={athleteOptions}
+                value={target.athleteId}
+                onChange={(athleteId) => setTarget((current) => ({ ...current, athleteId, groupId: '' }))}
+                placeholder={clubAthletes.length ? 'Search athlete' : 'No athletes in this club'}
+                searchPlaceholder="Type a name"
+                emptyText="No matching athlete"
+                disabled={!clubAthletes.length}
+              />
+            </div>
+          ) : (
+            <div className="md:col-span-2">
+              <label>Group</label>
+              <SearchSelect
+                options={groupOptions}
+                value={target.groupId}
+                onChange={(groupId) => setTarget((current) => ({ ...current, groupId, athleteId: '' }))}
+                placeholder={clubGroups.length ? 'Search group' : 'No groups yet'}
+                searchPlaceholder="Type a group name"
+                emptyText="No matching group"
+                disabled={!clubGroups.length}
+              />
+              {!clubGroups.length ? (
+                <p className="text-sm text-muted mt-2 mb-0">
+                  <Link to="/coaches/groups" className="text-brand no-underline">Create a group</Link> first if you want to assign to several athletes at once.
+                </p>
+              ) : selectedGroup ? (
+                <p className="text-sm text-muted mt-2 mb-0">
+                  {selectedGroup.clubName ? `${selectedGroup.clubName} · ` : ''}
+                  {(selectedGroup.athletes || []).map((a) => `${a.firstName} ${a.lastName}`).join(', ') || 'No athletes in this group yet'}
+                </p>
+              ) : null}
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="card">
-        <WorkoutForm form={form} setForm={setForm} onSave={save} onCancel={() => navigate('/coaches/training')} submitLabel="Assign activity" />
+        <h3 className="section-title">2. Session details</h3>
+        <WorkoutForm
+          form={form}
+          setForm={setForm}
+          busy={busy}
+          onSave={save}
+          onCancel={() => navigate('/coaches/training')}
+          submitLabel="Schedule session"
+        />
       </div>
     </Layout>
   );
