@@ -1,7 +1,7 @@
 import express from 'express';
 import { camel, camelMany, many, one, query } from '../config/db.js';
 import { protect, requireMembership, rejectAppAdmin } from '../middleware/auth.js';
-import { analyzeActivity, athleteDashboard, compareActivities, periodAnalysis } from '../services/analysisService.js';
+import { achievementsForActivity, analyzeActivity, athleteDashboard, compareActivities, periodAnalysis, sportFamily } from '../services/analysisService.js';
 import { athleteHrContext } from '../utils/maf.js';
 import { syncUserActivities } from '../services/syncService.js';
 import { mappedFromFile, mappedFromManual, saveManualActivity } from '../services/activityImportService.js';
@@ -314,6 +314,108 @@ router.get(
       limit,
       sort: sortKey,
       dir: dirSql.toLowerCase(),
+    });
+  })
+);
+
+router.get(
+  '/:id/share-context',
+  asyncHandler(async (req, res) => {
+    const activity = camel(
+      await one(
+        `SELECT id, athlete_id, name, type, sport_type, distance, moving_time, elapsed_time,
+                elevation_gain, start_date, avg_speed, avg_heartrate, event_id
+         FROM activities WHERE id = $1`,
+        [req.params.id]
+      )
+    );
+    if (!activity) return res.status(404).json({ message: 'Activity not found' });
+    if (!(await canViewAthlete(req, activity.athleteId))) {
+      return res.status(403).json({ message: 'Not authorized' });
+    }
+
+    const siblings = camelMany(
+      await many(
+        `SELECT id, name, type, sport_type, distance, moving_time, elapsed_time, start_date
+         FROM activities WHERE athlete_id = $1`,
+        [activity.athleteId]
+      )
+    );
+    const achievements = achievementsForActivity(siblings, activity);
+
+    let event = null;
+    const eventId = activity.eventId;
+    if (eventId) {
+      event = camel(
+        await one(
+          `SELECT id, name, distance, event_date, category FROM events WHERE id = $1`,
+          [eventId]
+        )
+      );
+    }
+    if (!event) {
+      event = camel(
+        await one(
+          `SELECT e.id, e.name, e.distance, e.event_date, e.category
+           FROM event_activities ea
+           JOIN events e ON e.id = ea.event_id
+           WHERE ea.activity_id = $1
+           ORDER BY e.event_date DESC
+           LIMIT 1`,
+          [activity.id]
+        )
+      );
+    }
+    if (event) {
+      event = {
+        name: event.name,
+        distance: event.distance,
+        eventDate: event.eventDate,
+        category: event.category,
+      };
+    }
+
+    let plannedWorkout = null;
+    try {
+      const match = camel(
+        await one(
+          `SELECT w.name, w.workout_type, w.sport, w.distance AS planned_distance, w.duration AS planned_duration,
+                  w.completion_status, w.target_hr_zone, p.name AS program_name, tw.week_number,
+                  a.distance AS actual_distance, a.moving_time AS actual_duration
+           FROM workout_activity_matches m
+           JOIN planned_workouts w ON w.id = m.planned_workout_id
+           JOIN training_programs p ON p.id = w.program_id
+           JOIN activities a ON a.id = m.activity_id
+           LEFT JOIN training_weeks tw ON tw.id = w.week_id
+           WHERE m.activity_id = $1 AND m.status IN ('auto', 'confirmed')
+           LIMIT 1`,
+          [activity.id]
+        )
+      );
+      if (match) {
+        plannedWorkout = {
+          programName: match.programName,
+          weekNumber: match.weekNumber,
+          name: match.name,
+          workoutType: match.workoutType,
+          sport: match.sport,
+          plannedDistance: match.plannedDistance,
+          plannedDuration: match.plannedDuration,
+          actualDistance: match.actualDistance,
+          actualDuration: match.actualDuration,
+          completionStatus: match.completionStatus,
+          targetHrZone: match.targetHrZone,
+        };
+      }
+    } catch {
+      plannedWorkout = null;
+    }
+
+    res.json({
+      sportFamily: sportFamily(activity),
+      achievements,
+      event,
+      plannedWorkout,
     });
   })
 );

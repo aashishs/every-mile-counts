@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, lazy, Suspense } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import Layout from '../components/Layout';
@@ -13,6 +13,8 @@ import {
   getActivityIcon,
 } from '../utils/format';
 import { buildActivityMarkdown, copyText } from '../utils/activityMarkdown';
+
+const ActivityShareModal = lazy(() => import('../components/ActivityShareModal'));
 
 export default function ActivityDetail() {
   const { id } = useParams();
@@ -34,6 +36,7 @@ export default function ActivityDetail() {
   const [copied, setCopied] = useState(false);
   const [reviewCoachId, setReviewCoachId] = useState('');
   const [asking, setAsking] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
 
   useEffect(() => {
     api.get(`/activities/${id}`).then((res) => setData(res.data));
@@ -132,7 +135,12 @@ export default function ActivityDetail() {
 
   return (
     <Layout>
-      <div className="flex justify-end mb-3">
+      <div className="flex justify-end gap-2 mb-3">
+        {mine && (
+          <button type="button" className="btn-outline btn-sm" onClick={() => setShareOpen(true)}>
+            Share Activity
+          </button>
+        )}
         <button
           type="button"
           className="btn-outline btn-sm"
@@ -346,6 +354,16 @@ export default function ActivityDetail() {
           </div>
           <button className="btn-primary w-full" type="submit">Publish review</button>
         </form>
+      )}
+
+      {shareOpen && (
+        <Suspense fallback={null}>
+          <ActivityShareModal
+            activity={activity}
+            athleteName={user.firstName}
+            onClose={() => setShareOpen(false)}
+          />
+        </Suspense>
       )}
     </Layout>
   );

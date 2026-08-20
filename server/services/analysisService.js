@@ -485,6 +485,54 @@ export function detectPersonalRecords(activities, type) {
   return records;
 }
 
+const FIRST_HEADLINES = {
+  '5k': 'FIRST 5K',
+  '10k': 'FIRST 10K',
+  hm: 'FIRST HALF MARATHON',
+  fm: 'FIRST MARATHON',
+};
+
+const LONGEST_HEADLINES = {
+  Run: 'LONGEST RUN',
+  Ride: 'LONGEST RIDE',
+  Swim: 'LONGEST SWIM',
+  Walk: 'LONGEST WALK',
+  Hike: 'LONGEST HIKE',
+};
+
+export function achievementsForActivity(allActivities, activity) {
+  const family = sportFamily(activity);
+  const records = detectPersonalRecords(allActivities, family);
+  const list = (allActivities || []).filter((a) => sportFamily(a) === family);
+  const hits = [];
+  for (const [key, rec] of Object.entries(records)) {
+    if (!rec || String(rec.activityId) !== String(activity.id)) continue;
+    const bucket = (TYPE_BUCKETS[family] || []).find((b) => b.key === key);
+    let headline = 'NEW PERSONAL BEST';
+    let title = String(rec.label || key).replace(/^PR\s+/i, '');
+    if (key === 'longest' || key === 'longestDistance' || key === 'longestSession') {
+      headline = LONGEST_HEADLINES[family] || 'LONGEST SESSION';
+      title = rec.distance || title;
+    } else if (bucket) {
+      const count = list.filter(
+        (a) => num(a.distance) >= bucket.min && num(a.distance) < bucket.max
+      ).length;
+      if (count === 1 && FIRST_HEADLINES[key]) headline = FIRST_HEADLINES[key];
+      title = bucket.label.toUpperCase();
+    }
+    hits.push({
+      key,
+      headline,
+      title,
+      time: rec.time || null,
+      movingTime: rec.movingTime || null,
+      distance: rec.distance || null,
+      meters: rec.meters || null,
+    });
+  }
+  return hits;
+}
+
 function volumeMetric(type) {
   if (!type || type === 'all') return 'distance';
   if (isDurationSport(type)) return 'duration';
