@@ -3,7 +3,8 @@ import { quoteForDay } from '../utils/dailyQuotes';
 
 export default function DailyCheckin({ user, today, onClose }) {
   if (!today?.date) return null;
-  const quote = quoteForDay(user?.id, today.date);
+  const trained = Boolean(today.trained && today.score);
+  const quote = quoteForDay(user?.id, today.date, trained ? 'done' : 'motivate');
   const name = user?.firstName || 'Athlete';
 
   return (
@@ -21,12 +22,12 @@ export default function DailyCheckin({ user, today, onClose }) {
       >
         <p className="stat-label text-brand">Today · {today.date}</p>
         <h3 id="checkin-title" className="font-display text-3xl font-bold mt-2 mb-0">
-          {today.trained ? `Nice work, ${name}` : `Let’s go, ${name}`}
+          {trained ? `Nice work, ${name}` : `Still time, ${name}`}
         </h3>
         <p className="text-slate-100 text-base leading-relaxed mt-4 mb-0">“{quote}”</p>
         <p className="text-[11px] text-muted mt-2 mb-0">Every Mile Counts</p>
 
-        {today.trained ? (
+        {trained ? (
           <div className="mt-5 rounded-2xl border border-line bg-ink/60 p-4">
             <div className="stat-label">Workout score</div>
             <div className="flex items-end justify-between gap-3 mt-1">
@@ -49,13 +50,23 @@ export default function DailyCheckin({ user, today, onClose }) {
             ) : null}
           </div>
         ) : (
-          <p className="text-sm text-muted mt-5 mb-0">
-            No session logged yet today. There is still time to get one in — or take the rest day on purpose.
-          </p>
+          <div className="mt-5 rounded-2xl border border-accent/40 bg-accent/10 p-4">
+            <div className="stat-label text-orange-200">No session yet</div>
+            <p className="text-sm text-slate-100 mt-2 mb-0 leading-relaxed">
+              Today is still empty. An easy 20 minutes beats a blank day. Get out, then log it.
+            </p>
+            <Link
+              to="/activities?add=1"
+              className="btn-accent btn-sm mt-4 no-underline inline-flex"
+              onClick={onClose}
+            >
+              Log a session
+            </Link>
+          </div>
         )}
 
         <button type="button" className="btn-primary w-full mt-5" onClick={onClose}>
-          {today.trained ? 'Continue' : 'Let’s train'}
+          {trained ? 'Continue' : 'I’ll go now'}
         </button>
       </div>
     </div>

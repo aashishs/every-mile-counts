@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { QUOTES, quoteForDay } from './dailyQuotes.js';
+import { MOTIVATE_QUOTES, QUOTES, quoteForDay } from './dailyQuotes.js';
 
 describe('daily quotes', () => {
   it('returns a stable quote for the same athlete and day', () => {
@@ -18,5 +18,11 @@ describe('daily quotes', () => {
     assert.equal(typeof other, 'string');
     assert.ok(today.length > 8);
     assert.ok(today !== next || today !== other);
+  });
+
+  it('uses a get-going quote when no work is done', () => {
+    const line = quoteForDay('user-1', '2026-08-20', 'motivate');
+    assert.ok(MOTIVATE_QUOTES.includes(line));
+    assert.equal(quoteForDay('user-1', '2026-08-20', 'done') === line, false);
   });
 });
