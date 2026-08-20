@@ -252,10 +252,14 @@
   display: inline-flex;
   align-items: center;
   min-height: 44px;
-  color: #FC5200 !important;
+  color: #0d9488;
   font-weight: 700;
   font-size: 1rem;
   line-height: 1.2;
   text-decoration: underline;
-  -webkit-tap-highlight-color: rgba(252, 82, 0, 0.28);
+  -webkit-tap-highlight-color: rgba(13, 148, 136, 0.28);
+}
+
+.strava-view-link:hover {
+  color: #0f766e;
 }
