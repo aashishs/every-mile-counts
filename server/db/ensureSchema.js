@@ -54,6 +54,9 @@ export async function ensureSchemaPatches() {
     `CREATE INDEX IF NOT EXISTS idx_oauth_connections_provider_user
      ON oauth_connections (provider, provider_user_id)`
   );
+  await pool.query(`ALTER TABLE oauth_connections ADD COLUMN IF NOT EXISTS granted_scope TEXT`);
+  await pool.query(`ALTER TABLE oauth_connections ADD COLUMN IF NOT EXISTS pending_coach_share BOOLEAN NOT NULL DEFAULT FALSE`);
+  await pool.query(`ALTER TABLE oauth_connections ADD COLUMN IF NOT EXISTS coach_share_consented_at TIMESTAMPTZ`);
 
   await pool.query(`
     INSERT INTO user_roles (user_id, role)

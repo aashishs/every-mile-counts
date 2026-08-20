@@ -33,6 +33,7 @@ import Support from './pages/Support';
 import SupportDesk from './pages/SupportDesk';
 import Membership from './pages/Membership';
 import JoinClub from './pages/JoinClub';
+import Privacy from './pages/Privacy';
 import InstallPrompt from './components/InstallPrompt';
 
 export default function App() {
@@ -44,6 +45,7 @@ export default function App() {
           <Route path="/forgot-password" element={<PublicRoute><ForgotPassword /></PublicRoute>} />
           <Route path="/reset-password" element={<PublicRoute><ResetPassword /></PublicRoute>} />
           <Route path="/register" element={<PublicRoute><Register /></PublicRoute>} />
+          <Route path="/privacy" element={<Privacy />} />
           <Route path="/join" element={<JoinClub />} />
           <Route path="/dashboard" element={<ProtectedRoute><AthleteRoute><Dashboard /></AthleteRoute></ProtectedRoute>} />
           <Route path="/activities" element={<ProtectedRoute><AthleteRoute><Activities /></AthleteRoute></ProtectedRoute>} />

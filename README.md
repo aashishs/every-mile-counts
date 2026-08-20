@@ -232,7 +232,11 @@ Seeded login after first boot: `ADMIN_EMAIL` / `ADMIN_PASSWORD`. Create invitati
 2. Create a Garmin Connect Developer Program application (OAuth 1.0a). Redirect URI: `http://localhost:5000/api/garmin/callback`.
 3. Put client/consumer credentials in `server/.env`.
 
-Athletes connect Strava from Dashboard or Profile after they are already logged in. First connect imports history; new/updated/deleted activities arrive via webhook, with an incremental backup sync every 3 hours. Garmin can still be connected separately.
+Athletes connect Strava from Dashboard or Profile after they are already logged in. OAuth asks for `activity:read` and `activity:read_all` only. First connect imports history; new/updated/deleted activities arrive via webhook, with an incremental backup sync every 3 hours.
+
+Strava-imported activities stay private to the athlete until they explicitly allow assigned coaches to view them (required at Connect, and toggleable later). Disconnect revokes the app token and deletes Strava-imported activities from EMC. Use official Connect / Powered by assets from [Strava brand guidelines](https://developers.strava.com/guidelines/) in `client/public/strava/` before API review if the bundled placeholders are not accepted.
+
+Garmin can still be connected separately.
 
 ## Docker (full stack)
 

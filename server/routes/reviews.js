@@ -5,6 +5,7 @@ import { analyzeActivity } from '../services/analysisService.js';
 import { createNotification } from '../services/notificationService.js';
 import { asyncHandler } from '../middleware/error.js';
 import { assertCanViewReview, getAssignment } from '../utils/coachingAccess.js';
+import { canViewerSeeActivity } from '../utils/stravaShare.js';
 
 const router = express.Router();
 router.use(protect, requireMembership, rejectAppAdmin);
@@ -162,6 +163,9 @@ router.post(
     if (!assignment) {
       return res.status(403).json({ message: 'Not assigned to this athlete' });
     }
+    if (!(await canViewerSeeActivity(req, activity))) {
+      return res.status(403).json({ message: 'This athlete has not shared Strava activities with coaches.' });
+    }
     if (req.body.athleteId && req.body.athleteId !== activity.athleteId) {
       return res.status(403).json({ message: 'Access denied' });
     }
@@ -275,6 +279,9 @@ router.get(
     if (!activity) return res.status(404).json({ message: 'Activity not found' });
     if (!(await assigned(req.user.id, activity.athleteId))) {
       return res.status(403).json({ message: 'Not assigned to this athlete' });
+    }
+    if (!(await canViewerSeeActivity(req, activity))) {
+      return res.status(403).json({ message: 'This athlete has not shared Strava activities with coaches.' });
     }
     const athlete = camel(await one('SELECT * FROM users WHERE id = $1', [activity.athleteId]));
     res.json({ insights: analyzeActivity(activity, athlete) });

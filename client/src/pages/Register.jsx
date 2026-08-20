@@ -226,6 +226,9 @@ export default function Register() {
             <p className="text-center text-muted text-sm mt-6">
               Already have an account? <Link to="/login">Sign in</Link>
             </p>
+            <p className="text-center text-xs text-muted mt-4 mb-0">
+              <Link to="/privacy" className="text-muted">Privacy</Link>
+            </p>
           </>
         )}
       </div>

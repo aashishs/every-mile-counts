@@ -17,6 +17,7 @@ import { buildActivityMarkdown, copyText } from '../utils/activityMarkdown';
 import { formatComparisonValue } from '../utils/training';
 import ActivityRouteMap from '../components/ActivityRouteMap';
 import ActivitySplits from '../components/ActivitySplits';
+import { PoweredByStrava, ViewOnStrava } from '../components/StravaBrand';
 
 export default function ActivityDetail() {
   const { id } = useParams();
@@ -38,11 +39,38 @@ export default function ActivityDetail() {
   const [copied, setCopied] = useState(false);
   const [reviewCoachId, setReviewCoachId] = useState('');
   const [asking, setAsking] = useState(false);
+  const [loadError, setLoadError] = useState('');
 
   useEffect(() => {
-    api.get(`/activities/${id}`).then((res) => setData(res.data));
+    setLoadError('');
+    api.get(`/activities/${id}`).then((res) => setData(res.data)).catch((err) => {
+      setLoadError(err.response?.data?.message || 'Could not load this session');
+    });
     api.get('/coaches/my-coaches').then((res) => setCoaches(res.data.coaches || [])).catch(() => {});
   }, [id]);
+
+  if (loadError) {
+    const shareBlocked = /not shared Strava/i.test(loadError);
+    return (
+      <Layout>
+        <div className="card">
+          <h2 className="section-title mb-2">{shareBlocked ? 'Strava sessions are private' : 'Could not load this session'}</h2>
+          <p className="text-sm text-muted mb-4">
+            {shareBlocked
+              ? 'This athlete has not allowed assigned coaches to view activities imported from Strava. Manual and file-imported sessions are still available.'
+              : loadError}
+          </p>
+          <button
+            type="button"
+            className="btn-outline btn-sm"
+            onClick={() => navigate(isCoach ? '/coaches' : '/activities')}
+          >
+            Back
+          </button>
+        </div>
+      </Layout>
+    );
+  }
 
   if (!data) {
     return <Layout><p className="text-muted">Loading…</p></Layout>;
@@ -141,10 +169,11 @@ export default function ActivityDetail() {
 
   return (
     <Layout>
-      <div className="flex justify-end mb-3">
+      <div className="flex items-center justify-between gap-3 mb-3">
+        <ViewOnStrava activity={activity} />
         <button
           type="button"
-          className="btn-outline btn-sm"
+          className="btn-outline btn-sm shrink-0"
           onClick={() => navigate(
             isCoach && !mine
               ? `/coaches/athletes/${activity.athleteId}`
@@ -157,7 +186,7 @@ export default function ActivityDetail() {
 
       <div className="hero-week">
         <div className="flex items-start justify-between gap-3">
-          <div>
+          <div className="min-w-0 flex-1">
             <div className="stat-label text-teal-100/70">
               {getActivityIcon(activity.type)} {activity.type} · {formatDate(activity.startDate)}
               {isCoach && !mine && activity.mafHeartRate
@@ -175,7 +204,11 @@ export default function ActivityDetail() {
         </div>
         <div className="stat-label text-teal-100/70 mt-2">{primaryLabel}</div>
         <div className="flex flex-wrap gap-2 mt-5">
-          <span className="rounded-full bg-black/25 px-3 py-1 text-xs font-semibold">{activity.source || 'manual'}</span>
+          {activity.source === 'strava' ? (
+            <span className="rounded-full bg-black/25 px-3 py-1 text-xs font-semibold">Compatible with Strava</span>
+          ) : (
+            <span className="rounded-full bg-black/25 px-3 py-1 text-xs font-semibold">{activity.source || 'manual'}</span>
+          )}
           {formatEffort(activity) && formatEffort(activity) !== '—' && (
             <span className="rounded-full bg-black/25 px-3 py-1 text-xs font-semibold">{formatEffort(activity)}</span>
           )}
@@ -227,6 +260,11 @@ export default function ActivityDetail() {
       </div>
 
       <ActivityRouteMap activity={activity} />
+      {activity.source === 'strava' && (
+        <p className="mb-6 -mt-2">
+          <ViewOnStrava activity={activity} />
+        </p>
+      )}
       <ActivitySplits activity={activity} />
 
       {(insights || athleteInsights) && (
@@ -387,6 +425,11 @@ export default function ActivityDetail() {
           </div>
           <button className="btn-primary w-full" type="submit">Publish review</button>
         </form>
+      )}
+      {activity.source === 'strava' && (
+        <div className="mt-8 mb-8">
+          <PoweredByStrava />
+        </div>
       )}
     </Layout>
   );

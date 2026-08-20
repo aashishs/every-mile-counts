@@ -59,20 +59,40 @@ async function getConnection(userId) {
   return camel(row);
 }
 
-async function saveTokens(userId, { accessToken, refreshToken, expiresAt, providerUserId }) {
+async function saveTokens(userId, {
+  accessToken,
+  refreshToken,
+  expiresAt,
+  providerUserId,
+  grantedScope,
+  coachShare,
+}) {
+  const shareAt = coachShare ? new Date() : null;
   await query(
     `INSERT INTO oauth_connections
-      (user_id, provider, provider_user_id, access_token_enc, refresh_token_enc, expires_at, connected, updated_at)
-     VALUES ($1, 'strava', $2, $3, $4, $5, TRUE, NOW())
+      (user_id, provider, provider_user_id, access_token_enc, refresh_token_enc, expires_at, connected,
+       granted_scope, pending_coach_share, coach_share_consented_at, updated_at)
+     VALUES ($1, 'strava', $2, $3, $4, $5, TRUE, $6, FALSE, $7, NOW())
      ON CONFLICT (user_id, provider) DO UPDATE SET
        provider_user_id = EXCLUDED.provider_user_id,
        access_token_enc = EXCLUDED.access_token_enc,
        refresh_token_enc = EXCLUDED.refresh_token_enc,
        expires_at = EXCLUDED.expires_at,
        connected = TRUE,
+       granted_scope = COALESCE(EXCLUDED.granted_scope, oauth_connections.granted_scope),
+       pending_coach_share = FALSE,
+       coach_share_consented_at = COALESCE(EXCLUDED.coach_share_consented_at, oauth_connections.coach_share_consented_at),
        last_sync_error = NULL,
        updated_at = NOW()`,
-    [userId, String(providerUserId), encrypt(accessToken), encrypt(refreshToken), expiresAt]
+    [
+      userId,
+      String(providerUserId),
+      encrypt(accessToken),
+      encrypt(refreshToken),
+      expiresAt,
+      grantedScope || null,
+      shareAt,
+    ]
   );
 }
 
@@ -137,13 +157,99 @@ export async function fetchStravaAthlete(accessToken) {
   return data;
 }
 
-export async function completeStravaOAuth(userId, tokenData) {
+export async function completeStravaOAuth(userId, tokenData, { grantedScope } = {}) {
+  const existing = await getConnection(userId);
   await saveTokens(userId, {
     accessToken: tokenData.access_token,
     refreshToken: tokenData.refresh_token,
     expiresAt: new Date(tokenData.expires_at * 1000),
     providerUserId: tokenData.athlete?.id,
+    grantedScope: grantedScope || tokenData.scope || existing?.grantedScope,
+    coachShare: Boolean(existing?.pendingCoachShare),
   });
+}
+
+export async function setPendingCoachShare(userId, enabled) {
+  await query(
+    `INSERT INTO oauth_connections (user_id, provider, pending_coach_share, updated_at)
+     VALUES ($1, 'strava', $2, NOW())
+     ON CONFLICT (user_id, provider) DO UPDATE SET
+       pending_coach_share = EXCLUDED.pending_coach_share,
+       updated_at = NOW()`,
+    [userId, Boolean(enabled)]
+  );
+}
+
+export async function setCoachShareConsent(userId, enabled) {
+  await query(
+    `INSERT INTO oauth_connections (user_id, provider, coach_share_consented_at, pending_coach_share, updated_at)
+     VALUES ($1, 'strava', $3, FALSE, NOW())
+     ON CONFLICT (user_id, provider) DO UPDATE SET
+       coach_share_consented_at = $3,
+       pending_coach_share = FALSE,
+       updated_at = NOW()`,
+    [userId, Boolean(enabled), enabled ? new Date() : null]
+  );
+}
+
+async function revokeStravaToken(conn) {
+  const clientId = String(process.env.STRAVA_CLIENT_ID || '').trim();
+  const clientSecret = String(process.env.STRAVA_CLIENT_SECRET || '').trim();
+  if (!clientId || !clientSecret) return;
+  let token = null;
+  try {
+    token = decrypt(conn.refreshTokenEnc || conn.accessTokenEnc);
+  } catch {
+    token = null;
+  }
+  if (!token) return;
+  const basic = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
+  await axios.post(
+    'https://www.strava.com/oauth/revoke',
+    new URLSearchParams({
+      token,
+      token_type_hint: conn.refreshTokenEnc ? 'refresh_token' : 'access_token',
+    }),
+    {
+      headers: {
+        Authorization: `Basic ${basic}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      timeout: 15000,
+      validateStatus: (status) => status < 500,
+    }
+  );
+}
+
+export async function deleteStravaActivities(userId) {
+  await query(`DELETE FROM activities WHERE athlete_id = $1 AND source = 'strava'`, [userId]);
+}
+
+export async function disconnectStrava(userId, { revoke = true } = {}) {
+  const conn = await getConnection(userId);
+  if (revoke && conn && (conn.accessTokenEnc || conn.refreshTokenEnc)) {
+    try {
+      await revokeStravaToken(conn);
+    } catch (err) {
+      console.error('[strava] revoke failed', err.response?.data || err.message);
+    }
+  }
+  await deleteStravaActivities(userId);
+  await query(
+    `UPDATE oauth_connections
+     SET connected = FALSE,
+         access_token_enc = NULL,
+         refresh_token_enc = NULL,
+         expires_at = NULL,
+         granted_scope = NULL,
+         pending_coach_share = FALSE,
+         coach_share_consented_at = NULL,
+         last_sync_error = NULL,
+         last_sync_status = 'disconnected',
+         updated_at = NOW()
+     WHERE user_id = $1 AND provider = 'strava'`,
+    [userId]
+  );
 }
 
 async function userIdForStravaAthlete(stravaAthleteId) {
@@ -191,9 +297,8 @@ export async function upsertStravaActivityById(userId, activityId, { streams = f
 
 export function needsStravaEnrichment(activity) {
   if (activity?.source !== 'strava' || !activity.sourceActivityId) return false;
-  const raw = activity.raw || {};
-  const hasDetail = Array.isArray(raw.splits_metric) || Array.isArray(raw.laps);
-  const hasTrackRecord = activity.gpsPoints != null;
+  const hasDetail = Array.isArray(activity.splits) && activity.splits.length > 0;
+  const hasTrackRecord = activity.gpsPoints != null || Boolean(activity.polyline);
   return !hasDetail || !hasTrackRecord;
 }
 
@@ -218,12 +323,17 @@ export async function handleStravaWebhookEvent(event) {
   if (!objectType || !ownerId) return;
 
   if (objectType === 'athlete' && (event?.updates?.authorized === 'false' || event?.updates?.authorized === false)) {
-    await query(
-      `UPDATE oauth_connections
-       SET connected = FALSE, last_sync_error = 'Strava access revoked', updated_at = NOW()
-       WHERE provider = 'strava' AND provider_user_id = $1`,
-      [String(ownerId)]
-    );
+    const userId = await userIdForStravaAthlete(ownerId);
+    if (userId) {
+      await disconnectStrava(userId, { revoke: false });
+    } else {
+      await query(
+        `UPDATE oauth_connections
+         SET connected = FALSE, last_sync_error = 'Strava access revoked', updated_at = NOW()
+         WHERE provider = 'strava' AND provider_user_id = $1`,
+        [String(ownerId)]
+      );
+    }
     return;
   }
 
@@ -405,7 +515,11 @@ function mapStravaActivity(act) {
     splits,
     weather: act.average_temp != null ? { temp: act.average_temp } : null,
     trainingLoad: act.suffer_score,
-    raw: act,
+    raw: {
+      id: act.id,
+      private: act.private,
+      visibility: act.visibility,
+    },
   };
 }
 

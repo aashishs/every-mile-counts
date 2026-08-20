@@ -1,7 +1,8 @@
-import { camelMany, many } from '../config/db.js';
+import { camel, camelMany, many, one } from '../config/db.js';
 import { formatDistance, formatDuration, paceFromSpeed, formatEffort, effortKind, startOfMonth, startOfWeek, startOfYear } from '../utils/format.js';
 import { athleteHrContext } from '../utils/maf.js';
 import { parseStoredSyncTypes } from '../utils/activityTypes.js';
+import { STRAVA_COACH_SHARE_SQL, getCoachShareState } from '../utils/stravaShare.js';
 
 function num(v) {
   return v == null ? 0 : Number(v);
@@ -781,6 +782,132 @@ export async function periodAnalysis(athleteId, period = '90', { type, syncTypes
     weeklyBreakdown: monthlyBreakdown,
     personalRecords: detectPersonalRecords(allTime, filterType),
     paceTrends: monthlyBreakdown,
+  };
+}
+
+const GLANCE_COLS = `a.id, a.name, a.type, a.sport_type, a.start_date, a.distance, a.moving_time, a.elapsed_time,
+  a.avg_speed, a.avg_heartrate, a.elevation_gain, a.source, a.source_activity_id`;
+
+function packVolume(list) {
+  const distance = list.reduce((a, b) => a + num(b.distance), 0);
+  const time = list.reduce((a, b) => a + num(b.movingTime || b.elapsedTime), 0);
+  return {
+    count: list.length,
+    distance,
+    time,
+    formatted: {
+      distance: formatDistance(distance),
+      time: formatDuration(time),
+    },
+  };
+}
+
+export async function coachAthleteGlance(athleteId, coachId) {
+  const share = await getCoachShareState(athleteId);
+  const now = new Date();
+  const weekStart = startOfWeek(now);
+  const days7 = new Date(now);
+  days7.setHours(0, 0, 0, 0);
+  days7.setDate(days7.getDate() - 7);
+  const days30 = new Date(now);
+  days30.setHours(0, 0, 0, 0);
+  days30.setDate(days30.getDate() - 30);
+  const days60 = new Date(now);
+  days60.setHours(0, 0, 0, 0);
+  days60.setDate(days60.getDate() - 60);
+
+  const recent = camelMany(
+    await many(
+      `SELECT ${GLANCE_COLS}
+       FROM activities a
+       WHERE a.athlete_id = $1 AND a.start_date >= $2
+         AND ${STRAVA_COACH_SHARE_SQL}
+       ORDER BY a.start_date DESC`,
+      [athleteId, days60]
+    )
+  );
+
+  const inSince = (from, until) =>
+    recent.filter((a) => {
+      if (!a.startDate) return false;
+      const d = new Date(a.startDate);
+      if (d < from) return false;
+      return until ? d < until : true;
+    });
+
+  const thisWeek = packVolume(inSince(weekStart));
+  const last7 = packVolume(inSince(days7));
+  const last30 = packVolume(inSince(days30));
+  const prev30 = packVolume(inSince(days60, days30));
+  const deltaPct = (cur, prev) => (prev ? Math.round(((cur - prev) / prev) * 100) : cur ? 100 : 0);
+
+  const byTypeMap = {};
+  for (const act of inSince(days30)) {
+    const family = sportFamily(act);
+    if (!byTypeMap[family]) byTypeMap[family] = { type: family, count: 0, distance: 0, time: 0 };
+    byTypeMap[family].count += 1;
+    byTypeMap[family].distance += num(act.distance);
+    byTypeMap[family].time += num(act.movingTime || act.elapsedTime);
+  }
+  const byType = Object.values(byTypeMap)
+    .map((row) => ({
+      ...row,
+      formatted: { distance: formatDistance(row.distance), time: formatDuration(row.time) },
+    }))
+    .sort((a, b) => b.count - a.count);
+
+  const daysWithActivity = new Set(
+    inSince(days30).map((a) => new Date(a.startDate).toISOString().slice(0, 10))
+  ).size;
+
+  const lastActivity = camel(
+    await one(
+      `SELECT ${GLANCE_COLS},
+              EXISTS (
+                SELECT 1 FROM activity_reviews r
+                WHERE r.activity_id = a.id AND r.coach_id = $2 AND r.status = 'published'
+              ) AS reviewed_by_me
+       FROM activities a
+       WHERE a.athlete_id = $1
+         AND ${STRAVA_COACH_SHARE_SQL}
+       ORDER BY a.start_date DESC NULLS LAST
+       LIMIT 1`,
+      [athleteId, coachId]
+    )
+  );
+
+  const needsReview = camelMany(
+    await many(
+      `SELECT ${GLANCE_COLS}
+       FROM activities a
+       WHERE a.athlete_id = $1
+         AND ${STRAVA_COACH_SHARE_SQL}
+         AND NOT EXISTS (
+           SELECT 1 FROM activity_reviews r
+           WHERE r.activity_id = a.id AND r.coach_id = $2 AND r.status = 'published'
+         )
+       ORDER BY a.start_date DESC NULLS LAST
+       LIMIT 5`,
+      [athleteId, coachId]
+    )
+  );
+
+  return {
+    thisWeek,
+    last7,
+    last30,
+    prev30,
+    comparison: {
+      distancePct: deltaPct(last30.distance, prev30.distance),
+      countPct: deltaPct(last30.count, prev30.count),
+      hasPrior: prev30.count > 0,
+    },
+    consistency: Math.round((daysWithActivity / 30) * 100),
+    byType,
+    lastActivity,
+    needsReview,
+    stravaConnected: share.connected,
+    stravaSharedWithCoach: share.consented,
   };
 }
 

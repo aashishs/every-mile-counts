@@ -15,6 +15,19 @@
   input, select, textarea {
     @apply bg-ink border border-line rounded-xl px-3 py-2.5 text-slate-100 w-full focus:outline-none focus:border-brand;
   }
+  input[type='checkbox'],
+  input[type='radio'] {
+    width: 1.05rem;
+    height: 1.05rem;
+    margin: 0;
+    padding: 0;
+    border: none;
+    border-radius: 0.25rem;
+    background: transparent;
+    box-shadow: none;
+    flex-shrink: 0;
+    accent-color: #14b8a6;
+  }
   label {
     @apply block text-sm font-medium mb-1.5;
   }
@@ -233,4 +246,16 @@
 
 .activity-map .leaflet-control-attribution a {
   color: #5eead4;
+}
+
+.strava-view-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  color: #FC5200 !important;
+  font-weight: 700;
+  font-size: 1rem;
+  line-height: 1.2;
+  text-decoration: underline;
+  -webkit-tap-highlight-color: rgba(252, 82, 0, 0.28);
 }
