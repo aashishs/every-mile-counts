@@ -112,7 +112,8 @@ export default function StravaCard({ user, autoConnect = false }) {
           </p>
           <p className="text-xs text-muted mt-1 mb-0">
             Choose which sports to sync and view in{' '}
-            <Link to="/profile" className="text-brand font-semibold no-underline">Profile</Link>.
+            <Link to="/profile?tab=sports" className="text-brand font-semibold no-underline">Profile → Sports</Link>
+            .
           </p>
           {syncError && connected && (
             <p className="text-xs text-orange-300 mt-1">{syncError}</p>

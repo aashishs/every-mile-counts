@@ -12,6 +12,7 @@ import ConfirmDialog from '../components/ConfirmDialog';
 
 const TAB_DEFS = [
   { id: 'profile', label: 'Profile', athleteOnly: false },
+  { id: 'sports', label: 'Sports', athleteOnly: true },
   { id: 'password', label: 'Password', athleteOnly: false },
   { id: 'strava', label: 'Strava', athleteOnly: true },
   { id: 'club', label: 'Club', athleteOnly: true },
@@ -254,7 +255,8 @@ export default function Profile() {
       ? 'Fill in your details to continue'
       : appAdmin ? 'Edit your details' : 'Edit your details and notification preferences',
     password: 'Change the password you use to sign in',
-    strava: 'Connect Strava to sync activities. Choose sports on the Profile tab.',
+    sports: 'Choose which sports to sync from Strava and show in your log',
+    strava: 'Connect Strava to sync activities',
     club: 'Join or manage your club',
     coaches: `Assign up to ${maxCoaches} coaches`,
   };
@@ -303,7 +305,14 @@ export default function Profile() {
         </div>
       )}
 
-      {tab === 'strava' && athlete && <StravaCard user={user} />}
+      {tab === 'sports' && athlete && <ActivityTypesSettings user={user} />}
+
+      {tab === 'strava' && athlete && (
+        <>
+          <ActivityTypesSettings user={user} />
+          <StravaCard user={user} />
+        </>
+      )}
 
       {tab === 'profile' && (
       <form className="card grid md:grid-cols-2 gap-3 mb-6" onSubmit={save}>
@@ -385,7 +394,6 @@ export default function Profile() {
       </form>
       )}
 
-      {tab === 'profile' && athlete && !completing && <ActivityTypesSettings user={user} />}
 
       {tab === 'password' && (
       <form className="card space-y-3 mb-6 max-w-lg" onSubmit={changePw}>
