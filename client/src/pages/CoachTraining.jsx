@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import Layout from '../components/Layout';
 import { formatDate, formatDuration, getActivityIcon } from '../utils/format';
@@ -18,10 +18,12 @@ const FILTERS = [
 
 export default function CoachTraining() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [filter, setFilter] = useState('active');
   const [query, setQuery] = useState('');
+  const assignedCount = location.state?.assigned;
 
   useEffect(() => {
     api.get('/training/coach-dashboard').then((res) => setData(res.data)).catch((err) => {
@@ -58,6 +60,12 @@ export default function CoachTraining() {
           <Link to="/coaches/programs/new" className="btn-primary no-underline text-center">New program</Link>
         </div>
       </div>
+
+      {assignedCount ? (
+        <div className="card mb-4 text-sm">
+          Scheduled {assignedCount} session{assignedCount === 1 ? '' : 's'}. Athletes will see it on Training.
+        </div>
+      ) : null}
 
       <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mb-6">
         <CountCard label="Active" value={counts.active || 0} onClick={() => setFilter('active')} active={filter === 'active'} />

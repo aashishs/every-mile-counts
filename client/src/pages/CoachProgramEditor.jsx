@@ -10,6 +10,7 @@ import {
   metersToKmInput,
   PROGRAM_STATUS_LABEL,
   statusClass,
+  ymdToday,
 } from '../utils/training';
 
 export default function CoachProgramEditor() {
@@ -33,7 +34,9 @@ export default function CoachProgramEditor() {
   const [weekForm, setWeekForm] = useState({ phaseId: '', startDate: '' });
   const [workoutForm, setWorkoutForm] = useState(emptyWorkout);
   const [weekId, setWeekId] = useState('');
+  const [addingSession, setAddingSession] = useState(false);
   const [editingWorkout, setEditingWorkout] = useState(null);
+  const [saving, setSaving] = useState(false);
   const [athleteId, setAthleteId] = useState('');
   const [groupId, setGroupId] = useState('');
   const [groups, setGroups] = useState([]);
@@ -98,12 +101,33 @@ export default function CoachProgramEditor() {
 
   const run = async (fn) => {
     setError('');
+    setSaving(true);
     try {
       await fn();
       if (program?.id) await loadProgram(program.id);
     } catch (err) {
       setError(err.response?.data?.message || 'Request failed');
+    } finally {
+      setSaving(false);
     }
+  };
+
+  const openNewSession = () => {
+    setEditingWorkout(null);
+    setWeekId('');
+    setAddingSession(true);
+    setWorkoutForm({
+      ...emptyWorkout,
+      sport: program.sport,
+      scheduledDate: String(program.startDate || '').slice(0, 10) || ymdToday(),
+    });
+  };
+
+  const closeWorkoutForm = () => {
+    setWeekId('');
+    setAddingSession(false);
+    setEditingWorkout(null);
+    setWorkoutForm(emptyWorkout);
   };
 
   if (isNew) {
@@ -218,8 +242,34 @@ export default function CoachProgramEditor() {
         </div>
       </div>
 
-      <div className="card mb-6 flex flex-col sm:flex-row gap-2">
-        <input placeholder="Phase name (Base, Build, Peak)" value={phaseName} onChange={(e) => setPhaseName(e.target.value)} />
+      <div className="card mb-6">
+        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-3">
+          <div>
+            <h3 className="section-title mb-1">Sessions</h3>
+            <p className="text-sm text-muted mb-0">Add a workout by date. Phases and weeks are optional structure.</p>
+          </div>
+          {!addingSession ? (
+            <button className="btn-primary" type="button" onClick={openNewSession}>Add session</button>
+          ) : null}
+        </div>
+        {addingSession ? (
+          <WorkoutForm
+            key="program-session"
+            form={workoutForm}
+            setForm={setWorkoutForm}
+            busy={saving}
+            submitLabel="Save session"
+            onCancel={closeWorkoutForm}
+            onSave={() => run(async () => {
+              await api.post(`/training/programs/${program.id}/workouts`, payloadFromForm(workoutForm));
+              closeWorkoutForm();
+            })}
+          />
+        ) : null}
+      </div>
+
+      <div className="flex flex-col sm:flex-row gap-2 mb-6">
+        <input placeholder="Optional phase name (Base, Build, Peak)" value={phaseName} onChange={(e) => setPhaseName(e.target.value)} />
         <button className="btn-outline" type="button" onClick={() => run(async () => {
           await api.post(`/training/programs/${program.id}/phases`, { name: phaseName || 'Phase' });
           setPhaseName('');
@@ -257,6 +307,7 @@ export default function CoachProgramEditor() {
                   <div className="flex items-center gap-2">
                     <span className={`badge ${statusClass(w.completionStatus)}`}>{COMPLETION_LABEL[w.completionStatus]}</span>
                     <button className="btn-outline btn-sm" type="button" onClick={() => {
+                      setAddingSession(false);
                       setEditingWorkout(w);
                       setWeekId(week.id);
                       setWorkoutForm(workoutFormFromRecord(w, { distance: metersToKmInput(w.distance) }));
@@ -267,22 +318,24 @@ export default function CoachProgramEditor() {
                 </div>
               ))}
               <button className="btn-outline btn-sm mt-3" type="button" onClick={() => {
+                setAddingSession(false);
                 setEditingWorkout(null);
                 setWeekId(week.id);
                 setWorkoutForm({ ...emptyWorkout, sport: program.sport, scheduledDate: String(week.startDate || program.startDate || '').slice(0, 10) });
-              }}>Add workout</button>
+              }}>Add to this week</button>
               {weekId === week.id && (
                 <WorkoutForm
+                  key={`${editingWorkout?.id || 'new'}-${week.id}`}
                   form={workoutForm}
                   setForm={setWorkoutForm}
-                  onCancel={() => { setWeekId(''); setEditingWorkout(null); }}
+                  busy={saving}
+                  submitLabel={editingWorkout ? 'Save changes' : 'Save session'}
+                  onCancel={closeWorkoutForm}
                   onSave={() => run(async () => {
                     const payload = payloadFromForm(workoutForm);
                     if (editingWorkout) await api.patch(`/training/workouts/${editingWorkout.id}`, payload);
                     else await api.post(`/training/weeks/${week.id}/workouts`, payload);
-                    setWeekId('');
-                    setEditingWorkout(null);
-                    setWorkoutForm(emptyWorkout);
+                    closeWorkoutForm();
                   })}
                 />
               )}
