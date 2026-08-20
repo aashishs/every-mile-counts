@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../api/client';
 import Layout from '../components/Layout';
+import ClubField, { coachClubList, onlyClubId } from '../components/ClubField';
 import WorkoutForm, { emptyWorkout, payloadFromForm } from '../components/WorkoutForm';
 
 export default function CoachAssignActivity() {
@@ -15,7 +16,14 @@ export default function CoachAssignActivity() {
   const [form, setForm] = useState({ ...emptyWorkout, scheduledDate: new Date().toISOString().slice(0, 10) });
 
   useEffect(() => {
-    api.get('/clubs/mine').then((res) => setClubs((res.data.clubs || res.data || []).filter((c) => ['coach', 'club_admin'].includes(c.role)))).catch(() => setClubs([]));
+    api.get('/clubs/mine').then((res) => {
+      const list = coachClubList(res.data.clubs || res.data);
+      setClubs(list);
+      const lockedClub = onlyClubId(list);
+      if (lockedClub) {
+        setTarget((current) => current.clubId ? current : { ...current, clubId: lockedClub });
+      }
+    }).catch(() => setClubs([]));
     api.get('/coaches/my-athletes', { params: { limit: 100 } }).then((res) => setAthletes(res.data.athletes || [])).catch(() => setAthletes([]));
     api.get('/training/groups').then((res) => setGroups(res.data.groups || [])).catch(() => setGroups([]));
   }, []);
@@ -74,12 +82,12 @@ export default function CoachAssignActivity() {
       {error && <div className="card text-rose-200 mb-4">{error}</div>}
 
       <div className="card grid md:grid-cols-2 gap-3 mb-4">
-        <select value={target.clubId} onChange={(e) => setTarget({ clubId: e.target.value, athleteId: '', groupId: '' })} disabled={Boolean(selectedGroup)}>
-          <option value="">Club</option>
-          {clubs.map((c) => (
-            <option key={c.id || c.clubId} value={c.id || c.clubId}>{c.name || c.clubName}</option>
-          ))}
-        </select>
+        <ClubField
+          clubs={clubs}
+          value={target.clubId}
+          disabled={Boolean(selectedGroup) || clubs.length === 1}
+          onChange={(clubId) => setTarget({ clubId, athleteId: '', groupId: '' })}
+        />
         <select value={target.groupId} onChange={(e) => setTarget({ ...target, groupId: e.target.value, athleteId: '' })}>
           <option value="">One athlete (or pick a group)</option>
           {clubGroups.map((g) => (

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import Layout from '../components/Layout';
+import ClubField, { coachClubList, onlyClubId } from '../components/ClubField';
 import WorkoutForm, { emptyWorkout, payloadFromForm, workoutFormFromRecord } from '../components/WorkoutForm';
 import { ACTIVITY_TYPE_OPTIONS, formatDate, getActivityIcon } from '../utils/format';
 import {
@@ -56,7 +57,14 @@ export default function CoachProgramEditor() {
   };
 
   useEffect(() => {
-    api.get('/clubs/mine').then((res) => setClubs(res.data.clubs || res.data || [])).catch(() => setClubs([]));
+    api.get('/clubs/mine').then((res) => {
+      const list = coachClubList(res.data.clubs || res.data);
+      setClubs(list);
+      const lockedClub = onlyClubId(list);
+      if (lockedClub) {
+        setForm((current) => current.clubId ? current : { ...current, clubId: lockedClub });
+      }
+    }).catch(() => setClubs([]));
     api.get('/coaches/my-athletes', { params: { limit: 100 } }).then((res) => setAthletes(res.data.athletes || [])).catch(() => setAthletes([]));
     api.get('/training/groups').then((res) => setGroups(res.data.groups || [])).catch(() => setGroups([]));
   }, []);
@@ -106,12 +114,11 @@ export default function CoachProgramEditor() {
         {error && <div className="card text-rose-200 mb-4">{error}</div>}
         <form className="card grid md:grid-cols-2 gap-3" onSubmit={create}>
           <input required placeholder="Program name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
-          <select required value={form.clubId} onChange={(e) => setForm({ ...form, clubId: e.target.value })}>
-            <option value="">Club</option>
-            {(Array.isArray(clubs) ? clubs : []).filter((c) => ['coach', 'club_admin'].includes(c.role)).map((c) => (
-              <option key={c.id || c.clubId} value={c.id || c.clubId}>{c.name || c.clubName}</option>
-            ))}
-          </select>
+          <ClubField
+            clubs={clubs}
+            value={form.clubId}
+            onChange={(clubId) => setForm({ ...form, clubId })}
+          />
           <select value={form.sport} onChange={(e) => setForm({ ...form, sport: e.target.value })}>
             {ACTIVITY_TYPE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>

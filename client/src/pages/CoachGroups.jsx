@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import Layout from '../components/Layout';
+import SearchMultiSelect from '../components/SearchMultiSelect';
+import ClubField, { coachClubList, onlyClubId } from '../components/ClubField';
 
 export default function CoachGroups() {
   const navigate = useNavigate();
@@ -20,9 +22,14 @@ export default function CoachGroups() {
       api.get('/clubs/mine'),
       api.get('/coaches/my-athletes', { params: { limit: 100 } }),
     ]);
+    const coachClubs = coachClubList(clubsRes.data.clubs || clubsRes.data);
     setGroups(groupData.groups || []);
-    setClubs((clubsRes.data.clubs || clubsRes.data || []).filter((c) => ['coach', 'club_admin'].includes(c.role)));
+    setClubs(coachClubs);
     setAthletes(athletesRes.data.athletes || []);
+    const lockedClub = onlyClubId(coachClubs);
+    if (lockedClub) {
+      setForm((current) => current.clubId ? current : { ...current, clubId: lockedClub });
+    }
   };
 
   useEffect(() => {
@@ -33,11 +40,30 @@ export default function CoachGroups() {
     () => athletes.filter((a) => !form.clubId || a.clubId === form.clubId || !a.clubId),
     [athletes, form.clubId]
   );
+  const athleteOptions = useMemo(
+    () => clubAthletes.map((a) => ({
+      id: a.athleteId,
+      label: `${a.firstName || ''} ${a.lastName || ''}`.trim() || a.email,
+    })),
+    [clubAthletes]
+  );
 
   const resetForm = () => {
     setEditing(null);
-    setForm({ name: '', clubId: form.clubId || '', description: '', athleteIds: [] });
+    setForm({
+      name: '',
+      clubId: onlyClubId(clubs) || (clubs.length === 1 ? form.clubId : ''),
+      description: '',
+      athleteIds: [],
+    });
   };
+
+  const athletesForClub = (clubId) => athletes.filter((a) => !clubId || a.clubId === clubId || !a.clubId);
+
+  const athleteOptionsFor = (clubId) => athletesForClub(clubId).map((a) => ({
+    id: a.athleteId,
+    label: `${a.firstName || ''} ${a.lastName || ''}`.trim() || a.email,
+  }));
 
   const save = async (e) => {
     e.preventDefault();
@@ -66,13 +92,35 @@ export default function CoachGroups() {
       description: group.description || '',
       athleteIds: (group.athletes || []).map((a) => a.athleteId),
     });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const remove = async (id) => {
+  const saveMembers = async (group, athleteIds) => {
     setError('');
     try {
-      await api.delete(`/training/groups/${id}`);
-      if (editing === id) resetForm();
+      await api.patch(`/training/groups/${group.id}`, {
+        name: group.name,
+        description: group.description || '',
+        athleteIds,
+      });
+      await load();
+    } catch (err) {
+      setError(err.response?.data?.message || 'Could not update athletes');
+    }
+  };
+
+  const removeAthlete = (group, athleteId) => {
+    const next = (group.athletes || []).map((a) => a.athleteId).filter((id) => id !== athleteId);
+    return saveMembers(group, next);
+  };
+
+  const remove = async (group) => {
+    if (!window.confirm(`Delete ${group.name}? Athletes stay on your roster.`)) return;
+    setError('');
+    try {
+      await api.delete(`/training/groups/${group.id}`);
+      if (editing === group.id) resetForm();
+      setNotice('Group deleted');
       await load();
     } catch (err) {
       setError(err.response?.data?.message || 'Could not delete group');
@@ -95,15 +143,6 @@ export default function CoachGroups() {
     }
   };
 
-  const toggleAthlete = (id) => {
-    setForm((prev) => ({
-      ...prev,
-      athleteIds: prev.athleteIds.includes(id)
-        ? prev.athleteIds.filter((x) => x !== id)
-        : [...prev.athleteIds, id],
-    }));
-  };
-
   return (
     <Layout>
       <p className="text-xs text-muted mb-2">
@@ -122,26 +161,30 @@ export default function CoachGroups() {
       <form className="card grid md:grid-cols-2 gap-3 mb-8" onSubmit={save}>
         <h3 className="md:col-span-2 font-semibold">{editing ? 'Edit group' : 'New group'}</h3>
         <input required placeholder="Group name (Tempo squad, Marathon, …)" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
-        <select required value={form.clubId} onChange={(e) => setForm({ ...form, clubId: e.target.value, athleteIds: [] })} disabled={Boolean(editing)}>
-          <option value="">Club</option>
-          {clubs.map((c) => (
-            <option key={c.id || c.clubId} value={c.id || c.clubId}>{c.name || c.clubName}</option>
-          ))}
-        </select>
+        <ClubField
+          clubs={clubs}
+          value={form.clubId}
+          disabled={Boolean(editing)}
+          onChange={(clubId) => setForm({ ...form, clubId, athleteIds: [] })}
+        />
         <textarea className="md:col-span-2" placeholder="Optional note" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
         <div className="md:col-span-2">
-          <div className="text-xs text-muted mb-2">Athletes in this club</div>
+          <label>Athletes</label>
+          <SearchMultiSelect
+            options={athleteOptions}
+            value={form.athleteIds}
+            onChange={(athleteIds) => setForm({ ...form, athleteIds })}
+            placeholder="Search and select athletes"
+            searchPlaceholder="Search athletes"
+            emptyText="No athletes match that search"
+            disabled={!form.clubId || !clubAthletes.length}
+          />
           {!clubAthletes.length ? (
-            <p className="text-sm text-muted mb-0">No assigned athletes in this club yet.</p>
+            <p className="text-xs text-muted mt-2 mb-0">No assigned athletes in this club yet.</p>
           ) : (
-            <div className="grid sm:grid-cols-2 gap-2">
-              {clubAthletes.map((a) => (
-                <label key={a.athleteId} className="flex items-center gap-2 text-sm">
-                  <input type="checkbox" checked={form.athleteIds.includes(a.athleteId)} onChange={() => toggleAthlete(a.athleteId)} />
-                  {a.firstName} {a.lastName}
-                </label>
-              ))}
-            </div>
+            <p className="text-xs text-muted mt-2 mb-0">
+              {form.athleteIds.length} selected
+            </p>
           )}
         </div>
         <div className="md:col-span-2 flex gap-2">
@@ -158,23 +201,46 @@ export default function CoachGroups() {
           <div className="space-y-3">
             {groups.map((g) => (
               <article key={g.id} className="card">
-                <div className="flex justify-between gap-3">
+                <div className="flex flex-col gap-3">
+                  <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="font-semibold">{g.name}</div>
+                      <div className="text-xs text-muted mt-1">{g.clubName} · {g.athleteCount || g.athletes?.length || 0} athlete{(g.athleteCount || g.athletes?.length) === 1 ? '' : 's'}</div>
+                      {g.description ? <p className="text-sm text-muted mt-2 mb-0">{g.description}</p> : null}
+                    </div>
+                    <div className="flex flex-wrap gap-2 shrink-0">
+                      <button className="btn-outline btn-sm" type="button" onClick={() => editGroup(g)}>Edit</button>
+                      <button className="btn-outline btn-sm" type="button" onClick={() => navigate(`/coaches/activities/new?groupId=${g.id}`)}>Assign activity</button>
+                      <button className="btn-outline btn-sm" type="button" onClick={() => remove(g)}>Delete</button>
+                    </div>
+                  </div>
                   <div>
-                    <div className="font-semibold">{g.name}</div>
-                    <div className="text-xs text-muted mt-1">{g.clubName} · {g.athleteCount || g.athletes?.length || 0} athlete{(g.athleteCount || g.athletes?.length) === 1 ? '' : 's'}</div>
-                    {g.description ? <p className="text-sm text-muted mt-2 mb-0">{g.description}</p> : null}
+                    <label>Athletes</label>
+                    <SearchMultiSelect
+                      options={athleteOptionsFor(g.clubId)}
+                      value={(g.athletes || []).map((a) => a.athleteId)}
+                      onChange={(athleteIds) => saveMembers(g, athleteIds)}
+                      placeholder="Search to add or remove athletes"
+                      searchPlaceholder="Search athletes"
+                      emptyText="No athletes match that search"
+                    />
                     {!!g.athletes?.length && (
                       <div className="flex flex-wrap gap-1 mt-2">
                         {g.athletes.map((a) => (
-                          <span key={a.athleteId} className="badge">{a.firstName} {a.lastName}</span>
+                          <span key={a.athleteId} className="badge">
+                            {a.firstName} {a.lastName}
+                            <button
+                              type="button"
+                              className="ml-1"
+                              aria-label={`Remove ${a.firstName}`}
+                              onClick={() => removeAthlete(g, a.athleteId)}
+                            >
+                              ×
+                            </button>
+                          </span>
                         ))}
                       </div>
                     )}
-                  </div>
-                  <div className="flex flex-col gap-2">
-                    <button className="btn-outline btn-sm" type="button" onClick={() => editGroup(g)}>Edit</button>
-                    <button className="btn-outline btn-sm" type="button" onClick={() => navigate(`/coaches/activities/new?groupId=${g.id}`)}>Assign activity</button>
-                    <button className="btn-outline btn-sm" type="button" onClick={() => remove(g.id)}>Delete</button>
                   </div>
                 </div>
               </article>
