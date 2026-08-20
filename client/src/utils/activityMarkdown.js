@@ -1,10 +1,11 @@
 import {
   activityMetric,
+  effortKind,
   formatDate,
   formatDateTime,
   formatDistance,
   formatDuration,
-  formatPace,
+  formatEffort,
 } from './format';
 
 function hasValue(value) {
@@ -38,17 +39,25 @@ function formatSplitTime(seconds) {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
-function splitsTable(splits) {
+function splitsTable(splits, kind) {
   if (!Array.isArray(splits) || !splits.length) return '';
+  const effortHeader = kind === 'speed' ? 'Speed' : 'Pace';
   const rows = splits.slice(0, 50).map((split, i) => {
     const km = split.distance != null ? (Number(split.distance) / 1000).toFixed(2) : i + 1;
     const time = formatSplitTime(split.movingTime || split.moving_time);
-    const pace = split.pace != null ? formatSplitPace(split.pace) : '—';
+    const paceSec = Number(split.pace);
+    let effort = '—';
+    if (paceSec > 0) {
+      if (kind === 'speed') effort = `${(3600 / paceSec).toFixed(1)} km/h`;
+      else if (kind === 'swim') effort = `${formatSplitPace(paceSec / 10).replace(' /km', '')} /100m`;
+      else if (kind === 'row') effort = `${formatSplitPace(paceSec / 2).replace(' /km', '')} /500m`;
+      else effort = formatSplitPace(paceSec);
+    }
     const hr = split.hr != null ? Math.round(Number(split.hr)) : '—';
-    return `| ${km} | ${time} | ${pace} | ${hr} |`;
+    return `| ${km} | ${time} | ${effort} | ${hr} |`;
   });
   const extra = splits.length > 50 ? `\n\n_${splits.length - 50} more splits omitted._` : '';
-  return ['| km | Time | Pace | HR |', '| --- | --- | --- | --- |', ...rows].join('\n') + extra;
+  return [`| km | Time | ${effortHeader} | HR |`, '| --- | --- | --- | --- |', ...rows].join('\n') + extra;
 }
 
 function insightLines(insights) {
@@ -72,12 +81,14 @@ function insightLines(insights) {
 
 export function buildActivityMarkdown(activity, insights) {
   const metric = activityMetric(activity.type, activity.sportType, activity.distance);
+  const kind = effortKind(activity.type, activity.sportType);
   const distance = metric === 'swim'
     ? `${Math.round(Number(activity.distance) || 0)} m`
     : metric === 'distance'
       ? formatDistance(activity.distance)
       : null;
   const weatherTemp = activity.weather?.temp ?? activity.weather?.temperature;
+  const effortLabel = kind === 'speed' ? 'Speed' : kind === 'duration' ? null : 'Pace';
 
   const numbers = table([
     row('Distance', distance),
@@ -85,18 +96,18 @@ export function buildActivityMarkdown(activity, insights) {
     row('Elapsed time', activity.elapsedTime && activity.elapsedTime !== activity.movingTime
       ? formatDuration(activity.elapsedTime)
       : null),
-    row('Pace', metric !== 'duration' ? formatPace(activity.avgSpeed) : null),
+    row(effortLabel, effortLabel ? formatEffort(activity) : null),
     row('Elevation', activity.elevationGain != null ? `${Math.round(Number(activity.elevationGain))} m` : null),
     row('Avg HR', activity.avgHeartrate != null ? `${Math.round(Number(activity.avgHeartrate))} bpm` : null),
     row('Max HR', activity.maxHeartrate != null ? `${Math.round(Number(activity.maxHeartrate))} bpm` : null),
-    row('Avg cadence', activity.avgCadence != null ? `${Math.round(Number(activity.avgCadence))} spm` : null),
+    row('Avg cadence', activity.avgCadence != null ? `${Math.round(Number(activity.avgCadence))} ${kind === 'speed' ? 'rpm' : 'spm'}` : null),
     row('Avg power', activity.avgPower != null ? `${Math.round(Number(activity.avgPower))} W` : null),
     row('Calories', activity.calories != null ? `${Math.round(Number(activity.calories))} kcal` : null),
     row('Temperature', weatherTemp != null ? `${weatherTemp} °C` : null),
   ]);
 
   const sessionRead = insightLines(insights);
-  const splits = splitsTable(activity.splits);
+  const splits = splitsTable(activity.splits, kind);
   return [
     '# Coach review request',
     '',

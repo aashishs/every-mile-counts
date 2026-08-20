@@ -8,7 +8,7 @@ import {
   formatDateShort,
   formatDistance,
   formatDuration,
-  formatPace,
+  formatEffort,
   getActivityIcon,
 } from '../utils/format';
 
@@ -263,7 +263,7 @@ export default function CoachAthleteActivities() {
                 <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted mt-3">
                   <span>{formatDistance(act.distance)}</span>
                   <span>{formatDuration(act.movingTime || act.elapsedTime)}</span>
-                  <span>{formatPace(act.avgSpeed)}</span>
+                  <span>{formatEffort(act) || '—'}</span>
                   <span>{act.avgHeartrate ? `${Math.round(act.avgHeartrate)} bpm` : 'No HR'}</span>
                 </div>
               </button>
@@ -282,7 +282,7 @@ export default function CoachAthleteActivities() {
                   </th>
                   <th className="p-3 text-muted font-semibold">Distance</th>
                   <th className="p-3 text-muted font-semibold">Time</th>
-                  <th className="p-3 text-muted font-semibold">Pace</th>
+                  <th className="p-3 text-muted font-semibold">Pace / Speed</th>
                   <th className="p-3 text-muted font-semibold">Avg HR</th>
                   <th className="p-3 text-muted font-semibold">Review</th>
                 </tr>
@@ -303,7 +303,7 @@ export default function CoachAthleteActivities() {
                     </td>
                     <td className="p-3 whitespace-nowrap">{formatDistance(act.distance)}</td>
                     <td className="p-3 whitespace-nowrap">{formatDuration(act.movingTime || act.elapsedTime)}</td>
-                    <td className="p-3 whitespace-nowrap">{formatPace(act.avgSpeed)}</td>
+                    <td className="p-3 whitespace-nowrap">{formatEffort(act) || '—'}</td>
                     <td className="p-3 whitespace-nowrap">
                       {act.avgHeartrate ? `${Math.round(act.avgHeartrate)} bpm` : '—'}
                     </td>

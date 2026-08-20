@@ -13,7 +13,8 @@ const SLOTS = {
   Ride: [
     { key: '50k', short: '50 km', emoji: '🚴' },
     { key: '100k', short: '100 km', emoji: '🔥' },
-    { key: '150k', short: '150 km+', emoji: '👑' },
+    { key: '150k', short: '150 km', emoji: '🏅' },
+    { key: '200k', short: '200 km', emoji: '👑' },
     { key: 'longest', short: 'Longest', emoji: '🗺️' },
   ],
   Swim: [
@@ -26,7 +27,7 @@ const SLOTS = {
   ],
 };
 
-const FEATURE_KEYS = ['fm', 'hm', '10k', '5k', 'ultra', '150k', '100k', '50k', 'plus', '1000m', 'longest', 'longestDistance', 'longestSession'];
+const FEATURE_KEYS = ['fm', 'hm', '10k', '5k', 'ultra', '200k', '150k', '100k', '50k', 'plus', '1000m', 'longest', 'longestDistance', 'longestSession'];
 
 function headline(record) {
   if (!record) return '';

@@ -1,10 +1,77 @@
 import { camelMany, many } from '../config/db.js';
-import { formatDistance, formatDuration, paceFromSpeed, startOfMonth, startOfWeek, startOfYear } from '../utils/format.js';
+import { formatDistance, formatDuration, paceFromSpeed, formatEffort, effortKind, startOfMonth, startOfWeek, startOfYear } from '../utils/format.js';
 import { athleteHrContext } from '../utils/maf.js';
 import { parseStoredSyncTypes } from '../utils/activityTypes.js';
 
 function num(v) {
   return v == null ? 0 : Number(v);
+}
+
+function ymdInAppTz(date = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: process.env.APP_TZ || 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date(date));
+  const pick = (type) => parts.find((p) => p.type === type)?.value;
+  return `${pick('year')}-${pick('month')}-${pick('day')}`;
+}
+
+function sessionScore(activity) {
+  const load = num(activity.trainingLoad ?? activity.training_load);
+  if (load > 0) return Math.max(1, Math.min(100, Math.round(load)));
+  const minutes = num(activity.movingTime ?? activity.moving_time) / 60;
+  const hr = num(activity.avgHeartrate ?? activity.avg_heartrate);
+  let score = Math.min(70, minutes * 1.15);
+  if (hr >= 155) score += 22;
+  else if (hr >= 135) score += 14;
+  else if (hr > 0) score += 7;
+  if (!(minutes > 0) && !(hr > 0)) return null;
+  return Math.max(1, Math.min(100, Math.round(score)));
+}
+
+function scoreLabel(score) {
+  if (score == null) return null;
+  if (score >= 80) return 'Hard session';
+  if (score >= 50) return 'Solid session';
+  return 'Easy session';
+}
+
+function isRealSession(activity) {
+  return num(activity.distance) >= 100 || num(activity.movingTime ?? activity.moving_time) >= 60;
+}
+
+function ymdFromStamp(value) {
+  if (!value) return null;
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}/.test(value)) return value.slice(0, 10);
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+  return ymdInAppTz(d);
+}
+
+function activityYmd(activity) {
+  return ymdFromStamp(activity.startDateLocal) || ymdFromStamp(activity.startDate);
+}
+
+function todaySummary(activities) {
+  const date = ymdInAppTz();
+  const todays = (activities || []).filter((act) => isRealSession(act) && activityYmd(act) === date);
+  if (!todays.length) {
+    return { date, trained: false, count: 0, score: null, label: null, name: null, activityId: null };
+  }
+  const ranked = [...todays].sort((a, b) => (sessionScore(b) || 0) - (sessionScore(a) || 0));
+  const best = ranked[0];
+  const score = sessionScore(best);
+  return {
+    date,
+    trained: true,
+    count: todays.length,
+    score,
+    label: scoreLabel(score),
+    name: best.name || best.type || 'Session',
+    activityId: best.id || null,
+  };
 }
 
 function stddev(values) {
@@ -59,6 +126,8 @@ export function analyzeActivity(activity, athlete = {}) {
   const cadence = num(activity.avgCadence ?? activity.avg_cadence);
   const avgSpeed = num(activity.avgSpeed ?? activity.avg_speed);
   const splits = activity.splits || [];
+  const kind = effortKind(activity.type, activity.sportType);
+  const effortWord = kind === 'speed' ? 'speed' : 'pace';
 
   const pace = paceFromSpeed(avgSpeed);
   const splitPaces = Array.isArray(splits)
@@ -81,7 +150,7 @@ export function analyzeActivity(activity, athlete = {}) {
     (moving && avgHr ? (moving / 60) * (avgHr / 100) : moving / 60);
 
   const cadenceEfficiency =
-    cadence && avgSpeed
+    kind === 'pace' && cadence && avgSpeed
       ? cadence >= 170 && cadence <= 190
         ? 'efficient'
         : cadence < 170
@@ -98,10 +167,10 @@ export function analyzeActivity(activity, athlete = {}) {
 
   const elevationImpact =
     elevPerKm > 40
-      ? 'Significant climbing likely slowed pace; compare effort, not just speed.'
+      ? `Significant climbing likely slowed ${effortWord}; compare effort, not just ${effortWord}.`
       : elevPerKm > 20
-        ? 'Moderate hills. Expect some pace variation on climbs and descents.'
-        : 'Mostly flat. Pace is a reliable performance signal.';
+        ? 'Moderate hills. Expect some variation on climbs and descents.'
+        : `Mostly flat. ${effortWord === 'speed' ? 'Speed' : 'Pace'} is a reliable performance signal.`;
 
   return {
     pace,
@@ -212,10 +281,11 @@ export async function athleteDashboard(athleteId, athlete = {}, { type, syncType
     await many(
       `SELECT * FROM events
        WHERE owner_type = 'athlete' AND owner_id = $1 AND status = 'upcoming'
-       ORDER BY event_date ASC LIMIT 5`,
+       ORDER BY event_date ASC LIMIT 20`,
       [athleteId]
     )
-  );
+  ).filter((event) => eventMatchesDashboardType(event, filterType))
+    .slice(0, 5);
 
   const goals = camelMany(
     await many(
@@ -289,11 +359,23 @@ export async function athleteDashboard(athleteId, athlete = {}, { type, syncType
     coaches,
     pendingReviews,
     upcomingEvents,
+    today: todaySummary(allTime),
     goals: goals.map((g) => ({
       ...g,
       completionPct: g.targetValue ? Math.min(100, Math.round((num(g.currentValue) / num(g.targetValue)) * 100)) : 0,
     })),
   };
+}
+
+function eventMatchesDashboardType(event, filterType) {
+  if (!filterType) return true;
+  const cat = String(event.category || '').toLowerCase();
+  const t = String(filterType).toLowerCase();
+  if (t === 'run') return cat === 'run' || cat === 'triathlon';
+  if (t === 'ride') return cat === 'bike' || cat === 'triathlon';
+  if (t === 'swim') return cat === 'swim' || cat === 'triathlon';
+  if (t === 'walk' || t === 'hike') return cat === 'walk';
+  return false;
 }
 
 export function sportFamily(activity) {
@@ -321,7 +403,8 @@ const TYPE_BUCKETS = {
   Ride: [
     { key: '50k', label: '50 km', min: 50000, max: 100000 },
     { key: '100k', label: '100 km', min: 100000, max: 150000 },
-    { key: '150k', label: '150 km+', min: 150000, max: Infinity },
+    { key: '150k', label: '150 km', min: 150000, max: 200000 },
+    { key: '200k', label: '200 km', min: 200000, max: Infinity },
   ],
   Swim: [
     { key: '100m', label: '100 m', min: 100, max: 200 },
@@ -333,11 +416,12 @@ const TYPE_BUCKETS = {
 };
 
 function recordPayload(act) {
+  const seconds = num(act.movingTime || act.elapsedTime);
   return {
     activityId: act.id,
     name: act.name,
-    time: formatDuration(act.movingTime),
-    movingTime: num(act.movingTime),
+    time: formatDuration(seconds),
+    movingTime: seconds,
     date: act.startDate,
     distance: formatDistance(act.distance),
     meters: num(act.distance),
@@ -389,8 +473,8 @@ export function buildActivityTypeHighlights(activities) {
         const value = metric === 'duration' ? num(a.movingTime || a.elapsedTime) : num(a.distance);
         return value >= bucket.min && value < bucket.max && num(a.movingTime || a.elapsedTime) > 0;
       });
-      const fastest = [...matches].sort((a, b) => num(a.movingTime) - num(b.movingTime))[0] || null;
-      const longestSession = [...matches].sort((a, b) => num(b.movingTime) - num(a.movingTime))[0] || null;
+      const fastest = [...matches].sort((a, b) => num(a.movingTime || a.elapsedTime) - num(b.movingTime || b.elapsedTime))[0] || null;
+      const longestSession = [...matches].sort((a, b) => num(b.movingTime || b.elapsedTime) - num(a.movingTime || a.elapsedTime))[0] || null;
       const highlight = metric === 'duration' ? longestSession : fastest;
       return {
         key: bucket.key,
@@ -442,9 +526,9 @@ export function detectPersonalRecords(activities, type) {
   if (buckets) {
     for (const bucket of buckets) {
       const candidates = list.filter(
-        (a) => num(a.distance) >= bucket.min && num(a.distance) < bucket.max && a.movingTime
+        (a) => num(a.distance) >= bucket.min && num(a.distance) < bucket.max && num(a.movingTime || a.elapsedTime) > 0
       );
-      const best = candidates.sort((a, b) => num(a.movingTime) - num(b.movingTime))[0];
+      const best = candidates.sort((a, b) => num(a.movingTime || a.elapsedTime) - num(b.movingTime || b.elapsedTime))[0];
       if (best) {
         records[bucket.key] = {
           ...recordPayload(best),
@@ -742,18 +826,18 @@ function snapshot(activity, athlete = {}) {
     avgSpeed: num(activity.avgSpeed) || null,
     calories: num(activity.calories) || null,
     paceSecPerKm: paceSec,
-    pace: insights.pace,
+    pace: formatEffort(activity) || insights.pace,
     trainingLoad: insights.trainingLoad,
     heartRateZone: insights.heartRateZone,
     paceConsistency: insights.paceConsistency,
     formatted: {
       distance: metric === 'swim' ? `${Math.round(num(activity.distance))} m` : formatDistance(activity.distance),
       time: formatDuration(activity.movingTime),
-      pace: insights.pace ? `${insights.pace} /km` : '—',
+      pace: formatEffort(activity) || (insights.pace ? `${insights.pace} /km` : '—'),
       elevation: `${Math.round(num(activity.elevationGain))} m`,
       hr: formatHr(activity.avgHeartrate),
       maxHr: formatHr(activity.maxHeartrate),
-      cadence: activity.avgCadence ? `${Math.round(activity.avgCadence)} spm` : '—',
+      cadence: activity.avgCadence ? `${Math.round(activity.avgCadence)} ${effortKind(activity.type, activity.sportType) === 'speed' ? 'rpm' : 'spm'}` : '—',
       load: insights.trainingLoad != null ? String(Math.round(insights.trainingLoad)) : '—',
     },
   };
@@ -802,14 +886,27 @@ export function compareActivities(activityA, activityB, athlete = {}) {
   }));
 
   let paceImproved = null;
-  if (older.paceSecPerKm && newer.paceSecPerKm) {
+  const kind = effortKind(olderAct.type, olderAct.sportType);
+  if (kind === 'speed' && older.avgSpeed && newer.avgSpeed) {
+    const speedDelta = (newer.avgSpeed - older.avgSpeed) * 3.6;
+    paceImproved = Math.abs(speedDelta) < 0.2 ? null : speedDelta > 0;
+    rows.push(compareRow('pace', 'Speed', older.formatted.pace, newer.formatted.pace, {
+      improved: paceImproved,
+      deltaLabel: Math.abs(speedDelta) < 0.2
+        ? 'similar'
+        : `${speedDelta > 0 ? '+' : ''}${speedDelta.toFixed(1)} km/h`,
+      better: 'higher',
+    }));
+  } else if (older.paceSecPerKm && newer.paceSecPerKm) {
     const paceDelta = newer.paceSecPerKm - older.paceSecPerKm;
-    paceImproved = Math.abs(paceDelta) < 2 ? null : paceDelta < 0;
+    const unit = kind === 'swim' ? '/100m' : kind === 'row' ? '/500m' : '/km';
+    const displayDelta = kind === 'swim' ? paceDelta / 10 : kind === 'row' ? paceDelta / 2 : paceDelta;
+    paceImproved = Math.abs(displayDelta) < 1 ? null : displayDelta < 0;
     rows.push(compareRow('pace', 'Pace', older.formatted.pace, newer.formatted.pace, {
       improved: paceImproved,
-      deltaLabel: Math.abs(paceDelta) < 2
+      deltaLabel: Math.abs(displayDelta) < 1
         ? 'similar'
-        : `${formatClockDelta(paceDelta)} /km ${paceDelta < 0 ? 'faster' : 'slower'}`,
+        : `${formatClockDelta(displayDelta)} ${unit} ${displayDelta < 0 ? 'faster' : 'slower'}`,
       better: 'lower',
     }));
   }

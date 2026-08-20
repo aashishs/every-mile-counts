@@ -57,6 +57,70 @@ export function formatPace(mps) {
   return `${min}:${String(sec).padStart(2, '0')} /km`;
 }
 
+const SPEED_SPORTS = [
+  'ride', 'cycle', 'bike', 'ebike', 'gravel', 'velomobile', 'handcycle',
+  'ski', 'snowboard', 'skate', 'sail', 'surf', 'kayak', 'canoe', 'paddle',
+  'kitesurf', 'windsurf', 'wheelchair',
+];
+
+export function effortKind(type, sportType) {
+  const t = `${type || ''} ${sportType || ''}`.toLowerCase();
+  if (DURATION_SPORTS.some((k) => t.includes(k))) return 'duration';
+  if (t.includes('swim')) return 'swim';
+  if (t.includes('row') && !t.includes('kayak')) return 'row';
+  if (SPEED_SPORTS.some((k) => t.includes(k))) return 'speed';
+  return 'pace';
+}
+
+export function formatSpeed(mps, digits = 1) {
+  if (!mps || Number(mps) <= 0) return '—';
+  return `${(Number(mps) * 3.6).toFixed(digits)} km/h`;
+}
+
+function formatIntervalPace(mps, meters, suffix) {
+  if (!mps || Number(mps) <= 0) return '—';
+  const sec = meters / Number(mps);
+  const min = Math.floor(sec / 60);
+  const rem = Math.round(sec % 60);
+  return `${min}:${String(rem).padStart(2, '0')} ${suffix}`;
+}
+
+export function formatSwimPace(mps) {
+  return formatIntervalPace(mps, 100, '/100m');
+}
+
+export function formatRowPace(mps) {
+  return formatIntervalPace(mps, 500, '/500m');
+}
+
+export function formatEffort(activity) {
+  const kind = effortKind(activity?.type, activity?.sportType);
+  const mps = Number(activity?.avgSpeed);
+  if (kind === 'speed') return formatSpeed(mps);
+  if (kind === 'swim') return formatSwimPace(mps);
+  if (kind === 'row') return formatRowPace(mps);
+  if (kind === 'duration') return '';
+  return formatPace(mps);
+}
+
+export function effortStat(activity) {
+  const kind = effortKind(activity?.type, activity?.sportType);
+  const formatted = formatEffort(activity);
+  if (kind === 'speed') {
+    return { kind, label: 'Speed', value: formatted.replace(/ km\/h$/, ''), unit: 'km/h' };
+  }
+  if (kind === 'swim') {
+    return { kind, label: 'Pace', value: formatted.replace(/ \/100m$/, ''), unit: '/100m' };
+  }
+  if (kind === 'row') {
+    return { kind, label: 'Pace', value: formatted.replace(/ \/500m$/, ''), unit: '/500m' };
+  }
+  if (kind === 'duration' || formatted === '—') {
+    return { kind, label: null, value: '', unit: '' };
+  }
+  return { kind, label: 'Pace', value: formatted.replace(/ \/km$/, ''), unit: '/km' };
+}
+
 export function formatDate(date) {
   if (!date) return '';
   return new Date(date).toLocaleDateString('en-US', {

@@ -212,7 +212,7 @@ export default function CompareActivities() {
             </table>
             {!data.comparable && (
               <p className="text-xs text-muted mt-3 mb-0">
-                Distances differ by more than 20%. Treat pace as the main performance signal.
+                Distances differ by more than 20%. Treat {data.older?.sport === 'Ride' ? 'speed' : 'pace'} as the main performance signal.
               </p>
             )}
           </div>

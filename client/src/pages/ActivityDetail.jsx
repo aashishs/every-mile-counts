@@ -6,14 +6,17 @@ import Badge from '../components/Badge';
 import { useAuth } from '../context/AuthContext';
 import {
   activityMetric,
+  effortStat,
   formatDate,
   formatDistance,
   formatDuration,
-  formatPace,
+  formatEffort,
   getActivityIcon,
 } from '../utils/format';
 import { buildActivityMarkdown, copyText } from '../utils/activityMarkdown';
 import { formatComparisonValue } from '../utils/training';
+import ActivityRouteMap from '../components/ActivityRouteMap';
+import ActivitySplits from '../components/ActivitySplits';
 
 export default function ActivityDetail() {
   const { id } = useParams();
@@ -63,6 +66,7 @@ export default function ActivityDetail() {
     : '';
   const glance = insights || athleteInsights || {};
   const metric = activityMetric(activity.type, activity.sportType, activity.distance);
+  const effort = effortStat(activity);
   const primary = metric === 'swim'
     ? `${Math.round(activity.distance || 0)} m`
     : metric === 'duration'
@@ -128,10 +132,12 @@ export default function ActivityDetail() {
       ]
     : [
         { label: 'Time', value: formatDuration(activity.movingTime) },
-        { label: 'Pace', value: formatPace(activity.avgSpeed).replace(' /km', ''), unit: metric === 'swim' ? '' : '/km' },
-        { label: 'Climb', value: `${Math.round(activity.elevationGain || 0)}`, unit: 'm' },
+        effort.label ? { label: effort.label, value: effort.value, unit: effort.unit } : null,
+        metric === 'swim' && !(Number(activity.elevationGain) > 0)
+          ? null
+          : { label: 'Climb', value: `${Math.round(activity.elevationGain || 0)}`, unit: 'm' },
         { label: 'Avg HR', value: activity.avgHeartrate ? `${Math.round(activity.avgHeartrate)}` : '—', unit: activity.avgHeartrate ? 'bpm' : '' },
-      ];
+      ].filter(Boolean);
 
   return (
     <Layout>
@@ -170,7 +176,9 @@ export default function ActivityDetail() {
         <div className="stat-label text-teal-100/70 mt-2">{primaryLabel}</div>
         <div className="flex flex-wrap gap-2 mt-5">
           <span className="rounded-full bg-black/25 px-3 py-1 text-xs font-semibold">{activity.source || 'manual'}</span>
-          {glance.pace && <span className="rounded-full bg-black/25 px-3 py-1 text-xs font-semibold">{glance.pace} /km</span>}
+          {formatEffort(activity) && formatEffort(activity) !== '—' && (
+            <span className="rounded-full bg-black/25 px-3 py-1 text-xs font-semibold">{formatEffort(activity)}</span>
+          )}
           {glance.heartRateZone?.label && (
             <span className="rounded-full bg-black/25 px-3 py-1 text-xs font-semibold">Z{glance.heartRateZone.zone} {glance.heartRateZone.label}</span>
           )}
@@ -218,12 +226,15 @@ export default function ActivityDetail() {
         ))}
       </div>
 
+      <ActivityRouteMap activity={activity} />
+      <ActivitySplits activity={activity} />
+
       {(insights || athleteInsights) && (
         <section className="mb-6">
           <h3 className="section-title mb-3">Session read</h3>
           <div className="grid grid-cols-2 gap-2 mb-2">
             {glance.paceConsistency && glance.paceConsistency !== 'unknown' && (
-              <Insight label="Pace" value={glance.paceConsistency} />
+              <Insight label={effort.kind === 'speed' ? 'Speed' : 'Pace'} value={glance.paceConsistency} />
             )}
             {glance.heartRateZone?.label && (
               <Insight label="HR zone" value={`Z${glance.heartRateZone.zone}`} hint={glance.heartRateZone.label} />

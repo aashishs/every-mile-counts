@@ -2,6 +2,7 @@ import express from 'express';
 import { camel, camelMany, many, one, query } from '../config/db.js';
 import { protect, requireMembership, rejectAppAdmin } from '../middleware/auth.js';
 import { analyzeActivity, athleteDashboard, compareActivities, periodAnalysis } from '../services/analysisService.js';
+import { enrichStravaActivity } from '../services/stravaService.js';
 import { athleteHrContext } from '../utils/maf.js';
 import { syncUserActivities } from '../services/syncService.js';
 import { mappedFromFile, mappedFromManual, saveManualActivity } from '../services/activityImportService.js';
@@ -336,9 +337,10 @@ router.get(
       return res.status(403).json({ message: 'Not authorized' });
     }
 
-    const hr = athleteHrContext(activity);
-    const insights = analyzeActivity(activity, hr);
-    const isCoach = req.user.roles.includes('coach') && req.user.id !== activity.athleteId;
+    const detailed = await enrichStravaActivity(activity);
+    const hr = athleteHrContext(detailed);
+    const insights = analyzeActivity(detailed, hr);
+    const isCoach = req.user.roles.includes('coach') && req.user.id !== detailed.athleteId;
 
     const reviews = camelMany(
       await many(
@@ -419,8 +421,13 @@ router.get(
       }
     }
 
+    const {
+      raw: _raw,
+      email: _email,
+      ...safeActivity
+    } = detailed;
     res.json({
-      activity: { ...activity, age: hr.age, mafHeartRate: hr.mafHeartRate },
+      activity: { ...safeActivity, age: hr.age, mafHeartRate: hr.mafHeartRate },
       plannedWorkout,
       insights: isCoach ? insights : undefined,
       athleteInsights: req.user.id === activity.athleteId ? {

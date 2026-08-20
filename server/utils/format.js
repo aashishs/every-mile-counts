@@ -21,6 +21,53 @@ export function paceFromSpeed(mps) {
   return `${min}:${String(sec).padStart(2, '0')}`;
 }
 
+const DURATION_SPORTS = [
+  'workout', 'weight', 'yoga', 'crossfit', 'pilates', 'stretch', 'hiit',
+  'highintensity', 'climb', 'stair', 'elliptical', 'meditation', 'taichi',
+  'strength', 'functional', 'prepare_for_battle',
+];
+const SPEED_SPORTS = [
+  'ride', 'cycle', 'bike', 'ebike', 'gravel', 'velomobile', 'handcycle',
+  'ski', 'snowboard', 'skate', 'sail', 'surf', 'kayak', 'canoe', 'paddle',
+  'kitesurf', 'windsurf', 'wheelchair',
+];
+
+export function effortKind(type, sportType) {
+  const t = `${type || ''} ${sportType || ''}`.toLowerCase();
+  if (DURATION_SPORTS.some((k) => t.includes(k))) return 'duration';
+  if (t.includes('swim')) return 'swim';
+  if (t.includes('row') && !t.includes('kayak')) return 'row';
+  if (SPEED_SPORTS.some((k) => t.includes(k))) return 'speed';
+  return 'pace';
+}
+
+export function formatSpeed(mps, digits = 1) {
+  if (!mps || Number(mps) <= 0) return null;
+  return `${(Number(mps) * 3.6).toFixed(digits)} km/h`;
+}
+
+export function formatEffort(activity) {
+  const kind = effortKind(activity?.type, activity?.sportType);
+  const mps = Number(activity?.avgSpeed);
+  if (!(mps > 0)) return null;
+  if (kind === 'speed') return formatSpeed(mps);
+  if (kind === 'swim') {
+    const sec = 100 / mps;
+    const min = Math.floor(sec / 60);
+    const rem = Math.round(sec % 60);
+    return `${min}:${String(rem).padStart(2, '0')} /100m`;
+  }
+  if (kind === 'row') {
+    const sec = 500 / mps;
+    const min = Math.floor(sec / 60);
+    const rem = Math.round(sec % 60);
+    return `${min}:${String(rem).padStart(2, '0')} /500m`;
+  }
+  if (kind === 'duration') return null;
+  const clock = paceFromSpeed(mps);
+  return clock ? `${clock} /km` : null;
+}
+
 export function slugify(text) {
   return String(text)
     .toLowerCase()

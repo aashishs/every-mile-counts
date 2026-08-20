@@ -215,3 +215,22 @@
 .font-display {
   font-family: 'Barlow Condensed', 'DM Sans', system-ui, sans-serif;
 }
+
+.activity-map.leaflet-container {
+  background: #0b1118;
+  font-family: inherit;
+}
+
+.activity-map .leaflet-tile-pane {
+  filter: invert(1) hue-rotate(180deg) brightness(0.9) contrast(0.95);
+}
+
+.activity-map .leaflet-control-attribution {
+  background: rgba(11, 17, 24, 0.75);
+  color: #8b9cb3;
+  font-size: 10px;
+}
+
+.activity-map .leaflet-control-attribution a {
+  color: #5eead4;
+}
