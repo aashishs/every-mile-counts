@@ -1,7 +1,7 @@
 import express from 'express';
 import { camel, camelMany, many, one, query } from '../config/db.js';
 import { protect, requireMembership, rejectAppAdmin } from '../middleware/auth.js';
-import { analyzeActivity, athleteDashboard, compareActivities, periodAnalysis } from '../services/analysisService.js';
+import { analyzeActivity, athleteDashboard, coachAthleteGlance, compareActivities, periodAnalysis } from '../services/analysisService.js';
 import { enrichStravaActivity } from '../services/stravaService.js';
 import { athleteHrContext } from '../utils/maf.js';
 import { syncUserActivities } from '../services/syncService.js';
@@ -305,10 +305,10 @@ router.get(
         [athleteId, coachId, limit, offset]
       )
     );
-    const analysis = await periodAnalysis(req.params.athleteId, 30);
+    const glance = await coachAthleteGlance(athleteId, coachId);
     res.json({
       activities,
-      analysis,
+      glance,
       total,
       pendingTotal: pending.total,
       page: safePage,
