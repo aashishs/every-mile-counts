@@ -7,6 +7,57 @@ function num(v) {
   return v == null ? 0 : Number(v);
 }
 
+function ymdInAppTz(date = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: process.env.APP_TZ || 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date(date));
+  const pick = (type) => parts.find((p) => p.type === type)?.value;
+  return `${pick('year')}-${pick('month')}-${pick('day')}`;
+}
+
+function sessionScore(activity) {
+  const load = num(activity.trainingLoad ?? activity.training_load);
+  if (load > 0) return Math.max(1, Math.min(100, Math.round(load)));
+  const minutes = num(activity.movingTime ?? activity.moving_time) / 60;
+  const hr = num(activity.avgHeartrate ?? activity.avg_heartrate);
+  let score = Math.min(70, minutes * 1.15);
+  if (hr >= 155) score += 22;
+  else if (hr >= 135) score += 14;
+  else if (hr > 0) score += 7;
+  if (!(minutes > 0) && !(hr > 0)) return null;
+  return Math.max(1, Math.min(100, Math.round(score)));
+}
+
+function scoreLabel(score) {
+  if (score == null) return null;
+  if (score >= 80) return 'Hard session';
+  if (score >= 50) return 'Solid session';
+  return 'Easy session';
+}
+
+function todaySummary(activities) {
+  const date = ymdInAppTz();
+  const todays = (activities || []).filter((act) => act.startDate && ymdInAppTz(act.startDate) === date);
+  if (!todays.length) {
+    return { date, trained: false, count: 0, score: null, label: null, name: null, activityId: null };
+  }
+  const ranked = [...todays].sort((a, b) => (sessionScore(b) || 0) - (sessionScore(a) || 0));
+  const best = ranked[0];
+  const score = sessionScore(best);
+  return {
+    date,
+    trained: true,
+    count: todays.length,
+    score,
+    label: scoreLabel(score),
+    name: best.name || best.type || 'Session',
+    activityId: best.id || null,
+  };
+}
+
 function stddev(values) {
   if (!values.length) return 0;
   const mean = values.reduce((a, b) => a + b, 0) / values.length;
@@ -291,6 +342,7 @@ export async function athleteDashboard(athleteId, athlete = {}, { type, syncType
     coaches,
     pendingReviews,
     upcomingEvents,
+    today: todaySummary(allTime),
     goals: goals.map((g) => ({
       ...g,
       completionPct: g.targetValue ? Math.min(100, Math.round((num(g.currentValue) / num(g.targetValue)) * 100)) : 0,

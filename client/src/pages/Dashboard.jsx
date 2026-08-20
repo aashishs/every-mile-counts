@@ -4,9 +4,11 @@ import api from '../api/client';
 import Layout from '../components/Layout';
 import ActivityTypeFilter from '../components/ActivityTypeFilter';
 import PersonalRecords from '../components/PersonalRecords';
+import DailyCheckin from '../components/DailyCheckin';
 import { useAuth } from '../context/AuthContext';
 import { formatDate, formatTime, getActivityIcon, initialActivityType, rememberActivityType, visibleActivityTypeOptions } from '../utils/format';
 import { isAthleteAccount } from '../utils/roles';
+import { hasSeenCheckin, markCheckinSeen } from '../utils/dailyQuotes';
 import StravaCard from '../components/StravaCard';
 
 function greeting() {
@@ -35,6 +37,7 @@ export default function Dashboard() {
   const [data, setData] = useState(null);
   const [searchParams] = useSearchParams();
   const [type, setType] = useState(() => initialActivityType(user, searchParams.get('type')));
+  const [showCheckin, setShowCheckin] = useState(false);
   const alertKey = searchParams.get('strava');
 
   useEffect(() => {
@@ -83,11 +86,24 @@ export default function Dashboard() {
     },
   };
 
+  useEffect(() => {
+    if (!athlete || !data?.today?.date || !user?.id) return;
+    if (hasSeenCheckin(user.id, data.today.date)) return;
+    setShowCheckin(true);
+  }, [athlete, data?.today?.date, user?.id]);
+
+  const closeCheckin = () => {
+    if (data?.today?.date) markCheckinSeen(user.id, data.today.date);
+    setShowCheckin(false);
+  };
   const sportTotal = (data?.distanceSports || []).find((s) => s.type === type);
   const nextEvent = data?.upcomingEvents?.[0];
 
   return (
     <Layout>
+      {showCheckin && (
+        <DailyCheckin user={user} today={data?.today} onClose={closeCheckin} />
+      )}
       <div className="mb-4">
         <p className="text-xs uppercase tracking-[0.22em] text-brand font-semibold">{greeting()}</p>
         <h2 className="page-title mb-0">{user.firstName}</h2>
