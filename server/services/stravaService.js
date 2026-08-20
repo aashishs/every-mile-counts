@@ -4,6 +4,7 @@ import { camel, camelMany, many, one, query } from '../config/db.js';
 import { decrypt, encrypt } from '../utils/crypto.js';
 import { stravaWebhookUri } from '../utils/urls.js';
 import { analyzeActivity } from './analysisService.js';
+import { matchActivityToWorkout } from './workoutMatchService.js';
 import {
   activityMatchesSyncTypes,
   normalizeSyncTypes,
@@ -476,7 +477,9 @@ export async function upsertActivity(athleteId, source, mapped) {
       JSON.stringify(mapped.raw || {}),
     ]
   );
-  return row.id;
+  const activityId = row.id;
+  matchActivityToWorkout(activityId).catch((err) => console.error('[training] activity match failed', err.message));
+  return activityId;
 }
 
 async function newestStravaTimestamp(userId) {

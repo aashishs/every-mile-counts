@@ -4,6 +4,7 @@ import { protect, requireMembership, requireRole, rejectAppAdmin } from '../midd
 import { analyzeActivity } from '../services/analysisService.js';
 import { createNotification } from '../services/notificationService.js';
 import { asyncHandler } from '../middleware/error.js';
+import { assertCanViewReview, getAssignment } from '../utils/coachingAccess.js';
 
 const router = express.Router();
 router.use(protect, requireMembership, rejectAppAdmin);
@@ -53,11 +54,17 @@ router.post(
       return res.status(400).json({ message: 'You already asked this coach for a review' });
     }
 
+    const assignment = camel(
+      await one(
+        `SELECT club_id FROM coach_assignments WHERE coach_id = $1 AND athlete_id = $2 AND status = 'active'`,
+        [coachId, req.user.id]
+      )
+    );
     const row = camel(
       await one(
-        `INSERT INTO review_requests (activity_id, athlete_id, coach_id)
-         VALUES ($1, $2, $3) RETURNING *`,
-        [activityId, req.user.id, coachId]
+        `INSERT INTO review_requests (activity_id, athlete_id, coach_id, club_id)
+         VALUES ($1, $2, $3, $4) RETURNING *`,
+        [activityId, req.user.id, coachId, assignment?.club_id || assignment?.clubId || null]
       )
     );
     await createNotification({
@@ -151,21 +158,60 @@ router.post(
 
     const activity = camel(await one('SELECT * FROM activities WHERE id = $1', [activityId]));
     if (!activity) return res.status(404).json({ message: 'Activity not found' });
-    if (!(await assigned(req.user.id, activity.athleteId))) {
+    const assignment = await getAssignment(req.user.id, activity.athleteId);
+    if (!assignment) {
       return res.status(403).json({ message: 'Not assigned to this athlete' });
+    }
+    if (req.body.athleteId && req.body.athleteId !== activity.athleteId) {
+      return res.status(403).json({ message: 'Access denied' });
+    }
+    if (req.body.clubId && assignment.clubId && req.body.clubId !== assignment.clubId) {
+      return res.status(403).json({ message: 'Access denied' });
     }
 
     const athlete = camel(await one('SELECT * FROM users WHERE id = $1', [activity.athleteId]));
     const insights = analyzeActivity(activity, athlete);
+    const clubId = assignment.clubId || null;
+    const liveMatch = camel(
+      await one(
+        `SELECT w.id AS planned_workout_id, w.program_id
+         FROM workout_activity_matches m
+         JOIN planned_workouts w ON w.id = m.planned_workout_id
+         WHERE m.activity_id = $1 AND m.status IN ('auto', 'confirmed')
+         LIMIT 1`,
+        [activityId]
+      )
+    );
+    let programId = liveMatch?.programId || null;
+    let plannedWorkoutId = liveMatch?.plannedWorkoutId || null;
+    if (req.body.programId) {
+      const owned = await one(
+        `SELECT id FROM training_programs
+         WHERE id = $1 AND athlete_id = $2 AND coach_id = $3 AND club_id IS NOT DISTINCT FROM $4`,
+        [req.body.programId, activity.athleteId, req.user.id, clubId]
+      );
+      programId = owned?.id || programId;
+    }
+    if (req.body.plannedWorkoutId) {
+      const owned = await one(
+        `SELECT id FROM planned_workouts
+         WHERE id = $1 AND athlete_id = $2 AND coach_id = $3 AND club_id IS NOT DISTINCT FROM $4`,
+        [req.body.plannedWorkoutId, activity.athleteId, req.user.id, clubId]
+      );
+      plannedWorkoutId = owned?.id || plannedWorkoutId;
+    }
 
     const review = camel(
       await one(
         `INSERT INTO activity_reviews (
-           activity_id, coach_id, athlete_id, request_id, initiated_by,
+           activity_id, coach_id, athlete_id, request_id, initiated_by, club_id, program_id, planned_workout_id,
            performance_summary, strengths, improvements, technique, recommendations,
            recovery_advice, comments, rating, coach_insights, status, published_at
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15,$16)
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::jsonb,$18,$19)
          ON CONFLICT (activity_id, coach_id) DO UPDATE SET
+           club_id = COALESCE(activity_reviews.club_id, EXCLUDED.club_id),
+           program_id = COALESCE(EXCLUDED.program_id, activity_reviews.program_id),
+           planned_workout_id = COALESCE(EXCLUDED.planned_workout_id, activity_reviews.planned_workout_id),
            performance_summary = EXCLUDED.performance_summary,
            strengths = EXCLUDED.strengths,
            improvements = EXCLUDED.improvements,
@@ -185,6 +231,9 @@ router.post(
           activity.athleteId,
           requestId || null,
           requestId ? 'athlete' : 'coach',
+          clubId,
+          programId,
+          plannedWorkoutId,
           performanceSummary,
           strengths,
           improvements,
@@ -229,6 +278,65 @@ router.get(
     }
     const athlete = camel(await one('SELECT * FROM users WHERE id = $1', [activity.athleteId]));
     res.json({ insights: analyzeActivity(activity, athlete) });
+  })
+);
+
+router.get(
+  '/:id',
+  asyncHandler(async (req, res) => {
+    const review = camel(
+      await one(
+        `SELECT r.*, u.first_name AS coach_first_name, u.last_name AS coach_last_name, c.name AS club_name
+         FROM activity_reviews r
+         JOIN users u ON u.id = r.coach_id
+         LEFT JOIN clubs c ON c.id = r.club_id
+         WHERE r.id = $1`,
+        [req.params.id]
+      )
+    );
+    await assertCanViewReview(req.user, review);
+    res.json({ review });
+  })
+);
+
+router.patch(
+  '/:id',
+  requireRole('coach'),
+  asyncHandler(async (req, res) => {
+    const existing = camel(await one('SELECT * FROM activity_reviews WHERE id = $1', [req.params.id]));
+    if (!existing) return res.status(404).json({ message: 'Review not found' });
+    if (existing.coachId !== req.user.id) {
+      return res.status(403).json({ message: 'You can only modify your own reviews' });
+    }
+    const review = camel(
+      await one(
+        `UPDATE activity_reviews SET
+           performance_summary = COALESCE($2, performance_summary),
+           strengths = COALESCE($3, strengths),
+           improvements = COALESCE($4, improvements),
+           technique = COALESCE($5, technique),
+           recommendations = COALESCE($6, recommendations),
+           recovery_advice = COALESCE($7, recovery_advice),
+           comments = COALESCE($8, comments),
+           rating = COALESCE($9, rating),
+           updated_at = NOW()
+         WHERE id = $1 AND coach_id = $10
+         RETURNING *`,
+        [
+          existing.id,
+          req.body.performanceSummary,
+          req.body.strengths,
+          req.body.improvements,
+          req.body.technique,
+          req.body.recommendations,
+          req.body.recoveryAdvice,
+          req.body.comments,
+          req.body.rating || null,
+          req.user.id,
+        ]
+      )
+    );
+    res.json({ review });
   })
 );
 

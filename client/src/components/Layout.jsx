@@ -8,6 +8,7 @@ import { GOALS_ENABLED } from '../utils/features';
 
 const athleteLinks = [
   { to: '/dashboard', label: 'Dashboard', icon: '📊' },
+  { to: '/training', label: 'Training', icon: '📋' },
   { to: '/activities', label: 'Activities', icon: '⚡' },
   { to: '/analysis', label: 'Analysis', icon: '📈' },
   { to: '/events', label: 'Events', icon: '📅' },
@@ -32,6 +33,11 @@ function pathActive(pathname, to) {
   if (to === '/dashboard') return pathname === '/dashboard';
   if (to === '/admin') return pathname === '/admin' || pathname.startsWith('/admin/');
   if (to === '/support-desk') return pathname === '/support-desk' || pathname.startsWith('/support-desk/');
+  if (to === '/coaches') return pathname === '/coaches' || (pathname.startsWith('/coaches/') && !pathname.startsWith('/coaches/training') && !pathname.startsWith('/coaches/programs') && !pathname.startsWith('/coaches/groups') && !pathname.startsWith('/coaches/activities'));
+  if (to === '/coaches/training') {
+    return pathname.startsWith('/coaches/training') || pathname.startsWith('/coaches/programs') || pathname.startsWith('/coaches/groups') || pathname.startsWith('/coaches/activities') || /\/coaches\/athletes\/[^/]+\/training/.test(pathname);
+  }
+  if (to === '/training') return pathname === '/training' || pathname.startsWith('/training/');
   if (to === '/clubs') return pathname === '/clubs' || pathname.startsWith('/clubs/');
   return pathname === to || pathname.startsWith(`${to}/`);
 }
@@ -81,7 +87,7 @@ export default function Layout({ children }) {
     ? staffTabs
     : [
         ...(isAthlete ? athleteLinks : []),
-        ...(isCoachUser ? [{ to: '/coaches', label: 'Coaching', icon: '👥' }] : []),
+        ...(isCoachUser ? [{ to: '/coaches', label: 'Coaching', icon: '👥' }, { to: '/coaches/training', label: 'Plans', icon: '📋' }] : []),
         ...(clubHome ? [{ to: '/clubs', label: 'Club', icon: '🏅' }] : []),
         ...sharedLinks.filter((l) => !(clubHome && l.to === '/clubs')),
       ];

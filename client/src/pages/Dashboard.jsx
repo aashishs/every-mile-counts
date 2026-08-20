@@ -37,6 +37,8 @@ export default function Dashboard() {
   const [data, setData] = useState(null);
   const [searchParams] = useSearchParams();
   const [type, setType] = useState(() => initialActivityType(user, searchParams.get('type')));
+  const [todayWorkout, setTodayWorkout] = useState(null);
+  const [error, setError] = useState('');
   const [showCheckin, setShowCheckin] = useState(false);
   const alertKey = searchParams.get('strava');
 
@@ -67,8 +69,19 @@ export default function Dashboard() {
     try {
       const dash = await api.get('/activities/dashboard', { params: { type } });
       setData(dash.data);
+      setError('');
     } catch (err) {
       console.error(err);
+      setError(err.response?.data?.message || 'Could not load dashboard');
+    }
+    if (athlete) {
+      try {
+        const training = await api.get('/training/me');
+        const list = training.data.today || [];
+        setTodayWorkout(list[0] || training.data.current?.todayWorkout || null);
+      } catch {
+        setTodayWorkout(null);
+      }
     }
   };
 
@@ -122,7 +135,19 @@ export default function Dashboard() {
         </div>
       )}
 
+      {error && <div className="card text-rose-200 mb-5">{error}</div>}
+      {!data && !error && <p className="text-muted mb-5">Loading…</p>}
       {athlete && <StravaCard user={user} autoConnect={searchParams.get('connect') === 'strava'} />}
+      {athlete && todayWorkout && (
+        <Link to={`/training/workouts/${todayWorkout.id}`} className="card mb-5 flex items-center justify-between gap-3 text-inherit no-underline hover:border-brand">
+          <div>
+            <div className="stat-label">Today’s workout</div>
+            <div className="font-display text-2xl font-bold tracking-tight mt-1">{todayWorkout.name || todayWorkout.workoutType}</div>
+            <div className="text-xs text-muted mt-1">{todayWorkout.workoutType}{todayWorkout.distance ? ` · ${(Number(todayWorkout.distance) / 1000).toFixed(1)} km` : ''}</div>
+          </div>
+          <span className="text-brand text-sm font-semibold">Open</span>
+        </Link>
+      )}
       {athlete && (
         <p className="text-sm text-muted -mt-2 mb-5">
           Or{' '}

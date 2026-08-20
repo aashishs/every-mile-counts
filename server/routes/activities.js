@@ -8,6 +8,7 @@ import { syncUserActivities } from '../services/syncService.js';
 import { mappedFromFile, mappedFromManual, saveManualActivity } from '../services/activityImportService.js';
 import { asyncHandler } from '../middleware/error.js';
 import { familySqlClause, parseStoredSyncTypes } from '../utils/activityTypes.js';
+import { assignmentClubMatches, getAssignment } from '../utils/coachingAccess.js';
 
 const router = express.Router();
 router.use(protect, requireMembership, rejectAppAdmin);
@@ -343,11 +344,24 @@ router.get(
 
     const reviews = camelMany(
       await many(
-        `SELECT r.*, u.first_name AS coach_first_name, u.last_name AS coach_last_name
+        `SELECT r.*, u.first_name AS coach_first_name, u.last_name AS coach_last_name, c.name AS club_name
          FROM activity_reviews r
          JOIN users u ON u.id = r.coach_id
-         WHERE r.activity_id = $1 AND r.status = 'published'`,
-        [activity.id]
+         LEFT JOIN clubs c ON c.id = r.club_id
+         WHERE r.activity_id = $1 AND r.status = 'published'
+           AND (
+             r.athlete_id = $2
+             OR r.coach_id = $2
+             OR EXISTS (
+               SELECT 1 FROM coach_assignments ca
+               WHERE ca.athlete_id = r.athlete_id
+                 AND ca.coach_id = $2
+                 AND ca.status = 'active'
+                 AND r.club_id IS NOT NULL
+                 AND ca.club_id = r.club_id
+             )
+           )`,
+        [activity.id, req.user.id]
       )
     );
 
@@ -357,10 +371,55 @@ router.get(
          FROM review_requests rr
          JOIN users u ON u.id = rr.coach_id
          WHERE rr.activity_id = $1
+           AND (
+             rr.athlete_id = $2
+             OR rr.coach_id = $2
+             OR EXISTS (
+               SELECT 1 FROM coach_assignments ca
+               WHERE ca.athlete_id = rr.athlete_id
+                 AND ca.coach_id = $2
+                 AND ca.status = 'active'
+                 AND rr.club_id IS NOT NULL
+                 AND ca.club_id = rr.club_id
+             )
+           )
          ORDER BY rr.requested_at DESC`,
+        [activity.id, req.user.id]
+      )
+    );
+
+    const match = camel(
+      await one(
+        `SELECT m.comparison, w.id AS planned_workout_id, w.name AS workout_name, w.workout_type, w.sport,
+                w.completion_status, w.program_id, w.coach_id, w.club_id, p.name AS program_name
+         FROM workout_activity_matches m
+         JOIN planned_workouts w ON w.id = m.planned_workout_id
+         LEFT JOIN training_programs p ON p.id = w.program_id
+         WHERE m.activity_id = $1 AND m.status IN ('auto', 'confirmed')
+         LIMIT 1`,
         [activity.id]
       )
     );
+    let plannedWorkout = null;
+    if (match) {
+      let canSeePlan = req.user.id === activity.athleteId || req.user.id === match.coachId;
+      if (!canSeePlan && (req.user.roles || []).includes('coach')) {
+        const assignment = await getAssignment(req.user.id, activity.athleteId);
+        canSeePlan = Boolean(assignment && (await assignmentClubMatches(assignment, match.clubId)));
+      }
+      if (canSeePlan) {
+        plannedWorkout = {
+          id: match.plannedWorkoutId,
+          name: match.workoutName,
+          workoutType: match.workoutType,
+          sport: match.sport,
+          programId: match.programId,
+          programName: match.programName,
+          completionStatus: match.completionStatus,
+          comparison: match.comparison || [],
+        };
+      }
+    }
 
     const {
       raw: _raw,
@@ -369,6 +428,7 @@ router.get(
     } = detailed;
     res.json({
       activity: { ...safeActivity, age: hr.age, mafHeartRate: hr.mafHeartRate },
+      plannedWorkout,
       insights: isCoach ? insights : undefined,
       athleteInsights: req.user.id === activity.athleteId ? {
         summary: insights.summary,
@@ -380,7 +440,7 @@ router.get(
         elevationImpact: insights.elevationImpact,
         recoveryRecommendation: insights.recoveryRecommendation,
       } : undefined,
-      reviews: req.user.id === activity.athleteId || isCoach ? reviews : [],
+      reviews,
       requests,
     });
   })
