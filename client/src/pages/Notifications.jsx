@@ -15,6 +15,10 @@ function notificationPath(n) {
   if (n.type === 'sync') return '/activities';
   if (n.type === 'membership') return '/membership';
   if (n.type === 'event') return '/events';
+  if (n.type === 'training' && data.url) return data.url;
+  if (n.type === 'training' && data.workoutId) return `/training/workouts/${data.workoutId}`;
+  if (n.type === 'training' && data.programId) return `/training/programs/${data.programId}`;
+  if (n.type === 'training') return '/training';
   return null;
 }
 
@@ -49,7 +53,7 @@ export default function Notifications() {
       <div className="flex justify-between items-center mb-6">
         <div>
           <h2 className="page-title">Notifications</h2>
-          <p className="text-muted">Sync, reviews, events, membership, and club updates</p>
+          <p className="text-muted">Sync, reviews, training, events, membership, and club updates</p>
         </div>
         {items.length > 0 && (
           <button className="btn-outline btn-sm" type="button" onClick={markAll}>Mark all read</button>

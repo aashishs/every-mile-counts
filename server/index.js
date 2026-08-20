@@ -24,6 +24,7 @@ import notificationRoutes from './routes/notifications.js';
 import adminRoutes from './routes/admin.js';
 import supportRoutes from './routes/support.js';
 import pushRoutes from './routes/push.js';
+import trainingRoutes from './routes/training.js';
 
 await connectDB();
 await ensureSchemaPatches();
@@ -74,6 +75,7 @@ app.use('/api/notifications', notificationRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/support', supportRoutes);
 app.use('/api/push', pushRoutes);
+app.use('/api/training', trainingRoutes);
 
 app.use(errorHandler);
 

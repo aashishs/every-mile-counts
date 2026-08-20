@@ -212,4 +212,147 @@ export async function ensureSchemaPatches() {
     `ALTER TABLE invitation_codes ADD COLUMN IF NOT EXISTS club_id UUID REFERENCES clubs(id) ON DELETE CASCADE`
   );
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_invitation_codes_club ON invitation_codes (club_id)`);
+
+  await ensureTrainingPlanSchema();
+}
+
+async function ensureTrainingPlanSchema() {
+  await pool.query(`ALTER TABLE activity_reviews ADD COLUMN IF NOT EXISTS club_id UUID REFERENCES clubs(id) ON DELETE SET NULL`);
+  await pool.query(`ALTER TABLE review_requests ADD COLUMN IF NOT EXISTS club_id UUID REFERENCES clubs(id) ON DELETE SET NULL`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_reviews_club ON activity_reviews (club_id, athlete_id)`);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS training_programs (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      coach_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      club_id UUID NOT NULL REFERENCES clubs(id) ON DELETE CASCADE,
+      athlete_id UUID REFERENCES users(id) ON DELETE SET NULL,
+      name TEXT NOT NULL,
+      description TEXT,
+      sport TEXT NOT NULL DEFAULT 'Run',
+      start_date DATE,
+      end_date DATE,
+      target_event_id UUID REFERENCES events(id) ON DELETE SET NULL,
+      target_event_name TEXT,
+      status TEXT NOT NULL DEFAULT 'draft'
+        CHECK (status IN ('draft', 'active', 'paused', 'halted', 'completed', 'archived')),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_training_programs_coach ON training_programs (coach_id, status)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_training_programs_athlete ON training_programs (athlete_id, status)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_training_programs_club ON training_programs (club_id)`);
+  await pool.query(`DROP INDEX IF EXISTS idx_training_programs_one_live`);
+  await pool.query(`ALTER TABLE training_programs DROP CONSTRAINT IF EXISTS training_programs_status_check`);
+  await pool.query(`
+    ALTER TABLE training_programs ADD CONSTRAINT training_programs_status_check
+    CHECK (status IN ('draft', 'active', 'paused', 'halted', 'completed', 'archived'))
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS training_phases (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      program_id UUID NOT NULL REFERENCES training_programs(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      objective TEXT,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      start_date DATE,
+      end_date DATE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_training_phases_program ON training_phases (program_id, sort_order)`);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS training_weeks (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      program_id UUID NOT NULL REFERENCES training_programs(id) ON DELETE CASCADE,
+      phase_id UUID NOT NULL REFERENCES training_phases(id) ON DELETE CASCADE,
+      week_number INTEGER NOT NULL DEFAULT 1,
+      start_date DATE,
+      notes TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_training_weeks_phase ON training_weeks (phase_id, week_number)`);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS planned_workouts (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      program_id UUID NOT NULL REFERENCES training_programs(id) ON DELETE CASCADE,
+      phase_id UUID REFERENCES training_phases(id) ON DELETE SET NULL,
+      week_id UUID REFERENCES training_weeks(id) ON DELETE SET NULL,
+      athlete_id UUID REFERENCES users(id) ON DELETE CASCADE,
+      coach_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      club_id UUID NOT NULL REFERENCES clubs(id) ON DELETE CASCADE,
+      scheduled_date DATE NOT NULL,
+      name TEXT,
+      sport TEXT NOT NULL DEFAULT 'Run',
+      workout_type TEXT NOT NULL DEFAULT 'Easy',
+      distance NUMERIC,
+      duration INTEGER,
+      target_pace NUMERIC,
+      target_hr_zone INTEGER CHECK (target_hr_zone IS NULL OR target_hr_zone BETWEEN 1 AND 5),
+      target_hr NUMERIC,
+      target_power NUMERIC,
+      rpe INTEGER CHECK (rpe IS NULL OR rpe BETWEEN 1 AND 10),
+      warmup TEXT,
+      main_set TEXT,
+      cooldown TEXT,
+      instructions TEXT,
+      coach_notes TEXT,
+      completion_status TEXT NOT NULL DEFAULT 'planned'
+        CHECK (completion_status IN ('planned', 'completed', 'partial', 'missed', 'skipped', 'pending_match')),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_planned_workouts_athlete_date ON planned_workouts (athlete_id, scheduled_date)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_planned_workouts_program ON planned_workouts (program_id, scheduled_date)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_planned_workouts_status ON planned_workouts (athlete_id, completion_status, scheduled_date)`);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS workout_activity_matches (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      planned_workout_id UUID NOT NULL REFERENCES planned_workouts(id) ON DELETE CASCADE,
+      activity_id UUID NOT NULL REFERENCES activities(id) ON DELETE CASCADE,
+      confidence TEXT NOT NULL CHECK (confidence IN ('high', 'medium', 'low')),
+      score NUMERIC NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'suggested'
+        CHECK (status IN ('auto', 'suggested', 'confirmed', 'rejected')),
+      comparison JSONB NOT NULL DEFAULT '{}'::jsonb,
+      matched_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      confirmed_by UUID REFERENCES users(id),
+      UNIQUE (planned_workout_id, activity_id)
+    )
+  `);
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_workout_matches_activity_live
+    ON workout_activity_matches (activity_id)
+    WHERE status IN ('auto', 'confirmed')
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_workout_matches_workout ON workout_activity_matches (planned_workout_id, status)`);
+
+  await pool.query(`ALTER TABLE activity_reviews ADD COLUMN IF NOT EXISTS program_id UUID REFERENCES training_programs(id) ON DELETE SET NULL`);
+  await pool.query(`ALTER TABLE activity_reviews ADD COLUMN IF NOT EXISTS planned_workout_id UUID REFERENCES planned_workouts(id) ON DELETE SET NULL`);
+
+  await pool.query(`
+    UPDATE activity_reviews r
+    SET club_id = ca.club_id
+    FROM coach_assignments ca
+    WHERE r.club_id IS NULL
+      AND ca.athlete_id = r.athlete_id
+      AND ca.coach_id = r.coach_id
+      AND ca.club_id IS NOT NULL
+  `);
+  await pool.query(`
+    UPDATE review_requests rr
+    SET club_id = ca.club_id
+    FROM coach_assignments ca
+    WHERE rr.club_id IS NULL
+      AND ca.athlete_id = rr.athlete_id
+      AND ca.coach_id = rr.coach_id
+      AND ca.club_id IS NOT NULL
+  `);
 }

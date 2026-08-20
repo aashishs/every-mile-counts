@@ -168,9 +168,14 @@ export default function CoachAthleteActivities() {
               : ` · ${total} session${total === 1 ? '' : 's'}${pendingTotal ? ` · ${pendingTotal} need review` : ''}`}
           </p>
         </div>
-        <Link to="/coaches" className="btn-outline btn-sm no-underline shrink-0 self-start">
-          Back to coaching
-        </Link>
+        <div className="flex flex-wrap gap-2 shrink-0 self-start">
+          <Link to={`/coaches/athletes/${athleteId}/training`} className="btn-primary btn-sm no-underline">
+            Training
+          </Link>
+          <Link to="/coaches" className="btn-outline btn-sm no-underline">
+            Back to coaching
+          </Link>
+        </div>
       </div>
 
       {error && <div className="card mb-4 text-sm text-orange-300">{error}</div>}

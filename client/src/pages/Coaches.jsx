@@ -156,7 +156,13 @@ export default function Coaches() {
   return (
     <Layout>
       <h2 className="page-title">Coaching</h2>
-      <p className="page-sub">Athletes may have up to three coaches. Clubs assign coaches; coaches only see assigned athletes.</p>
+      <p className="page-sub">Athletes, reviews, and training plans. Athletes may have up to three coaches.</p>
+      {isCoach && (
+        <div className="flex flex-wrap gap-2 mb-6">
+          <button className="btn-primary" type="button" onClick={() => navigate('/coaches/training')}>Training dashboard</button>
+          <button className="btn-outline" type="button" onClick={() => navigate('/coaches/programs/new')}>New program</button>
+        </div>
+      )}
 
       <h3 className="font-semibold mb-2">My coaches</h3>
       <div className="grid md:grid-cols-3 gap-3 mb-8">
@@ -344,6 +350,7 @@ export default function Coaches() {
                       <span>Last {a.lastActivityAt ? formatDateShort(a.lastActivityAt) : '—'}</span>
                       <span>{a.mafHeartRate ? `MAF ${a.mafHeartRate}` : 'MAF —'}</span>
                     </div>
+                    <div className="text-xs text-brand mt-2">Activities · Training</div>
                   </button>
                 ))}
               </div>
@@ -362,6 +369,7 @@ export default function Coaches() {
                         <SortHeader label="Last activity" column="lastActivity" sort={sort} dir={dir} onSort={changeSort} />
                       </th>
                       <th className="p-3 text-muted font-semibold">MAF</th>
+                      <th className="p-3 text-muted font-semibold">Plan</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -380,6 +388,18 @@ export default function Coaches() {
                           {a.lastActivityAt ? formatDate(a.lastActivityAt) : '—'}
                         </td>
                         <td className="p-3 whitespace-nowrap">{a.mafHeartRate ? `${a.mafHeartRate}` : '—'}</td>
+                        <td className="p-3 whitespace-nowrap">
+                          <button
+                            className="btn-outline btn-sm"
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              navigate(`/coaches/athletes/${a.athleteId}/training`);
+                            }}
+                          >
+                            Training
+                          </button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>

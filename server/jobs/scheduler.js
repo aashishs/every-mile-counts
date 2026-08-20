@@ -2,6 +2,7 @@ import cron from 'node-cron';
 import { refreshMembershipStatuses } from '../services/membershipJob.js';
 import { appTimeZone, refreshAthleteAges } from '../services/ageJob.js';
 import { ensureStravaWebhookSubscription, syncAllConnectedStrava } from '../services/stravaService.js';
+import { markMissedWorkouts } from '../services/workoutMatchService.js';
 
 export function startScheduler() {
   const tz = appTimeZone();
@@ -19,6 +20,15 @@ export function startScheduler() {
       console.log('[job] strava incremental sync', result);
     } catch (err) {
       console.error('[job] strava incremental sync failed', err.message);
+    }
+  });
+
+  cron.schedule('15 1 * * *', async () => {
+    try {
+      const result = await markMissedWorkouts();
+      console.log('[job] missed workouts', result);
+    } catch (err) {
+      console.error('[job] missed workouts failed', err.message);
     }
   });
 

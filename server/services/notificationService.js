@@ -11,6 +11,7 @@ const TYPE_PREF = {
   membership: 'membership',
   club: 'membership',
   event: 'events',
+  training: 'training',
 };
 
 function typeEnabled(prefs, type) {
@@ -27,6 +28,8 @@ function notificationUrl(type, data = {}) {
   if (type === 'sync') return '/activities';
   if (type === 'membership') return '/membership';
   if (type === 'event') return '/events';
+  if (type === 'training' && data.workoutId) return data.url || `/training/workouts/${data.workoutId}`;
+  if (type === 'training') return data.url || '/training';
   return '/notifications';
 }
 

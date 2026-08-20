@@ -81,7 +81,7 @@ export default function MonthCalendar({
                   {marks.slice(0, 3).map((ev) => (
                     <span
                       key={ev.id}
-                      className={`w-1.5 h-1.5 rounded-full ${selected ? 'bg-white' : 'bg-accent'}`}
+                      className={`w-1.5 h-1.5 rounded-full ${selected ? 'bg-white' : ev.dotClass || 'bg-accent'}`}
                     />
                   ))}
                 </div>

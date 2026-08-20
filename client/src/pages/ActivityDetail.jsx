@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import Layout from '../components/Layout';
 import Badge from '../components/Badge';
@@ -13,6 +13,7 @@ import {
   getActivityIcon,
 } from '../utils/format';
 import { buildActivityMarkdown, copyText } from '../utils/activityMarkdown';
+import { formatComparisonValue } from '../utils/training';
 
 export default function ActivityDetail() {
   const { id } = useParams();
@@ -44,7 +45,7 @@ export default function ActivityDetail() {
     return <Layout><p className="text-muted">Loading…</p></Layout>;
   }
 
-  const { activity, insights, athleteInsights, reviews, requests } = data;
+  const { activity, insights, athleteInsights, reviews, requests, plannedWorkout } = data;
   const mine = activity.athleteId === user.id;
   const pendingRequests = (requests || []).filter((r) => r.status === 'pending');
   const hasReview = (reviews || []).length > 0;
@@ -106,6 +107,8 @@ export default function ActivityDetail() {
       await api.post('/reviews', {
         activityId: activity.id,
         requestId: myPendingRequest?.id,
+        programId: plannedWorkout?.programId,
+        plannedWorkoutId: plannedWorkout?.id,
         ...form,
         status: 'published',
       });
@@ -174,7 +177,34 @@ export default function ActivityDetail() {
         </div>
       </div>
 
-      {message && <div className="mb-4 card text-sm text-brand">{message}</div>}
+      {message && (
+        <div className="alert-success mb-6">{message}</div>
+      )}
+
+      {plannedWorkout && (
+        <section className="card mb-6">
+          <div className="flex items-start justify-between gap-3 mb-3">
+            <div>
+              <h3 className="section-title mb-1">Planned vs actual</h3>
+              <p className="text-sm text-muted mb-0">
+                Matched to {plannedWorkout.name || plannedWorkout.workoutType}
+                {plannedWorkout.programName ? ` · ${plannedWorkout.programName}` : ''}
+              </p>
+            </div>
+            <Link to={`/training/workouts/${plannedWorkout.id}`} className="btn-outline btn-sm no-underline shrink-0">
+              Workout
+            </Link>
+          </div>
+          <div className="space-y-2 text-sm">
+            {(plannedWorkout.comparison || []).map((m) => (
+              <div key={m.key} className="flex justify-between gap-3">
+                <span className="text-muted">{m.label}</span>
+                <span>{formatComparisonValue(m, 'planned')} → {formatComparisonValue(m, 'actual')}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       <div className="grid grid-cols-2 gap-2 mb-5">
         {stats.map((s) => (
@@ -314,7 +344,7 @@ export default function ActivityDetail() {
           {reviews.map((r) => (
             <div key={r.id} className="card mb-3 text-sm space-y-2">
               <div className="flex items-center justify-between gap-2">
-                <span className="font-semibold">{r.coachFirstName} {r.coachLastName}</span>
+                <span className="font-semibold">{r.coachFirstName} {r.coachLastName}{r.clubName ? ` · ${r.clubName}` : ''}</span>
                 {r.rating ? <span className="text-accent">{'★'.repeat(r.rating)}</span> : null}
               </div>
               {r.performanceSummary && <p className="mb-0">{r.performanceSummary}</p>}
