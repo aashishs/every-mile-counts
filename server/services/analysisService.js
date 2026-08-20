@@ -281,10 +281,11 @@ export async function athleteDashboard(athleteId, athlete = {}, { type, syncType
     await many(
       `SELECT * FROM events
        WHERE owner_type = 'athlete' AND owner_id = $1 AND status = 'upcoming'
-       ORDER BY event_date ASC LIMIT 5`,
+       ORDER BY event_date ASC LIMIT 20`,
       [athleteId]
     )
-  );
+  ).filter((event) => eventMatchesDashboardType(event, filterType))
+    .slice(0, 5);
 
   const goals = camelMany(
     await many(
@@ -364,6 +365,17 @@ export async function athleteDashboard(athleteId, athlete = {}, { type, syncType
       completionPct: g.targetValue ? Math.min(100, Math.round((num(g.currentValue) / num(g.targetValue)) * 100)) : 0,
     })),
   };
+}
+
+function eventMatchesDashboardType(event, filterType) {
+  if (!filterType) return true;
+  const cat = String(event.category || '').toLowerCase();
+  const t = String(filterType).toLowerCase();
+  if (t === 'run') return cat === 'run' || cat === 'triathlon';
+  if (t === 'ride') return cat === 'bike' || cat === 'triathlon';
+  if (t === 'swim') return cat === 'swim' || cat === 'triathlon';
+  if (t === 'walk' || t === 'hike') return cat === 'walk';
+  return false;
 }
 
 export function sportFamily(activity) {

@@ -198,7 +198,7 @@ export default function Dashboard() {
               <Link to="/events" className="text-sm text-brand no-underline">All events</Link>
             </div>
             {!data.upcomingEvents?.length ? (
-              <div className="card text-muted text-sm">No race on the calendar yet.</div>
+              <div className="card text-muted text-sm">No {type.toLowerCase()} race on the calendar yet.</div>
             ) : (
               <div className="space-y-2">
                 {data.upcomingEvents.slice(0, 3).map((e) => (
