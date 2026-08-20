@@ -6,7 +6,7 @@ import Layout from '../components/Layout';
 import ActivityTypeFilter from '../components/ActivityTypeFilter';
 import PersonalRecords from '../components/PersonalRecords';
 import { useAuth } from '../context/AuthContext';
-import { formatDistance, formatDuration, initialActivityType, rememberActivityType, visibleActivityTypeOptions } from '../utils/format';
+import { formatDistance, formatDuration, initialActivityType, rememberActivityType, visibleActivityTypeOptions, effortKind } from '../utils/format';
 
 const PERIODS = [
   { value: '90', label: 'Last 3 months' },
@@ -47,12 +47,21 @@ export default function Analysis() {
 
   const duration = data?.metric === 'duration';
   const swim = data?.metric === 'swim';
+  const kind = effortKind(type, type);
+  const speedMode = kind === 'speed';
   const volumeLabel = duration ? 'Time' : 'Distance';
   const formatVolume = (v) => (duration ? formatDuration(v) : swim ? `${Math.round(v)} m` : formatDistance(v));
   const months = data?.monthlyBreakdown || data?.weeklyBreakdown || [];
   const chartData = months.map((row) => ({
     ...row,
     volume: duration ? row.time : swim ? row.distance : Number(row.distance || 0) / 1000,
+    effort: !row.paceSecPerKm
+      ? null
+      : speedMode
+        ? 3600 / row.paceSecPerKm
+        : kind === 'swim'
+          ? row.paceSecPerKm / 10
+          : row.paceSecPerKm,
   }));
   const xAngle = chartData.length > 6 ? -35 : 0;
   const xInterval = chartData.length > 18 ? Math.ceil(chartData.length / 12) - 1 : 0;
@@ -123,31 +132,41 @@ export default function Analysis() {
             </div>
             <div className="card h-80">
               <h3 className="font-semibold mb-3">
-                {duration ? 'Heart rate trend' : 'Pace trend'}
-                <span className="text-muted font-normal text-sm"> · {duration ? 'avg bpm' : 'min/km'}</span>
+                {duration ? 'Heart rate trend' : speedMode ? 'Speed trend' : 'Pace trend'}
+                <span className="text-muted font-normal text-sm">
+                  {' '}· {duration ? 'avg bpm' : speedMode ? 'km/h' : kind === 'swim' ? '/100m' : 'min/km'}
+                </span>
               </h3>
               <ResponsiveContainer width="100%" height="85%">
                 <LineChart data={chartData} margin={{ top: 8, right: 8, left: 4, bottom: xAngle ? 16 : 0 }}>
                   <XAxis dataKey="label" stroke="#8b9cb3" fontSize={11} interval={xInterval} angle={xAngle} textAnchor={xAngle ? 'end' : 'middle'} height={xAngle ? 48 : 30} />
                   <YAxis
                     stroke="#8b9cb3"
-                    reversed={!duration}
+                    reversed={!duration && !speedMode}
                     fontSize={11}
                     width={48}
-                    tickFormatter={(v) => (duration ? Math.round(v) : formatPaceSec(v))}
+                    tickFormatter={(v) => (
+                      duration ? Math.round(v) : speedMode ? Number(v).toFixed(1) : formatPaceSec(v)
+                    )}
                   />
                   <Tooltip
-                    formatter={(v) => (duration ? `${Math.round(v)} bpm` : `${formatPaceSec(v)} /km`)}
+                    formatter={(v) => (
+                      duration
+                        ? `${Math.round(v)} bpm`
+                        : speedMode
+                          ? `${Number(v).toFixed(1)} km/h`
+                          : `${formatPaceSec(v)} ${kind === 'swim' ? '/100m' : '/km'}`
+                    )}
                     labelFormatter={(_, payload) => payload?.[0]?.payload?.label}
                   />
                   <Line
                     type="monotone"
-                    dataKey={duration ? 'hr' : 'paceSecPerKm'}
+                    dataKey={duration ? 'hr' : 'effort'}
                     stroke="#f97316"
                     strokeWidth={2}
                     dot={{ r: 3 }}
                     connectNulls
-                    name={duration ? 'HR' : 'Pace'}
+                    name={duration ? 'HR' : speedMode ? 'Speed' : 'Pace'}
                   />
                 </LineChart>
               </ResponsiveContainer>

@@ -1,5 +1,5 @@
 import { camelMany, many } from '../config/db.js';
-import { formatDistance, formatDuration, paceFromSpeed, startOfMonth, startOfWeek, startOfYear } from '../utils/format.js';
+import { formatDistance, formatDuration, paceFromSpeed, formatEffort, effortKind, startOfMonth, startOfWeek, startOfYear } from '../utils/format.js';
 import { athleteHrContext } from '../utils/maf.js';
 import { parseStoredSyncTypes } from '../utils/activityTypes.js';
 
@@ -59,6 +59,8 @@ export function analyzeActivity(activity, athlete = {}) {
   const cadence = num(activity.avgCadence ?? activity.avg_cadence);
   const avgSpeed = num(activity.avgSpeed ?? activity.avg_speed);
   const splits = activity.splits || [];
+  const kind = effortKind(activity.type, activity.sportType);
+  const effortWord = kind === 'speed' ? 'speed' : 'pace';
 
   const pace = paceFromSpeed(avgSpeed);
   const splitPaces = Array.isArray(splits)
@@ -81,7 +83,7 @@ export function analyzeActivity(activity, athlete = {}) {
     (moving && avgHr ? (moving / 60) * (avgHr / 100) : moving / 60);
 
   const cadenceEfficiency =
-    cadence && avgSpeed
+    kind === 'pace' && cadence && avgSpeed
       ? cadence >= 170 && cadence <= 190
         ? 'efficient'
         : cadence < 170
@@ -98,10 +100,10 @@ export function analyzeActivity(activity, athlete = {}) {
 
   const elevationImpact =
     elevPerKm > 40
-      ? 'Significant climbing likely slowed pace; compare effort, not just speed.'
+      ? `Significant climbing likely slowed ${effortWord}; compare effort, not just ${effortWord}.`
       : elevPerKm > 20
-        ? 'Moderate hills. Expect some pace variation on climbs and descents.'
-        : 'Mostly flat. Pace is a reliable performance signal.';
+        ? 'Moderate hills. Expect some variation on climbs and descents.'
+        : `Mostly flat. ${effortWord === 'speed' ? 'Speed' : 'Pace'} is a reliable performance signal.`;
 
   return {
     pace,
@@ -321,7 +323,8 @@ const TYPE_BUCKETS = {
   Ride: [
     { key: '50k', label: '50 km', min: 50000, max: 100000 },
     { key: '100k', label: '100 km', min: 100000, max: 150000 },
-    { key: '150k', label: '150 km+', min: 150000, max: Infinity },
+    { key: '150k', label: '150 km', min: 150000, max: 200000 },
+    { key: '200k', label: '200 km+', min: 200000, max: Infinity },
   ],
   Swim: [
     { key: '100m', label: '100 m', min: 100, max: 200 },
@@ -742,18 +745,18 @@ function snapshot(activity, athlete = {}) {
     avgSpeed: num(activity.avgSpeed) || null,
     calories: num(activity.calories) || null,
     paceSecPerKm: paceSec,
-    pace: insights.pace,
+    pace: formatEffort(activity) || insights.pace,
     trainingLoad: insights.trainingLoad,
     heartRateZone: insights.heartRateZone,
     paceConsistency: insights.paceConsistency,
     formatted: {
       distance: metric === 'swim' ? `${Math.round(num(activity.distance))} m` : formatDistance(activity.distance),
       time: formatDuration(activity.movingTime),
-      pace: insights.pace ? `${insights.pace} /km` : '—',
+      pace: formatEffort(activity) || (insights.pace ? `${insights.pace} /km` : '—'),
       elevation: `${Math.round(num(activity.elevationGain))} m`,
       hr: formatHr(activity.avgHeartrate),
       maxHr: formatHr(activity.maxHeartrate),
-      cadence: activity.avgCadence ? `${Math.round(activity.avgCadence)} spm` : '—',
+      cadence: activity.avgCadence ? `${Math.round(activity.avgCadence)} ${effortKind(activity.type, activity.sportType) === 'speed' ? 'rpm' : 'spm'}` : '—',
       load: insights.trainingLoad != null ? String(Math.round(insights.trainingLoad)) : '—',
     },
   };
@@ -802,14 +805,27 @@ export function compareActivities(activityA, activityB, athlete = {}) {
   }));
 
   let paceImproved = null;
-  if (older.paceSecPerKm && newer.paceSecPerKm) {
+  const kind = effortKind(olderAct.type, olderAct.sportType);
+  if (kind === 'speed' && older.avgSpeed && newer.avgSpeed) {
+    const speedDelta = (newer.avgSpeed - older.avgSpeed) * 3.6;
+    paceImproved = Math.abs(speedDelta) < 0.2 ? null : speedDelta > 0;
+    rows.push(compareRow('pace', 'Speed', older.formatted.pace, newer.formatted.pace, {
+      improved: paceImproved,
+      deltaLabel: Math.abs(speedDelta) < 0.2
+        ? 'similar'
+        : `${speedDelta > 0 ? '+' : ''}${speedDelta.toFixed(1)} km/h`,
+      better: 'higher',
+    }));
+  } else if (older.paceSecPerKm && newer.paceSecPerKm) {
     const paceDelta = newer.paceSecPerKm - older.paceSecPerKm;
-    paceImproved = Math.abs(paceDelta) < 2 ? null : paceDelta < 0;
+    const unit = kind === 'swim' ? '/100m' : kind === 'row' ? '/500m' : '/km';
+    const displayDelta = kind === 'swim' ? paceDelta / 10 : kind === 'row' ? paceDelta / 2 : paceDelta;
+    paceImproved = Math.abs(displayDelta) < 1 ? null : displayDelta < 0;
     rows.push(compareRow('pace', 'Pace', older.formatted.pace, newer.formatted.pace, {
       improved: paceImproved,
-      deltaLabel: Math.abs(paceDelta) < 2
+      deltaLabel: Math.abs(displayDelta) < 1
         ? 'similar'
-        : `${formatClockDelta(paceDelta)} /km ${paceDelta < 0 ? 'faster' : 'slower'}`,
+        : `${formatClockDelta(displayDelta)} ${unit} ${displayDelta < 0 ? 'faster' : 'slower'}`,
       better: 'lower',
     }));
   }
