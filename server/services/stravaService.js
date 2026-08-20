@@ -10,6 +10,8 @@ import {
   parseStoredSyncTypes,
   typesEqual,
 } from '../utils/activityTypes.js';
+import { encodePolyline } from '../utils/polyline.js';
+import { downsampleStreams } from '../utils/track.js';
 
 const STRAVA_API = 'https://www.strava.com/api/v3';
 const PER_PAGE = 200;
@@ -159,11 +161,52 @@ export async function fetchStravaActivity(userId, activityId) {
   return data;
 }
 
-export async function upsertStravaActivityById(userId, activityId) {
+export async function fetchStravaStreams(userId, activityId) {
+  const accessToken = await getValidAccessToken(userId);
+  const { data } = await stravaGet(`${STRAVA_API}/activities/${activityId}/streams`, accessToken, {
+    keys: 'latlng,distance,altitude,heartrate,velocity_smooth',
+    key_by_type: true,
+  });
+  return data;
+}
+
+export async function upsertStravaActivityById(userId, activityId, { streams = false } = {}) {
   const act = await fetchStravaActivity(userId, activityId);
   const types = await loadUserSyncTypes(userId);
   if (!activityMatchesSyncTypes(act, types)) return null;
-  return upsertActivity(userId, 'strava', mapStravaActivity(act));
+  const mapped = mapStravaActivity(act);
+  if (streams) {
+    try {
+      mapped.gpsPoints = downsampleStreams(await fetchStravaStreams(userId, activityId)) || { latlng: [] };
+      if (!mapped.polyline && mapped.gpsPoints?.latlng?.length) {
+        mapped.polyline = encodePolyline(mapped.gpsPoints.latlng);
+      }
+    } catch {
+      mapped.gpsPoints = { latlng: [] };
+    }
+  }
+  return upsertActivity(userId, 'strava', mapped);
+}
+
+export function needsStravaEnrichment(activity) {
+  if (activity?.source !== 'strava' || !activity.sourceActivityId) return false;
+  const raw = activity.raw || {};
+  const hasDetail = Array.isArray(raw.splits_metric) || Array.isArray(raw.laps);
+  const hasTrackRecord = activity.gpsPoints != null;
+  return !hasDetail || !hasTrackRecord;
+}
+
+export async function enrichStravaActivity(activity) {
+  if (!needsStravaEnrichment(activity)) return activity;
+  try {
+    await upsertStravaActivityById(activity.athleteId, activity.sourceActivityId, { streams: true });
+    const fresh = camel(
+      await one('SELECT * FROM activities WHERE id = $1', [activity.id])
+    );
+    return fresh ? { ...activity, ...fresh } : activity;
+  } catch {
+    return activity;
+  }
 }
 
 export async function handleStravaWebhookEvent(event) {
@@ -356,7 +399,8 @@ function mapStravaActivity(act) {
     avgPower: act.average_watts,
     calories: act.calories,
     description: act.description,
-    polyline: act.map?.summary_polyline,
+    polyline: act.map?.summary_polyline || act.map?.polyline || null,
+    gpsPoints: null,
     splits,
     weather: act.average_temp != null ? { temp: act.average_temp } : null,
     trainingLoad: act.suffer_score,
@@ -370,9 +414,9 @@ export async function upsertActivity(athleteId, source, mapped) {
        athlete_id, source, source_activity_id, name, type, sport_type, distance, moving_time,
        elapsed_time, elevation_gain, start_date, start_date_local, avg_speed, max_speed,
        avg_heartrate, max_heartrate, avg_cadence, avg_power, calories, description, polyline,
-       splits, weather, training_load, raw, updated_at
+       gps_points, splits, weather, training_load, raw, updated_at
      ) VALUES (
-       $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22::jsonb,$23::jsonb,$24,$25::jsonb,NOW()
+       $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22::jsonb,$23::jsonb,$24::jsonb,$25,$26::jsonb,NOW()
      )
      ON CONFLICT (source, source_activity_id) DO UPDATE SET
        name = EXCLUDED.name,
@@ -392,10 +436,14 @@ export async function upsertActivity(athleteId, source, mapped) {
        avg_power = EXCLUDED.avg_power,
        calories = EXCLUDED.calories,
        description = EXCLUDED.description,
-       polyline = EXCLUDED.polyline,
-       splits = EXCLUDED.splits,
-       weather = EXCLUDED.weather,
-       training_load = EXCLUDED.training_load,
+       polyline = COALESCE(NULLIF(EXCLUDED.polyline, ''), activities.polyline),
+       gps_points = COALESCE(EXCLUDED.gps_points, activities.gps_points),
+       splits = CASE
+         WHEN jsonb_typeof(EXCLUDED.splits) = 'array' AND jsonb_array_length(EXCLUDED.splits) > 0 THEN EXCLUDED.splits
+         ELSE activities.splits
+       END,
+       weather = COALESCE(EXCLUDED.weather, activities.weather),
+       training_load = COALESCE(EXCLUDED.training_load, activities.training_load),
        raw = EXCLUDED.raw,
        updated_at = NOW()
      RETURNING id`,
@@ -420,7 +468,8 @@ export async function upsertActivity(athleteId, source, mapped) {
       mapped.avgPower,
       mapped.calories,
       mapped.description,
-      mapped.polyline,
+      mapped.polyline || null,
+      mapped.gpsPoints ? JSON.stringify(mapped.gpsPoints) : null,
       JSON.stringify(mapped.splits || []),
       mapped.weather ? JSON.stringify(mapped.weather) : null,
       mapped.trainingLoad,

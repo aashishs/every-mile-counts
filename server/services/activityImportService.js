@@ -1,5 +1,7 @@
 import crypto from 'crypto';
 import { upsertActivity } from './stravaService.js';
+import { encodePolyline } from '../utils/polyline.js';
+import { trackFromGpsPoints } from '../utils/track.js';
 
 const ALLOWED_TYPES = [
   'Run', 'Ride', 'Swim', 'Walk', 'Hike', 'Workout', 'WeightTraining', 'Yoga', 'HIIT',
@@ -189,11 +191,12 @@ function kmSplits(points, totalDistance) {
     travelled += step > 0 && step < 5000 ? step : 0;
     while (travelled >= mark && last?.time && p.time) {
       const sec = (p.time - last.time) / 1000;
+      const elev = last.ele != null && p.ele != null ? p.ele - last.ele : null;
       splits.push({
         distance: 1000,
         movingTime: Math.max(1, Math.round(sec)),
         pace: sec > 0 ? sec : null,
-        elevation: null,
+        elevation: elev != null ? Math.round(elev) : null,
         hr: p.hr,
       });
       last = p;
@@ -263,6 +266,7 @@ export function mappedFromManual(body) {
     calories: num(body.calories),
     description: String(body.description || '').trim() || null,
     polyline: null,
+    gpsPoints: null,
     splits: [],
     weather: null,
     trainingLoad: null,
@@ -323,6 +327,10 @@ export function mappedFromFile({ filename, content, name, type, movingTimeSecond
 
   const avgSpeed = distance > 0 && movingTime > 0 ? distance / movingTime : null;
   const hash = crypto.createHash('sha256').update(xml).digest('hex').slice(0, 24);
+  const gpsPoints = trackFromGpsPoints(points);
+  const polyline = gpsPoints?.latlng?.length
+    ? encodePolyline(gpsPoints.latlng)
+    : encodePolyline(points.filter((p) => p.lat != null).map((p) => [p.lat, p.lon]));
 
   return {
     sourceActivityId: null,
@@ -344,7 +352,8 @@ export function mappedFromFile({ filename, content, name, type, movingTimeSecond
     avgPower: null,
     calories: tcxCal,
     description: String(description || '').trim() || null,
-    polyline: null,
+    polyline,
+    gpsPoints,
     splits: kmSplits(points, distance),
     weather: null,
     trainingLoad: null,

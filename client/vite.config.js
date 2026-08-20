@@ -56,6 +56,13 @@ export default defineConfig({
               cacheName: 'emc-api',
             },
           },
+          {
+            urlPattern: ({ url }) => /tile\.openstreetmap\.org|basemaps\.cartocdn\.com/.test(url.hostname),
+            handler: 'NetworkOnly',
+            options: {
+              cacheName: 'emc-map-tiles',
+            },
+          },
         ],
       },
       devOptions: {

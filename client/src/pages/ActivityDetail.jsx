@@ -13,6 +13,8 @@ import {
   getActivityIcon,
 } from '../utils/format';
 import { buildActivityMarkdown, copyText } from '../utils/activityMarkdown';
+import ActivityRouteMap from '../components/ActivityRouteMap';
+import ActivitySplits from '../components/ActivitySplits';
 
 export default function ActivityDetail() {
   const { id } = useParams();
@@ -187,6 +189,9 @@ export default function ActivityDetail() {
           </div>
         ))}
       </div>
+
+      <ActivityRouteMap activity={activity} />
+      <ActivitySplits activity={activity} />
 
       {(insights || athleteInsights) && (
         <section className="mb-6">
