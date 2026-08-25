@@ -1,8 +1,10 @@
 import { Link } from 'react-router-dom';
 import { quoteForDay } from '../utils/dailyQuotes';
+import { hasRole } from '../utils/roles';
 
 export default function DailyCheckin({ user, today, onClose }) {
   if (!today?.date) return null;
+  if (hasRole(user, 'coach', 'club_admin')) return null;
   const trained = Boolean(today.trained && today.score);
   const quote = quoteForDay(user?.id, today.date, trained ? 'done' : 'motivate');
   const name = user?.firstName || 'Athlete';
