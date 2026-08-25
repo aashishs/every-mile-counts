@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import Layout from '../components/Layout';
 import { useAuth } from '../context/AuthContext';
+import { isAthleteAccount } from '../utils/roles';
 import { formatActivityPrimary, formatDate, formatDateShort, getActivityIcon } from '../utils/format';
 
 const PAGE_SIZES = [10, 20, 50, 100];
@@ -42,9 +43,10 @@ function SortHeader({ label, column, sort, dir, onSort }) {
 }
 
 export default function Coaches() {
-  const { isCoach } = useAuth();
+  const { isCoach, user } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
+  const athlete = isAthleteAccount(user);
   const [coaches, setCoaches] = useState([]);
   const [athletes, setAthletes] = useState([]);
   const [inbox, setInbox] = useState([]);
@@ -62,10 +64,19 @@ export default function Coaches() {
   const [inboxTotal, setInboxTotal] = useState(0);
   const [inboxPages, setInboxPages] = useState(1);
   const [loadingInbox, setLoadingInbox] = useState(false);
+  const [loadingAthletes, setLoadingAthletes] = useState(false);
 
   const load = async () => {
-    const c = await api.get('/coaches/my-coaches');
-    setCoaches(c.data.coaches || []);
+    if (!athlete) {
+      setCoaches([]);
+      return;
+    }
+    try {
+      const c = await api.get('/coaches/my-coaches');
+      setCoaches(c.data.coaches || []);
+    } catch {
+      setCoaches([]);
+    }
   };
 
   const loadInbox = async () => {
@@ -79,6 +90,10 @@ export default function Coaches() {
       setInboxTotal(data.total || 0);
       setInboxPages(data.pages || 1);
       if (data.page && data.page !== inboxPage) setInboxPage(data.page);
+    } catch {
+      setInbox([]);
+      setInboxTotal(0);
+      setInboxPages(1);
     } finally {
       setLoadingInbox(false);
     }
@@ -95,12 +110,16 @@ export default function Coaches() {
       setTotal(data.total || 0);
       setPages(data.pages || 1);
       if (data.page && data.page !== page) setPage(data.page);
+    } catch {
+      setAthletes([]);
+      setTotal(0);
+      setPages(1);
     } finally {
       setLoadingAthletes(false);
     }
   };
 
-  useEffect(() => { load(); }, [isCoach, location.key]);
+  useEffect(() => { load(); }, [athlete, location.key]);
   useEffect(() => { loadInbox(); }, [isCoach, inboxSort, inboxDir, inboxPage, inboxLimit, location.key]);
   useEffect(() => { loadAthletes(); }, [isCoach, sort, dir, page, limit, location.key]);
 
@@ -167,7 +186,11 @@ export default function Coaches() {
   return (
     <Layout>
       <h2 className="page-title">Coaching</h2>
-      <p className="page-sub">Athletes, reviews, and training plans. Athletes may have up to three coaches.</p>
+      <p className="page-sub">
+        {isCoach
+          ? 'Athletes, reviews, and training plans for your club.'
+          : 'Athletes may have up to three coaches.'}
+      </p>
       {isCoach && (
         <div className="flex flex-wrap gap-2 mb-6">
           <button className="btn-primary" type="button" onClick={() => navigate('/coaches/training')}>Training dashboard</button>
@@ -175,22 +198,26 @@ export default function Coaches() {
         </div>
       )}
 
-      <h3 className="font-semibold mb-2">My coaches</h3>
-      <div className="grid md:grid-cols-3 gap-3 mb-8">
-        {coaches.map((c) => (
-          <div key={c.id || c.coachId} className="card">
-            <div className="font-semibold">{c.firstName} {c.lastName}</div>
-            <div className="text-xs text-muted">{c.email} {c.clubName ? `· ${c.clubName}` : ''}</div>
-            <button className="btn-outline btn-sm mt-3" type="button" onClick={async () => {
-              await api.delete(`/coaches/remove/${c.coachId || c.id}`);
-              load();
-            }}>
-              Remove
-            </button>
+      {athlete && (
+        <>
+          <h3 className="font-semibold mb-2">My coaches</h3>
+          <div className="grid md:grid-cols-3 gap-3 mb-8">
+            {coaches.map((c) => (
+              <div key={c.id || c.coachId} className="card">
+                <div className="font-semibold">{c.firstName} {c.lastName}</div>
+                <div className="text-xs text-muted">{c.email} {c.clubName ? `· ${c.clubName}` : ''}</div>
+                <button className="btn-outline btn-sm mt-3" type="button" onClick={async () => {
+                  await api.delete(`/coaches/remove/${c.coachId || c.id}`);
+                  load();
+                }}>
+                  Remove
+                </button>
+              </div>
+            ))}
+            {!coaches.length && <div className="card text-muted text-sm">No coaches assigned yet. Add one from Profile, or join a club.</div>}
           </div>
-        ))}
-        {!coaches.length && <div className="card text-muted text-sm">No coaches assigned yet. Add one from Profile, or join a club.</div>}
-      </div>
+        </>
+      )}
 
       {isCoach && (
         <>

@@ -188,12 +188,16 @@ export default function ClubDetail() {
 
   const coaches = useMemo(
     () => members
-      .filter((m) => m.status === 'active' && m.role === 'coach')
+      .filter((m) => m.status === 'active' && (
+        m.role === 'coach'
+        || (m.role === 'club_admin' && club?.headCoachUserId === m.userId)
+      ))
       .map((c) => ({
         ...c,
         assignedCount: assignments.filter((a) => a.coachId === c.userId).length,
+        isHeadCoach: club?.headCoachUserId === c.userId,
       })),
-    [members, assignments]
+    [members, assignments, club?.headCoachUserId]
   );
   const athletes = useMemo(
     () => members.filter((m) => m.role === 'member' && m.status === 'active'),
@@ -573,12 +577,19 @@ export default function ClubDetail() {
               <div className="space-y-2 md:hidden mb-3">
                 {coachTable.rows.map((c) => (
                   <div key={c.id} className="card">
-                    <div className="font-semibold">{c.firstName} {c.lastName}</div>
+                    <div className="font-semibold">
+                      {c.firstName} {c.lastName}
+                      {c.isHeadCoach ? <span className="text-xs font-normal text-muted"> · Head coach</span> : null}
+                    </div>
                     <div className="text-xs text-muted truncate mt-0.5">{c.email}</div>
                     <div className="text-xs text-muted mt-2">{c.assignedCount} assigned athlete{c.assignedCount === 1 ? '' : 's'}</div>
-                    <button className="btn-outline btn-sm mt-3" type="button" onClick={() => removeCoach(c.userId)}>
-                      Remove
-                    </button>
+                    {c.isHeadCoach ? (
+                      <p className="text-xs text-muted mb-0 mt-3">Change this on Profile.</p>
+                    ) : (
+                      <button className="btn-outline btn-sm mt-3" type="button" onClick={() => removeCoach(c.userId)}>
+                        Remove
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>
@@ -601,13 +612,18 @@ export default function ClubDetail() {
                       <tr key={c.id} className="border-t border-line">
                         <td className="p-3 font-semibold text-slate-100 whitespace-nowrap">
                           {c.firstName} {c.lastName}
+                          {c.isHeadCoach ? <span className="text-xs font-normal text-muted"> · Head coach</span> : null}
                         </td>
                         <td className="p-3 text-muted">{c.email}</td>
                         <td className="p-3 whitespace-nowrap">{c.assignedCount}</td>
                         <td className="p-3 whitespace-nowrap text-right">
-                          <button className="btn-outline btn-sm" type="button" onClick={() => removeCoach(c.userId)}>
-                            Remove
-                          </button>
+                          {c.isHeadCoach ? (
+                            <span className="text-xs text-muted">Change on Profile</span>
+                          ) : (
+                            <button className="btn-outline btn-sm" type="button" onClick={() => removeCoach(c.userId)}>
+                              Remove
+                            </button>
+                          )}
                         </td>
                       </tr>
                     ))}
@@ -633,7 +649,10 @@ export default function ClubDetail() {
           <div className="space-y-2">
             {coaches.map((c) => (
               <div key={c.id} className="card">
-                <div className="font-semibold">{c.firstName} {c.lastName}</div>
+                <div className="font-semibold">
+                  {c.firstName} {c.lastName}
+                  {c.isHeadCoach ? <span className="text-xs font-normal text-muted"> · Head coach</span> : null}
+                </div>
                 <div className="text-xs text-muted">{c.email}</div>
               </div>
             ))}
@@ -708,7 +727,9 @@ export default function ClubDetail() {
                         >
                           <option value="">{coaches.length ? 'Assign a coach…' : 'Add a coach first'}</option>
                           {available.map((c) => (
-                            <option key={c.userId} value={c.userId}>{c.firstName} {c.lastName}</option>
+                            <option key={c.userId} value={c.userId}>
+                              {c.firstName} {c.lastName}{c.isHeadCoach ? ' · Head coach' : ''}
+                            </option>
                           ))}
                         </select>
                         <button className="btn-primary btn-sm" type="button" onClick={() => assign(a.userId)} disabled={!assignPick[a.userId]}>
@@ -828,7 +849,9 @@ export default function ClubDetail() {
                               >
                                 <option value="">{coaches.length ? 'Assign…' : 'Add a coach first'}</option>
                                 {available.map((c) => (
-                                  <option key={c.userId} value={c.userId}>{c.firstName} {c.lastName}</option>
+                                  <option key={c.userId} value={c.userId}>
+                                    {c.firstName} {c.lastName}{c.isHeadCoach ? ' · Head coach' : ''}
+                                  </option>
                                 ))}
                               </select>
                               <button className="btn-primary btn-sm" type="button" onClick={() => assign(a.userId)} disabled={!assignPick[a.userId]}>

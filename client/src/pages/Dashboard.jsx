@@ -7,7 +7,7 @@ import PersonalRecords from '../components/PersonalRecords';
 import DailyCheckin from '../components/DailyCheckin';
 import { useAuth } from '../context/AuthContext';
 import { formatDate, formatTime, getActivityIcon, initialActivityType, rememberActivityType, visibleActivityTypeOptions } from '../utils/format';
-import { isAthleteAccount } from '../utils/roles';
+import { hasRole, isAthleteAccount } from '../utils/roles';
 import { hasSeenCheckin, markCheckinSeen } from '../utils/dailyQuotes';
 import StravaCard from '../components/StravaCard';
 
@@ -34,6 +34,7 @@ function daysOut(date) {
 export default function Dashboard() {
   const { user } = useAuth();
   const athlete = isAthleteAccount(user);
+  const showQuoteBox = athlete && !hasRole(user, 'coach', 'club_admin');
   const [data, setData] = useState(null);
   const [searchParams] = useSearchParams();
   const [type, setType] = useState(() => initialActivityType(user, searchParams.get('type')));
@@ -100,10 +101,10 @@ export default function Dashboard() {
   };
 
   useEffect(() => {
-    if (!athlete || !data?.today?.date || !user?.id) return;
+    if (!showQuoteBox || !data?.today?.date || !user?.id) return;
     if (hasSeenCheckin(user.id, data.today.date)) return;
     setShowCheckin(true);
-  }, [athlete, data?.today?.date, user?.id]);
+  }, [showQuoteBox, data?.today?.date, user?.id]);
 
   const closeCheckin = () => {
     if (data?.today?.date) markCheckinSeen(user.id, data.today.date);
@@ -114,7 +115,7 @@ export default function Dashboard() {
 
   return (
     <Layout>
-      {showCheckin && (
+      {showQuoteBox && showCheckin && (
         <DailyCheckin user={user} today={data?.today} onClose={closeCheckin} />
       )}
       <div className="mb-4">

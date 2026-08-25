@@ -957,6 +957,7 @@ function snapshot(activity, athlete = {}) {
     calories: num(activity.calories) || null,
     paceSecPerKm: paceSec,
     pace: formatEffort(activity) || insights.pace,
+    splits: Array.isArray(activity.splits) ? activity.splits : [],
     trainingLoad: insights.trainingLoad,
     heartRateZone: insights.heartRateZone,
     paceConsistency: insights.paceConsistency,
@@ -984,6 +985,69 @@ function compareRow(key, label, olderDisplay, newerDisplay, { improved, deltaLab
 }
 
 export function compareActivities(activityA, activityB, athlete = {}) {
+  return compareActivitySet([activityA, activityB], athlete);
+}
+
+export function compareActivitySet(activities, athlete = {}) {
+  const list = (activities || []).filter(Boolean);
+  if (list.length < 2 || list.length > 3) {
+    const err = new Error('Compare 2 or 3 sessions.');
+    err.status = 400;
+    throw err;
+  }
+  const sports = list.map((act) => sportFamily(act));
+  if (sports.some((sport) => sport !== sports[0])) {
+    const err = new Error(`Pick ${sports[0]} sessions only. Mixed types cannot be compared.`);
+    err.status = 400;
+    throw err;
+  }
+
+  const ordered = [...list].sort((a, b) => new Date(a.startDate) - new Date(b.startDate));
+  const sessions = ordered.map((act) => snapshot(act, athlete));
+  const metric = sessions[0].metric;
+  const sport = sports[0];
+  const kind = effortKind(ordered[0].type, ordered[0].sportType);
+
+  const values = (pick) => sessions.map(pick);
+  const rows = [];
+
+  if (metric !== 'duration') {
+    rows.push({ key: 'distance', label: 'Distance', values: values((s) => s.formatted.distance) });
+  }
+  rows.push({ key: 'time', label: 'Time', values: values((s) => s.formatted.time) });
+  if (kind === 'speed') {
+    rows.push({ key: 'pace', label: 'Speed', values: values((s) => s.formatted.pace || '—') });
+  } else if (kind !== 'duration') {
+    rows.push({ key: 'pace', label: 'Pace', values: values((s) => s.formatted.pace || '—') });
+  }
+  rows.push({ key: 'hr', label: 'Avg HR', values: values((s) => s.formatted.hr) });
+  rows.push({ key: 'maxHr', label: 'Max HR', values: values((s) => s.formatted.maxHr) });
+  if (metric !== 'duration') {
+    rows.push({ key: 'elevation', label: 'Climb', values: values((s) => s.formatted.elevation || '—') });
+  }
+  if (sessions.some((s) => s.avgCadence)) {
+    rows.push({ key: 'cadence', label: 'Cadence', values: values((s) => s.formatted.cadence) });
+  }
+
+  const pair = sessions.length === 2 ? compareActivitiesPair(ordered[0], ordered[1], athlete) : null;
+  const headline = sessions.length === 3
+    ? `${sessions.length} ${sport.toLowerCase()}s, oldest to newest.`
+    : pair?.headline || `Comparing two ${sport.toLowerCase()} sessions.`;
+
+  return {
+    sport,
+    metric,
+    headline,
+    verdict: pair?.verdict || 'mixed',
+    comparable: pair?.comparable ?? true,
+    sessions,
+    rows,
+    older: sessions[0],
+    newer: sessions[sessions.length - 1],
+  };
+}
+
+function compareActivitiesPair(activityA, activityB, athlete = {}) {
   const sportA = sportFamily(activityA);
   const sportB = sportFamily(activityB);
   if (sportA !== sportB) {
