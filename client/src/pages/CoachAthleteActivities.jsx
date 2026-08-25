@@ -245,7 +245,7 @@ export default function CoachAthleteActivities() {
             <div className="stat-card">
               <div className="stat-label">All sessions</div>
               <div className="stat-value text-lg md:text-2xl">{athlete?.activityCount ?? total}</div>
-              <div className="text-[11px] text-muted mt-1">Open any row for maps, splits, review</div>
+              <div className="text-[11px] text-muted mt-1">Open any row for splits and review</div>
             </div>
           </div>
 

@@ -15,7 +15,6 @@ import {
 } from '../utils/format';
 import { buildActivityMarkdown, copyText } from '../utils/activityMarkdown';
 import { formatComparisonValue } from '../utils/training';
-import ActivityRouteMap from '../components/ActivityRouteMap';
 import ActivitySplits from '../components/ActivitySplits';
 import { PoweredByStrava, ViewOnStrava } from '../components/StravaBrand';
 
@@ -263,9 +262,8 @@ export default function ActivityDetail() {
         ))}
       </div>
 
-      <ActivityRouteMap activity={activity} />
       {activity.source === 'strava' && (
-        <p className="mb-6 -mt-2">
+        <p className="mb-6">
           <ViewOnStrava activity={activity} />
         </p>
       )}
