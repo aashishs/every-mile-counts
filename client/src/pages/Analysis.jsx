@@ -104,7 +104,7 @@ export default function Analysis() {
             <Stat label="Activities" value={data.current.count} delta={data.comparison.countPct} />
             <Stat label={volumeLabel} value={data.current.formatted.distance} delta={data.comparison.distancePct} />
             {!duration && <Stat label="Time" value={data.current.formatted.time} delta={data.comparison.timePct} />}
-            <Stat label="Elevation" value={data.current.formatted.elevation} />
+            {!duration && <Stat label="Elevation" value={data.current.formatted.elevation} />}
           </div>
 
           <div className="space-y-6 mb-6">

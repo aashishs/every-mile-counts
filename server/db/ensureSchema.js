@@ -54,6 +54,8 @@ export async function ensureSchemaPatches() {
     `CREATE INDEX IF NOT EXISTS idx_oauth_connections_provider_user
      ON oauth_connections (provider, provider_user_id)`
   );
+  await pool.query(`ALTER TABLE clubs ADD COLUMN IF NOT EXISTS head_coach_user_id UUID REFERENCES users(id) ON DELETE SET NULL`);
+  await pool.query(`ALTER TABLE club_members ADD COLUMN IF NOT EXISTS head_coach_choice TEXT`);
   await pool.query(`ALTER TABLE oauth_connections ADD COLUMN IF NOT EXISTS granted_scope TEXT`);
   await pool.query(`ALTER TABLE oauth_connections ADD COLUMN IF NOT EXISTS pending_coach_share BOOLEAN NOT NULL DEFAULT FALSE`);
   await pool.query(`ALTER TABLE oauth_connections ADD COLUMN IF NOT EXISTS coach_share_consented_at TIMESTAMPTZ`);
@@ -88,7 +90,7 @@ export async function ensureSchemaPatches() {
 
   await pool.query(`
     DELETE FROM user_roles ur
-    WHERE ur.role IN ('athlete', 'coach')
+    WHERE ur.role = 'athlete'
       AND EXISTS (
         SELECT 1 FROM user_roles ca
         WHERE ca.user_id = ur.user_id AND ca.role = 'club_admin'
@@ -96,6 +98,22 @@ export async function ensureSchemaPatches() {
       AND NOT EXISTS (
         SELECT 1 FROM user_roles aa
         WHERE aa.user_id = ur.user_id AND aa.role IN ('app_admin', 'super_admin', 'admin', 'support_admin')
+      )
+  `);
+
+  await pool.query(`
+    DELETE FROM user_roles ur
+    WHERE ur.role = 'coach'
+      AND EXISTS (
+        SELECT 1 FROM user_roles ca
+        WHERE ca.user_id = ur.user_id AND ca.role = 'club_admin'
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM user_roles aa
+        WHERE aa.user_id = ur.user_id AND aa.role IN ('app_admin', 'super_admin', 'admin', 'support_admin')
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM clubs c WHERE c.head_coach_user_id = ur.user_id
       )
   `);
 
@@ -111,6 +129,10 @@ export async function ensureSchemaPatches() {
         OR (
           EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = ca.coach_id AND ur.role = 'club_admin')
           AND NOT EXISTS (SELECT 1 FROM user_roles aa WHERE aa.user_id = ca.coach_id AND aa.role IN ('app_admin', 'super_admin', 'admin', 'support_admin'))
+          AND NOT EXISTS (
+            SELECT 1 FROM clubs c
+            WHERE c.head_coach_user_id = ca.coach_id AND (ca.club_id IS NULL OR ca.club_id = c.id)
+          )
         )
       )
   `);
@@ -119,6 +141,7 @@ export async function ensureSchemaPatches() {
     UPDATE clubs c
     SET status = 'pending_coach', updated_at = NOW()
     WHERE c.status = 'active'
+      AND c.head_coach_user_id IS NULL
       AND NOT EXISTS (
         SELECT 1 FROM club_members cm
         WHERE cm.club_id = c.id AND cm.status = 'active' AND cm.role = 'coach'

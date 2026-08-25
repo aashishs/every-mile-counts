@@ -25,28 +25,46 @@ const DISTANCE_SPORTS = [
   'canoe', 'skate', 'ski', 'surf', 'sail', 'paddle', 'snowshoe',
 ];
 
-export function activityMetric(type, sportType, distance) {
+export function activityMetric(type, sportType) {
   const t = `${type || ''} ${sportType || ''}`.toLowerCase();
   if (DURATION_SPORTS.some((k) => t.includes(k))) return 'duration';
   if (SWIM_SPORTS.some((k) => t.includes(k))) return 'swim';
   if (DISTANCE_SPORTS.some((k) => t.includes(k))) return 'distance';
-  if (!distance || Number(distance) < 50) return 'duration';
-  return 'distance';
+  return 'duration';
 }
 
 export function formatActivityPrimary(activity) {
-  const metric = activityMetric(activity.type, activity.sportType, activity.distance);
-  if (metric === 'swim') return `${Math.round(Number(activity.distance) || 0)} m`;
-  if (metric === 'distance') return formatDistance(activity.distance);
-  return formatDuration(activity.movingTime || activity.elapsedTime);
+  const metric = activityMetric(activity?.type, activity?.sportType);
+  if (metric === 'swim' && Number(activity?.distance) > 0) return `${Math.round(Number(activity.distance))} m`;
+  if (metric === 'distance' && Number(activity?.distance) > 0) return formatDistance(activity.distance);
+  const seconds = activity?.movingTime || activity?.elapsedTime;
+  if (seconds) return formatDuration(seconds);
+  if (Number(activity?.calories) > 0) return `${Math.round(activity.calories)} kcal`;
+  return '';
 }
 
 export function formatActivitySecondary(activity) {
-  const metric = activityMetric(activity.type, activity.sportType, activity.distance);
+  const metric = activityMetric(activity.type, activity.sportType);
   if (metric === 'duration') {
-    return activity.calories ? `${Math.round(activity.calories)} kcal` : '';
+    return Number(activity.calories) > 0 ? `${Math.round(activity.calories)} kcal` : '';
   }
-  return formatDuration(activity.movingTime);
+  return formatDuration(activity.movingTime || activity.elapsedTime);
+}
+
+export function activitySummaryParts(activity) {
+  const metric = activityMetric(activity?.type, activity?.sportType);
+  const time = (activity?.movingTime || activity?.elapsedTime)
+    ? formatDuration(activity.movingTime || activity.elapsedTime)
+    : null;
+  const hr = Number(activity?.avgHeartrate) > 0 ? `${Math.round(activity.avgHeartrate)} bpm` : null;
+  const kcal = Number(activity?.calories) > 0 ? `${Math.round(activity.calories)} kcal` : null;
+  if (metric === 'duration') return [time, kcal, hr].filter(Boolean);
+  const dist = Number(activity?.distance) > 0
+    ? (metric === 'swim' ? `${Math.round(activity.distance)} m` : formatDistance(activity.distance))
+    : null;
+  const effort = formatEffort(activity);
+  const effortText = effort && effort !== '—' ? effort : null;
+  return [dist, time, effortText, hr].filter(Boolean);
 }
 
 export function formatPace(mps) {
@@ -64,9 +82,10 @@ const SPEED_SPORTS = [
 ];
 
 export function effortKind(type, sportType) {
+  const metric = activityMetric(type, sportType);
+  if (metric === 'duration') return 'duration';
+  if (metric === 'swim') return 'swim';
   const t = `${type || ''} ${sportType || ''}`.toLowerCase();
-  if (DURATION_SPORTS.some((k) => t.includes(k))) return 'duration';
-  if (t.includes('swim')) return 'swim';
   if (t.includes('row') && !t.includes('kayak')) return 'row';
   if (SPEED_SPORTS.some((k) => t.includes(k))) return 'speed';
   return 'pace';
@@ -95,17 +114,34 @@ export function formatRowPace(mps) {
 
 export function formatEffort(activity) {
   const kind = effortKind(activity?.type, activity?.sportType);
+  if (kind === 'duration') return null;
   const mps = Number(activity?.avgSpeed);
   if (kind === 'speed') return formatSpeed(mps);
   if (kind === 'swim') return formatSwimPace(mps);
   if (kind === 'row') return formatRowPace(mps);
-  if (kind === 'duration') return '';
   return formatPace(mps);
+}
+
+export function formatActivityDistance(activity) {
+  const metric = activityMetric(activity?.type, activity?.sportType);
+  if (metric === 'swim' && Number(activity?.distance) > 0) return `${Math.round(Number(activity.distance))} m`;
+  if (metric === 'distance' && Number(activity?.distance) > 0) return formatDistance(activity.distance);
+  return '';
+}
+
+export function formatActivityEffort(activity) {
+  if (effortKind(activity?.type, activity?.sportType) === 'duration') return '';
+  const effort = formatEffort(activity);
+  return effort && effort !== '—' ? effort : '';
 }
 
 export function effortStat(activity) {
   const kind = effortKind(activity?.type, activity?.sportType);
+  if (kind === 'duration') return { kind, label: null, value: '', unit: '' };
   const formatted = formatEffort(activity);
+  if (!formatted || formatted === '—') {
+    return { kind, label: null, value: '', unit: '' };
+  }
   if (kind === 'speed') {
     return { kind, label: 'Speed', value: formatted.replace(/ km\/h$/, ''), unit: 'km/h' };
   }
@@ -114,9 +150,6 @@ export function effortStat(activity) {
   }
   if (kind === 'row') {
     return { kind, label: 'Pace', value: formatted.replace(/ \/500m$/, ''), unit: '/500m' };
-  }
-  if (kind === 'duration' || formatted === '—') {
-    return { kind, label: null, value: '', unit: '' };
   }
   return { kind, label: 'Pace', value: formatted.replace(/ \/km$/, ''), unit: '/km' };
 }

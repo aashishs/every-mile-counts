@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import Layout from '../components/Layout';
 import { useAuth } from '../context/AuthContext';
-import { formatDate, formatDateShort, formatDistance, getActivityIcon } from '../utils/format';
+import { formatActivityPrimary, formatDate, formatDateShort, getActivityIcon } from '../utils/format';
 
 const PAGE_SIZES = [10, 20, 50, 100];
 
@@ -54,7 +54,7 @@ export default function Coaches() {
   const [limit, setLimit] = useState(10);
   const [total, setTotal] = useState(0);
   const [pages, setPages] = useState(1);
-  const [loadingAthletes, setLoadingAthletes] = useState(false);
+  const [removingId, setRemovingId] = useState('');
   const [inboxSort, setInboxSort] = useState('requestedAt');
   const [inboxDir, setInboxDir] = useState('desc');
   const [inboxPage, setInboxPage] = useState(1);
@@ -148,6 +148,17 @@ export default function Coaches() {
     setInboxPage(1);
   };
 
+  const removeAthlete = async (athleteId) => {
+    if (!window.confirm('Remove this athlete from your coaching list? They stay in the club.')) return;
+    setRemovingId(athleteId);
+    try {
+      await api.delete(`/coaches/athletes/${athleteId}`);
+      await loadAthletes();
+    } finally {
+      setRemovingId('');
+    }
+  };
+
   const from = total === 0 ? 0 : (page - 1) * limit + 1;
   const to = Math.min(page * limit, total);
   const inboxFrom = inboxTotal === 0 ? 0 : (inboxPage - 1) * inboxLimit + 1;
@@ -236,7 +247,7 @@ export default function Coaches() {
                     <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted mt-2">
                       <span>Requested {formatDateShort(r.requestedAt)}</span>
                       <span>{getActivityIcon(r.type)} {r.type || 'Session'}</span>
-                      <span>{formatDistance(r.distance)}</span>
+                      <span>{formatActivityPrimary(r)}</span>
                     </div>
                   </button>
                 ))}
@@ -253,7 +264,7 @@ export default function Coaches() {
                       </th>
                       <th className="p-3 text-muted font-semibold">Session</th>
                       <th className="p-3 text-muted font-semibold">Type</th>
-                      <th className="p-3 text-muted font-semibold">Distance</th>
+                      <th className="p-3 text-muted font-semibold">Time / Dist.</th>
                       <th className="p-3 text-muted font-semibold">Activity date</th>
                     </tr>
                   </thead>
@@ -272,7 +283,7 @@ export default function Coaches() {
                         <td className="p-3 whitespace-nowrap">
                           {getActivityIcon(r.type)} {r.type || '—'}
                         </td>
-                        <td className="p-3 whitespace-nowrap">{formatDistance(r.distance)}</td>
+                        <td className="p-3 whitespace-nowrap">{formatActivityPrimary(r)}</td>
                         <td className="p-3 whitespace-nowrap text-muted">{formatDate(r.startDate)}</td>
                       </tr>
                     ))}
@@ -337,21 +348,29 @@ export default function Coaches() {
             <>
               <div className="space-y-2 md:hidden mb-3">
                 {athletes.map((a) => (
-                  <button
-                    key={a.athleteId || a.id}
-                    type="button"
-                    className="card w-full text-left hover:border-brand"
-                    onClick={() => navigate(`/coaches/athletes/${a.athleteId}`)}
-                  >
-                    <div className="font-semibold">{a.firstName} {a.lastName}</div>
-                    <div className="text-xs text-muted truncate mt-0.5">{a.email}</div>
-                    <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted mt-2">
-                      <span>{a.activityCount ?? 0} activities</span>
-                      <span>Last {a.lastActivityAt ? formatDateShort(a.lastActivityAt) : '—'}</span>
-                      <span>{a.mafHeartRate ? `MAF ${a.mafHeartRate}` : 'MAF —'}</span>
-                    </div>
-                    <div className="text-xs text-brand mt-2">Activities · Training</div>
-                  </button>
+                  <div key={a.athleteId || a.id} className="card">
+                    <button
+                      type="button"
+                      className="w-full text-left bg-transparent border-0 p-0 text-inherit"
+                      onClick={() => navigate(`/coaches/athletes/${a.athleteId}`)}
+                    >
+                      <div className="font-semibold">{a.firstName} {a.lastName}</div>
+                      <div className="text-xs text-muted truncate mt-0.5">{a.email}</div>
+                      <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted mt-2">
+                        <span>{a.activityCount ?? 0} activities</span>
+                        <span>Last {a.lastActivityAt ? formatDateShort(a.lastActivityAt) : '—'}</span>
+                        <span>{a.mafHeartRate ? `MAF ${a.mafHeartRate}` : 'MAF —'}</span>
+                      </div>
+                    </button>
+                    <button
+                      className="btn-outline btn-sm mt-3"
+                      type="button"
+                      disabled={removingId === a.athleteId}
+                      onClick={() => removeAthlete(a.athleteId)}
+                    >
+                      Remove from my list
+                    </button>
+                  </div>
                 ))}
               </div>
               <div className="card overflow-x-auto mb-3 hidden md:block">
@@ -370,6 +389,7 @@ export default function Coaches() {
                       </th>
                       <th className="p-3 text-muted font-semibold">MAF</th>
                       <th className="p-3 text-muted font-semibold">Plan</th>
+                      <th className="p-3 text-muted font-semibold">List</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -398,6 +418,19 @@ export default function Coaches() {
                             }}
                           >
                             Training
+                          </button>
+                        </td>
+                        <td className="p-3 whitespace-nowrap">
+                          <button
+                            className="btn-outline btn-sm"
+                            type="button"
+                            disabled={removingId === a.athleteId}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              removeAthlete(a.athleteId);
+                            }}
+                          >
+                            Remove
                           </button>
                         </td>
                       </tr>

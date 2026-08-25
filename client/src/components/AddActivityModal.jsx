@@ -45,7 +45,7 @@ export default function AddActivityModal({ onClose, onSaved }) {
   const [fileMeta, setFileMeta] = useState({ name: '', type: '', description: '' });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const metric = activityMetric(form.type, form.type, form.distanceKm ? Number(form.distanceKm) * 1000 : 5000);
+  const metric = activityMetric(form.type, form.type);
 
   const saveManual = async (e) => {
     e.preventDefault();

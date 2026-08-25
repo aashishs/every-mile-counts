@@ -76,6 +76,7 @@ export default function ActivitySplits({ activity }) {
   const [pinned, setPinned] = useState(null);
 
   if (!rows.length && !series.length) return null;
+  if (kind === 'duration' && !series.some((row) => row.hr > 0)) return null;
 
   const avgMps = Number(activity?.avgSpeed) > 0 ? Number(activity.avgSpeed) : null;
   const avgPace = avgMps ? 1000 / avgMps : null;
@@ -103,7 +104,7 @@ export default function ActivitySplits({ activity }) {
   const maxSpeed = Number(activity?.maxSpeed) > 0
     ? Number(activity.maxSpeed) * 3.6
     : seriesMaxSpeed || null;
-  const hrAlreadyOnStats = activityMetric(activity?.type, activity?.sportType, activity?.distance) === 'duration';
+  const hrAlreadyOnStats = activityMetric(activity?.type, activity?.sportType) === 'duration';
   const swimMetres = kind === 'swim' && rows.every((row) => row.distanceM < 950);
   const effortChart = kind === 'speed'
     ? {
@@ -185,7 +186,7 @@ export default function ActivitySplits({ activity }) {
 
   return (
     <section className="mb-6">
-      {!!rows.length && (
+      {!!rows.length && kind !== 'duration' && (
         <>
           <h3 className="section-title mb-3">Splits</h3>
           <div className="card mb-5 !p-3 sm:!p-4 overflow-hidden">
@@ -271,7 +272,7 @@ export default function ActivitySplits({ activity }) {
               )}
             />
           )}
-          {hasElev && (
+          {hasElev && kind !== 'duration' && (
             <SessionChart
               title="Elevation"
               series={series}

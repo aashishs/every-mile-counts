@@ -5,6 +5,7 @@ import { isOpsAdminAccount, isStaffAccount, isSuperAdminAccount, isSupportAdminA
 import { VersionBadge } from './Badge';
 import { isBeta } from '../utils/appVersion';
 import { GOALS_ENABLED } from '../utils/features';
+import HeadCoachPrompt from './HeadCoachPrompt';
 
 const athleteLinks = [
   { to: '/dashboard', label: 'Dashboard', icon: '📊' },
@@ -153,6 +154,7 @@ export default function Layout({ children }) {
 
   return (
     <div className="min-h-screen md:flex">
+      <HeadCoachPrompt />
       <aside className="hidden md:flex w-64 shrink-0 flex-col bg-card/80 border-r border-white/5 p-6 sticky top-0 h-screen backdrop-blur">
         <div className="flex items-center gap-3 pb-6 mb-4 border-b border-line">
           <img src="/logo.svg" alt="" className="w-11 h-11 rounded-2xl shrink-0" />

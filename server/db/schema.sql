@@ -123,6 +123,7 @@ CREATE TABLE IF NOT EXISTS clubs (
   status TEXT NOT NULL DEFAULT 'pending_coach'
     CHECK (status IN ('pending_coach', 'active', 'read_only', 'suspended')),
   created_by UUID REFERENCES users(id),
+  head_coach_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -152,6 +153,7 @@ CREATE TABLE IF NOT EXISTS club_members (
     CHECK (status IN ('pending', 'active', 'rejected', 'left')),
   requested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   approved_at TIMESTAMPTZ,
+  head_coach_choice TEXT CHECK (head_coach_choice IN ('yes', 'no')),
   UNIQUE (club_id, user_id)
 );
 

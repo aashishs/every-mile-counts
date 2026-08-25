@@ -1,6 +1,7 @@
 import { camel, one, query } from '../config/db.js';
 import { MAX_CLUBS, MAX_COACHES } from './limits.js';
 import { getUserRoles, grantAthleteUnlessClubAdmin } from './membership.js';
+import { assignDefaultHeadCoach, clubHasCoach } from './headCoach.js';
 
 export async function loadInvitation({ code, type, userId }) {
   const invite = camel(
@@ -124,10 +125,10 @@ export async function addUserToClub({ clubId, userId, role, autoApprove = true }
   if (roles.includes('club_admin')) {
     throw Object.assign(new Error('Club admins cannot join as athletes or coaches'), { status: 400 });
   }
-  const club = camel(await one('SELECT id, name, status FROM clubs WHERE id = $1', [clubId]));
+  const club = camel(await one('SELECT id, name, status, head_coach_user_id FROM clubs WHERE id = $1', [clubId]));
   if (!club) throw Object.assign(new Error('Club not found'), { status: 404 });
   const clubRole = role === 'coach' ? 'coach' : 'member';
-  if (club.status === 'pending_coach' && clubRole !== 'coach') {
+  if (club.status === 'pending_coach' && clubRole !== 'coach' && !(await clubHasCoach(clubId))) {
     throw Object.assign(new Error('This club must add at least one coach before accepting athletes'), { status: 400 });
   }
   await assertClubSlot(userId, { clubId });
@@ -154,6 +155,8 @@ export async function addUserToClub({ clubId, userId, role, autoApprove = true }
     await query(`UPDATE clubs SET status = 'active', updated_at = NOW() WHERE id = $1 AND status = 'pending_coach'`, [
       clubId,
     ]);
+  } else if (status === 'active') {
+    await assignDefaultHeadCoach(clubId, userId);
   }
   return { club, role: clubRole, status };
 }

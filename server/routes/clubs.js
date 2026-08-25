@@ -15,6 +15,7 @@ import {
   invitationState,
   loadInvitation,
 } from '../utils/invites.js';
+import { assignDefaultHeadCoach, clubHasCoach, isClubHeadCoach } from '../utils/headCoach.js';
 import {
   DEFAULT_CLUB_QR_USES,
   MAX_ACTIVE_CLUB_QR_CODES,
@@ -82,7 +83,10 @@ async function membership(userId, clubId) {
 
 async function isClubCoach(userId, clubId) {
   const m = await membership(userId, clubId);
-  return Boolean(m && m.status === 'active' && m.role === 'coach');
+  if (!m || m.status !== 'active') return false;
+  if (m.role === 'coach') return true;
+  if (m.role === 'club_admin') return await isClubHeadCoach(userId, clubId);
+  return false;
 }
 
 async function requireClubAdmin(req, clubId) {
@@ -418,9 +422,9 @@ router.post(
         return res.status(400).json({ message: 'This invitation is not for this club' });
       }
       joinRole = invite.type === 'coach' ? 'coach' : 'member';
-      if (club.status === 'pending_coach' && joinRole !== 'coach') {
-        return res.status(400).json({ message: 'This club must add at least one coach before accepting members' });
-      }
+    if (club.status === 'pending_coach' && joinRole !== 'coach' && !(await clubHasCoach(club.id))) {
+      return res.status(400).json({ message: 'This club must add at least one coach before accepting members' });
+    }
       if (existing?.status === 'active' && (joinRole !== 'coach' || existing.role === 'coach')) {
         return res.status(400).json({ message: 'Already a member' });
       }
@@ -429,7 +433,7 @@ router.post(
       autoApprove = true;
     } else if (existing?.status === 'active') {
       return res.status(400).json({ message: 'Already a member' });
-    } else if (club.status === 'pending_coach') {
+    } else if (club.status === 'pending_coach' && !(await clubHasCoach(club.id))) {
       return res.status(400).json({ message: 'This club must add at least one coach before accepting members' });
     } else {
       await assertClubSlot(req.user.id, { clubId: club.id });
@@ -454,7 +458,7 @@ router.post(
     const writable = await clubWritable(req.params.id);
     if (!writable.ok) return res.status(writable.status).json({ message: writable.message });
     const { club } = writable;
-    if (club.status === 'pending_coach') {
+    if (club.status === 'pending_coach' && !(await clubHasCoach(club.id))) {
       return res.status(400).json({ message: 'Add at least one coach before adding athletes' });
     }
     const { userId, email } = req.body;
@@ -491,6 +495,7 @@ router.post(
       body: `A club admin added you to ${club.name}.`,
       data: { clubId: club.id },
     });
+    await assignDefaultHeadCoach(club.id, user.id);
     res.json({ message: `${user.email} added as an athlete` });
   })
 );
@@ -526,7 +531,7 @@ router.post(
     }
     const writable = await clubWritable(req.params.id);
     if (!writable.ok) return res.status(writable.status).json({ message: writable.message });
-    if (writable.club.status === 'pending_coach') {
+    if (writable.club.status === 'pending_coach' && !(await clubHasCoach(req.params.id))) {
       return res.status(400).json({ message: 'Assign at least one coach before accepting members' });
     }
     const { coachId } = req.body;
@@ -547,6 +552,8 @@ router.post(
          ON CONFLICT (athlete_id, coach_id) DO UPDATE SET status = 'active', club_id = EXCLUDED.club_id`,
         [member.userId, coachId, req.params.id, req.user.id]
       );
+    } else {
+      await assignDefaultHeadCoach(req.params.id, member.userId);
     }
     await createNotification({
       userId: member.userId,
@@ -640,7 +647,7 @@ router.delete(
        WHERE cm.club_id = $1 AND cm.status = 'active' AND cm.user_id <> $2 AND cm.role = 'coach'`,
       [req.params.id, req.params.userId]
     );
-    if (remaining.count < 1) {
+    if (remaining.count < 1 && !writable.club.headCoachUserId) {
       return res.status(400).json({ message: 'Club must keep at least one coach' });
     }
     await query(

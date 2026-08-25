@@ -3,6 +3,7 @@ import { camel, camelMany, many, one, query } from '../config/db.js';
 import { protect, requireOpsAdmin, requireSuperAdmin } from '../middleware/auth.js';
 import { writeAudit } from '../services/auditService.js';
 import { createNotification } from '../services/notificationService.js';
+import { clubHasCoach } from '../utils/headCoach.js';
 import { getUserRoles, grantAthleteUnlessClubAdmin, planExpiryDate, stripTrainingRolesForClubAdmin } from '../utils/membership.js';
 import { MANAGEABLE_STAFF_ROLES, STAFF_ROLE_SQL, isSuperAdminUser } from '../utils/staff.js';
 import { slugify } from '../utils/format.js';
@@ -95,10 +96,7 @@ async function maybeFreezeClub(clubId) {
 
 async function maybeRestoreClub(clubId) {
   if (!clubId) return;
-  const hasCoach = await one(
-    `SELECT 1 FROM club_members WHERE club_id = $1 AND role = 'coach' AND status = 'active' LIMIT 1`,
-    [clubId]
-  );
+  const hasCoach = await clubHasCoach(clubId);
   await query(
     `UPDATE clubs SET status = $2, updated_at = NOW() WHERE id = $1 AND status IN ('read_only', 'active', 'pending_coach')`,
     [clubId, hasCoach ? 'active' : 'pending_coach']

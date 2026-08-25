@@ -7,8 +7,8 @@ import { useAuth } from '../context/AuthContext';
 import {
   activityMetric,
   effortStat,
+  formatActivityPrimary,
   formatDate,
-  formatDistance,
   formatDuration,
   formatEffort,
   getActivityIcon,
@@ -93,13 +93,9 @@ export default function ActivityDetail() {
     ? reviewCoachId
     : '';
   const glance = insights || athleteInsights || {};
-  const metric = activityMetric(activity.type, activity.sportType, activity.distance);
+  const metric = activityMetric(activity.type, activity.sportType);
   const effort = effortStat(activity);
-  const primary = metric === 'swim'
-    ? `${Math.round(activity.distance || 0)} m`
-    : metric === 'duration'
-      ? formatDuration(activity.movingTime || activity.elapsedTime)
-      : formatDistance(activity.distance);
+  const primary = formatActivityPrimary(activity);
   const primaryLabel = metric === 'duration' ? 'Duration' : metric === 'swim' ? 'Distance' : 'Distance';
 
   const requestReview = async (coachId) => {
@@ -154,17 +150,25 @@ export default function ActivityDetail() {
 
   const stats = metric === 'duration'
     ? [
-        { label: 'Duration', value: formatDuration(activity.movingTime || activity.elapsedTime) },
-        { label: 'Avg HR', value: activity.avgHeartrate ? `${Math.round(activity.avgHeartrate)}` : '—', unit: activity.avgHeartrate ? 'bpm' : '' },
-        { label: 'Max HR', value: activity.maxHeartrate ? `${Math.round(activity.maxHeartrate)}` : '—', unit: activity.maxHeartrate ? 'bpm' : '' },
-      ]
+        Number(activity.calories) > 0
+          ? { label: 'Calories', value: `${Math.round(activity.calories)}`, unit: 'kcal' }
+          : null,
+        activity.avgHeartrate
+          ? { label: 'Avg HR', value: `${Math.round(activity.avgHeartrate)}`, unit: 'bpm' }
+          : null,
+        activity.maxHeartrate
+          ? { label: 'Max HR', value: `${Math.round(activity.maxHeartrate)}`, unit: 'bpm' }
+          : null,
+      ].filter(Boolean)
     : [
-        { label: 'Time', value: formatDuration(activity.movingTime) },
+        { label: 'Time', value: formatDuration(activity.movingTime || activity.elapsedTime) },
         effort.label ? { label: effort.label, value: effort.value, unit: effort.unit } : null,
-        metric === 'swim' && !(Number(activity.elevationGain) > 0)
-          ? null
-          : { label: 'Climb', value: `${Math.round(activity.elevationGain || 0)}`, unit: 'm' },
-        { label: 'Avg HR', value: activity.avgHeartrate ? `${Math.round(activity.avgHeartrate)}` : '—', unit: activity.avgHeartrate ? 'bpm' : '' },
+        Number(activity.elevationGain) > 0
+          ? { label: 'Climb', value: `${Math.round(activity.elevationGain)}`, unit: 'm' }
+          : null,
+        activity.avgHeartrate
+          ? { label: 'Avg HR', value: `${Math.round(activity.avgHeartrate)}`, unit: 'bpm' }
+          : null,
       ].filter(Boolean);
 
   return (
@@ -271,7 +275,7 @@ export default function ActivityDetail() {
         <section className="mb-6">
           <h3 className="section-title mb-3">Session read</h3>
           <div className="grid grid-cols-2 gap-2 mb-2">
-            {glance.paceConsistency && glance.paceConsistency !== 'unknown' && (
+            {glance.paceConsistency && glance.paceConsistency !== 'unknown' && effort.kind !== 'duration' && (
               <Insight label={effort.kind === 'speed' ? 'Speed' : 'Pace'} value={glance.paceConsistency} />
             )}
             {glance.heartRateZone?.label && (
@@ -293,7 +297,7 @@ export default function ActivityDetail() {
               <Insight label="Load" value={Math.round(glance.trainingLoad)} />
             )}
           </div>
-          {glance.elevationImpact && (
+          {glance.elevationImpact && effort.kind !== 'duration' && (
             <div className="card mb-2 text-sm text-muted">{glance.elevationImpact}</div>
           )}
           {glance.recoveryRecommendation && (

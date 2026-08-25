@@ -6,6 +6,7 @@ import { ageFromDob, mafHeartRate } from '../utils/maf.js';
 import { createNotification } from '../services/notificationService.js';
 import { MAX_COACHES } from '../utils/limits.js';
 import { assertCoachSlot } from '../utils/invites.js';
+import { getUserRoles } from '../utils/membership.js';
 import { STRAVA_COACH_SHARE_SQL } from '../utils/stravaShare.js';
 
 const router = express.Router();
@@ -36,9 +37,13 @@ router.get(
         `SELECT DISTINCT u.id, u.first_name, u.last_name, u.email, u.avatar_url,
                 c.id AS club_id, c.name AS club_name
          FROM club_members me
-         JOIN club_members cm ON cm.club_id = me.club_id AND cm.status = 'active' AND cm.role = 'coach'
-         JOIN users u ON u.id = cm.user_id
          JOIN clubs c ON c.id = me.club_id
+         JOIN club_members cm ON cm.club_id = me.club_id AND cm.status = 'active'
+           AND (
+             cm.role = 'coach'
+             OR (cm.role = 'club_admin' AND c.head_coach_user_id = cm.user_id)
+           )
+         JOIN users u ON u.id = cm.user_id
          WHERE me.user_id = $1 AND me.status = 'active' AND me.role = 'member'
            AND u.id <> $1
            AND NOT EXISTS (
@@ -79,12 +84,21 @@ router.post(
       await one(
         `SELECT me.club_id
          FROM club_members me
-         JOIN club_members cm ON cm.club_id = me.club_id AND cm.user_id = $2 AND cm.status = 'active' AND cm.role = 'coach'
+         JOIN clubs c ON c.id = me.club_id
+         JOIN club_members cm ON cm.club_id = me.club_id AND cm.user_id = $2 AND cm.status = 'active'
+           AND (
+             cm.role = 'coach'
+             OR (cm.role = 'club_admin' AND c.head_coach_user_id = cm.user_id)
+           )
          WHERE me.user_id = $1 AND me.status = 'active'
          LIMIT 1`,
         [req.user.id, coach.id]
       )
     );
+    const coachRoles = await getUserRoles(coach.id);
+    if (coachRoles.includes('club_admin') && !sharedClub) {
+      return res.status(400).json({ message: 'This coach only works with athletes in their club' });
+    }
     await query(
       `INSERT INTO coach_assignments (athlete_id, coach_id, club_id, assigned_by, status)
        VALUES ($1,$2,$3,$4,'active')
@@ -170,6 +184,23 @@ router.get(
       sort: sortKey,
       dir,
     });
+  })
+);
+
+router.delete(
+  '/athletes/:athleteId',
+  requireRole('coach'),
+  asyncHandler(async (req, res) => {
+    const assignment = camel(
+      await one(
+        `UPDATE coach_assignments SET status = 'inactive'
+         WHERE coach_id = $1 AND athlete_id = $2 AND status = 'active'
+         RETURNING *`,
+        [req.user.id, req.params.athleteId]
+      )
+    );
+    if (!assignment) return res.status(404).json({ message: 'Athlete is not on your coaching list' });
+    res.json({ message: 'Athlete removed from your coaching list' });
   })
 );
 

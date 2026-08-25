@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import Layout from '../components/Layout';
 import { useAuth } from '../context/AuthContext';
-import { formatDate, formatDuration, formatDistance, getActivityIcon } from '../utils/format';
+import { formatDate, formatDuration, formatActivityPrimary, getActivityIcon } from '../utils/format';
 import { COMPLETION_LABEL, formatComparisonValue, formatKm, formatPaceSec, statusClass } from '../utils/training';
 
 export default function WorkoutDetail() {
@@ -153,7 +153,7 @@ export default function WorkoutDetail() {
             <div key={m.id} className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 py-2">
               <div>
                 <div className="font-semibold">{m.activityName}</div>
-                <div className="text-xs text-muted">{formatDistance(m.distance)} · {formatDuration(m.movingTime)} · score {Math.round(m.score)}</div>
+                <div className="text-xs text-muted">{[formatActivityPrimary(m), `score ${Math.round(m.score)}`].filter(Boolean).join(' · ')}</div>
               </div>
               <div className="flex gap-2">
                 <button className="btn-primary btn-sm" disabled={busy} type="button" onClick={() => act(() => api.post(`/training/workouts/${workout.id}/matches/${m.id}/confirm`))}>Confirm</button>

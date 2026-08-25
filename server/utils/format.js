@@ -26,16 +26,30 @@ const DURATION_SPORTS = [
   'highintensity', 'climb', 'stair', 'elliptical', 'meditation', 'taichi',
   'strength', 'functional', 'prepare_for_battle',
 ];
+const SWIM_SPORTS = ['swim'];
+const DISTANCE_SPORTS = [
+  'run', 'ride', 'cycle', 'bike', 'walk', 'hike', 'trail', 'row', 'kayak',
+  'canoe', 'skate', 'ski', 'surf', 'sail', 'paddle', 'snowshoe',
+];
 const SPEED_SPORTS = [
   'ride', 'cycle', 'bike', 'ebike', 'gravel', 'velomobile', 'handcycle',
   'ski', 'snowboard', 'skate', 'sail', 'surf', 'kayak', 'canoe', 'paddle',
   'kitesurf', 'windsurf', 'wheelchair',
 ];
 
-export function effortKind(type, sportType) {
+export function activityMetric(type, sportType) {
   const t = `${type || ''} ${sportType || ''}`.toLowerCase();
   if (DURATION_SPORTS.some((k) => t.includes(k))) return 'duration';
-  if (t.includes('swim')) return 'swim';
+  if (SWIM_SPORTS.some((k) => t.includes(k))) return 'swim';
+  if (DISTANCE_SPORTS.some((k) => t.includes(k))) return 'distance';
+  return 'duration';
+}
+
+export function effortKind(type, sportType) {
+  const metric = activityMetric(type, sportType);
+  if (metric === 'duration') return 'duration';
+  if (metric === 'swim') return 'swim';
+  const t = `${type || ''} ${sportType || ''}`.toLowerCase();
   if (t.includes('row') && !t.includes('kayak')) return 'row';
   if (SPEED_SPORTS.some((k) => t.includes(k))) return 'speed';
   return 'pace';

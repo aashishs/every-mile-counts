@@ -4,7 +4,7 @@ import api from '../api/client';
 import Layout from '../components/Layout';
 import { useAuth } from '../context/AuthContext';
 import { DEFAULT_ACTIVITY_TYPE, visibleActivityTypeOptions } from '../utils/format';
-import { afterJoinPath, homePath, isAppAdminAccount, isAthleteAccount, isClubOnlyAccount, needsProfile } from '../utils/roles';
+import { afterJoinPath, hasRole, homePath, isAppAdminAccount, isAthleteAccount, needsProfile } from '../utils/roles';
 import { ageFromDob, mafHeartRate, parseDateOfBirth, todayIsoDate } from '../utils/maf';
 import StravaCard from '../components/StravaCard';
 import ActivityTypesSettings from '../components/ActivityTypesSettings';
@@ -25,7 +25,7 @@ export default function Profile() {
   const [searchParams, setSearchParams] = useSearchParams();
   const appAdmin = isAppAdminAccount(user);
   const athlete = isAthleteAccount(user);
-  const clubAdmin = isClubOnlyAccount(user);
+  const clubAdmin = hasRole(user, 'club_admin');
   const completing = needsProfile(user);
   const [form, setForm] = useState({
     firstName: user.firstName || '',
@@ -59,7 +59,7 @@ export default function Profile() {
   const [confirm, setConfirm] = useState(null);
   const [confirmBusy, setConfirmBusy] = useState(false);
   const [confirmError, setConfirmError] = useState('');
-  const [requestingCoach, setRequestingCoach] = useState(null);
+  const [headCoachBusy, setHeadCoachBusy] = useState(false);
 
   const flash = (ok, text) => {
     setMsg(ok ? text : '');
@@ -86,6 +86,19 @@ export default function Profile() {
     if (athlete) loadClubs().catch(() => {});
     if (athlete) loadCoaches().catch(() => {});
   }, [athlete]);
+
+  const saveHeadCoach = async (enabled) => {
+    setHeadCoachBusy(true);
+    try {
+      const { data } = await api.post('/users/me/head-coach', { enabled });
+      await refresh();
+      flash(true, data.message || (enabled ? 'You are the head coach of your club' : 'Head coach turned off'));
+    } catch (ex) {
+      flash(false, ex.response?.data?.message || 'Could not update head coach');
+    } finally {
+      setHeadCoachBusy(false);
+    }
+  };
 
   const save = async (e) => {
     e.preventDefault();
@@ -392,6 +405,25 @@ export default function Profile() {
           {completing ? 'Save and continue' : 'Save profile'}
         </button>
       </form>
+      )}
+
+      {tab === 'profile' && clubAdmin && user.adminClubId && !completing && (
+        <section className="card space-y-3 mb-6">
+          <h3 className="font-semibold">Head coach</h3>
+          <p className="text-sm text-muted mb-0">
+            You can be the default coach for members of {user.adminClubName || 'your club'}.
+            Coaching stays in this club. You can drop athletes from your coaching list without removing them from the club.
+          </p>
+          {user.isHeadCoach ? (
+            <button className="btn-outline" type="button" disabled={headCoachBusy} onClick={() => saveHeadCoach(false)}>
+              Stop being head coach
+            </button>
+          ) : (
+            <button className="btn-primary" type="button" disabled={headCoachBusy} onClick={() => saveHeadCoach(true)}>
+              I am the head coach
+            </button>
+          )}
+        </section>
       )}
 
 

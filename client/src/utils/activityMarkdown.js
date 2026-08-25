@@ -80,7 +80,7 @@ function insightLines(insights) {
 }
 
 export function buildActivityMarkdown(activity, insights) {
-  const metric = activityMetric(activity.type, activity.sportType, activity.distance);
+  const metric = activityMetric(activity.type, activity.sportType);
   const kind = effortKind(activity.type, activity.sportType);
   const distance = metric === 'swim'
     ? `${Math.round(Number(activity.distance) || 0)} m`
@@ -97,10 +97,12 @@ export function buildActivityMarkdown(activity, insights) {
       ? formatDuration(activity.elapsedTime)
       : null),
     row(effortLabel, effortLabel ? formatEffort(activity) : null),
-    row('Elevation', activity.elevationGain != null ? `${Math.round(Number(activity.elevationGain))} m` : null),
+    row('Elevation', metric !== 'duration' && Number(activity.elevationGain) > 0
+      ? `${Math.round(Number(activity.elevationGain))} m`
+      : null),
     row('Avg HR', activity.avgHeartrate != null ? `${Math.round(Number(activity.avgHeartrate))} bpm` : null),
     row('Max HR', activity.maxHeartrate != null ? `${Math.round(Number(activity.maxHeartrate))} bpm` : null),
-    row('Avg cadence', activity.avgCadence != null ? `${Math.round(Number(activity.avgCadence))} ${kind === 'speed' ? 'rpm' : 'spm'}` : null),
+    row('Avg cadence', metric !== 'duration' && activity.avgCadence != null ? `${Math.round(Number(activity.avgCadence))} ${kind === 'speed' ? 'rpm' : 'spm'}` : null),
     row('Avg power', activity.avgPower != null ? `${Math.round(Number(activity.avgPower))} W` : null),
     row('Calories', activity.calories != null ? `${Math.round(Number(activity.calories))} kcal` : null),
     row('Temperature', weatherTemp != null ? `${weatherTemp} °C` : null),

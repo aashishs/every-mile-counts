@@ -561,7 +561,9 @@ export default function ClubDetail() {
               <button className="btn-primary sm:w-auto w-full" type="submit">Add or request coach</button>
             </div>
             {club.status === 'pending_coach' && (
-              <p className="text-xs text-accent mb-0">Request at least one coach. A platform admin must approve before the club can accept athletes.</p>
+              <p className="text-xs text-accent mb-0">
+                Add a coach, or choose I am the head coach on Profile, before the club can accept athletes.
+              </p>
             )}
           </form>
           {!coaches.length ? (

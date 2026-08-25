@@ -91,6 +91,21 @@ export async function grantAthleteUnlessClubAdmin(userId) {
 export async function stripTrainingRolesForClubAdmin(userId) {
   const roles = await getUserRoles(userId);
   if (!roles.includes('club_admin') || isStaffUser(roles)) return;
+  const headClub = await one('SELECT id FROM clubs WHERE head_coach_user_id = $1', [userId]);
+  if (headClub) {
+    await query(`DELETE FROM user_roles WHERE user_id = $1 AND role = 'athlete'`, [userId]);
+    await query(
+      `UPDATE coach_assignments SET status = 'inactive'
+       WHERE status = 'active' AND athlete_id = $1`,
+      [userId]
+    );
+    await query(
+      `UPDATE coach_assignments SET status = 'inactive'
+       WHERE status = 'active' AND coach_id = $1 AND club_id IS DISTINCT FROM $2`,
+      [userId, headClub.id]
+    );
+    return;
+  }
   await query(`DELETE FROM user_roles WHERE user_id = $1 AND role IN ('athlete', 'coach')`, [userId]);
   await query(
     `UPDATE coach_assignments SET status = 'inactive'
@@ -102,7 +117,7 @@ export async function stripTrainingRolesForClubAdmin(userId) {
 export async function getAdminClub(userId) {
   return camel(
     await one(
-      `SELECT c.id, c.name
+      `SELECT c.id, c.name, c.status, c.head_coach_user_id, cm.head_coach_choice
        FROM clubs c
        JOIN club_members cm ON cm.club_id = c.id
        WHERE cm.user_id = $1 AND cm.role = 'club_admin' AND cm.status = 'active'
@@ -122,11 +137,13 @@ export async function publicUser(user, extras = {}) {
   const lastName = String(user.lastName ?? user.last_name ?? '').trim();
   let adminClubId = extras.adminClubId ?? null;
   let adminClubName = extras.adminClubName ?? null;
+  let adminClub = null;
   if (roles.includes('club_admin') && extras.adminClubId === undefined) {
-    const club = await getAdminClub(user.id);
-    adminClubId = club?.id || null;
-    adminClubName = club?.name || null;
+    adminClub = await getAdminClub(user.id);
+    adminClubId = adminClub?.id || null;
+    adminClubName = adminClub?.name || null;
   }
+  const isHeadCoach = Boolean(adminClub?.headCoachUserId && adminClub.headCoachUserId === user.id);
   return {
     id: user.id,
     email: user.email,
@@ -152,5 +169,9 @@ export async function publicUser(user, extras = {}) {
     membership: extras.membership ?? null,
     adminClubId,
     adminClubName,
+    isHeadCoach,
+    headCoachPrompt: Boolean(roles.includes('club_admin') && adminClub && !isHeadCoach && adminClub.headCoachChoice == null),
+    headCoachClubId: adminClub?.id || null,
+    headCoachClubName: adminClub?.name || null,
   };
 }

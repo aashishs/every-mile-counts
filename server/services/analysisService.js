@@ -1,5 +1,5 @@
 import { camel, camelMany, many, one } from '../config/db.js';
-import { formatDistance, formatDuration, paceFromSpeed, formatEffort, effortKind, startOfMonth, startOfWeek, startOfYear } from '../utils/format.js';
+import { formatDistance, formatDuration, paceFromSpeed, formatEffort, effortKind, activityMetric, startOfMonth, startOfWeek, startOfYear } from '../utils/format.js';
 import { athleteHrContext } from '../utils/maf.js';
 import { parseStoredSyncTypes } from '../utils/activityTypes.js';
 import { STRAVA_COACH_SHARE_SQL, getCoachShareState } from '../utils/stravaShare.js';
@@ -128,13 +128,16 @@ export function analyzeActivity(activity, athlete = {}) {
   const avgSpeed = num(activity.avgSpeed ?? activity.avg_speed);
   const splits = activity.splits || [];
   const kind = effortKind(activity.type, activity.sportType);
+  const durationSport = kind === 'duration';
   const effortWord = kind === 'speed' ? 'speed' : 'pace';
 
-  const pace = paceFromSpeed(avgSpeed);
+  const pace = durationSport ? null : paceFromSpeed(avgSpeed);
   const splitPaces = Array.isArray(splits)
     ? splits.map((s) => num(s.pace || s.moving_time || s.elapsed_time)).filter(Boolean)
     : [];
-  const paceCv = splitPaces.length > 1 ? stddev(splitPaces) / (splitPaces.reduce((a, b) => a + b, 0) / splitPaces.length) : null;
+  const paceCv = durationSport || splitPaces.length <= 1
+    ? null
+    : stddev(splitPaces) / (splitPaces.reduce((a, b) => a + b, 0) / splitPaces.length);
 
   let paceConsistency = 'unknown';
   if (paceCv != null) {
@@ -166,8 +169,9 @@ export function analyzeActivity(activity, athlete = {}) {
         ? 'A light recovery session or rest day will help absorb this work.'
         : 'You can continue aerobic training; keep intensity controlled.';
 
-  const elevationImpact =
-    elevPerKm > 40
+  const elevationImpact = durationSport
+    ? null
+    : elevPerKm > 40
       ? `Significant climbing likely slowed ${effortWord}; compare effort, not just ${effortWord}.`
       : elevPerKm > 20
         ? 'Moderate hills. Expect some variation on climbs and descents.'
@@ -181,15 +185,15 @@ export function analyzeActivity(activity, athlete = {}) {
     heartRateZone: zone,
     mafCheck: avgHr ? mafCheck(avgHr, activityMaxHr, profile.mafHeartRate) : null,
     cadenceEfficiency,
-    elevationPerKm: Math.round(elevPerKm * 10) / 10,
+    elevationPerKm: durationSport ? 0 : Math.round(elevPerKm * 10) / 10,
     elevationImpact,
     trainingLoad: Math.round(trainingLoad * 10) / 10,
     recoveryRecommendation: recovery,
     summary: {
-      distance: formatDistance(distance),
+      distance: durationSport ? null : formatDistance(distance),
       movingTime: formatDuration(moving),
       pace,
-      elevation: `${Math.round(elevation)} m`,
+      elevation: durationSport || !(elevation > 0) ? null : `${Math.round(elevation)} m`,
     },
   };
 }
@@ -296,7 +300,7 @@ export async function athleteDashboard(athleteId, athlete = {}, { type, syncType
   );
 
   const avgPaceSeries = recent
-    .filter((a) => a.avgSpeed)
+    .filter((a) => a.avgSpeed && effortKind(a.type, a.sportType) !== 'duration')
     .slice()
     .reverse()
     .map((a) => ({
@@ -430,11 +434,7 @@ function recordPayload(act) {
 }
 
 function isDurationSport(type) {
-  const t = String(type || '').toLowerCase();
-  return [
-    'workout', 'weight', 'yoga', 'crossfit', 'pilates', 'stretch', 'hiit',
-    'highintensity', 'climb', 'stair', 'elliptical', 'meditation', 'taichi', 'strength',
-  ].some((k) => t.includes(k));
+  return activityMetric(type, type) === 'duration';
 }
 
 const DURATION_BUCKETS = [
@@ -462,11 +462,7 @@ export function buildActivityTypeHighlights(activities) {
     const totalDistance = list.reduce((a, b) => a + num(b.distance), 0);
     const totalTime = list.reduce((a, b) => a + num(b.movingTime || b.elapsedTime), 0);
     const totalCalories = list.reduce((a, b) => a + num(b.calories), 0);
-    const metric = TYPE_BUCKETS[type] || ['Hike', 'Walk'].includes(type)
-      ? (type === 'Swim' ? 'swim' : 'distance')
-      : isDurationSport(type) || totalDistance < 50 * list.length
-        ? 'duration'
-        : 'distance';
+    const metric = activityMetric(type, type);
 
     const bucketDefs = metric === 'duration' ? DURATION_BUCKETS : (TYPE_BUCKETS[type] || []);
     const buckets = bucketDefs.map((bucket) => {
@@ -666,7 +662,7 @@ function monthlySeries(activities, fromYm, toYm) {
     b.count += 1;
     b.distance += num(act.distance);
     b.time += num(act.movingTime);
-    if (num(act.avgSpeed) > 0 && num(act.distance) > 0) {
+    if (effortKind(act.type, act.sportType) !== 'duration' && num(act.avgSpeed) > 0 && num(act.distance) > 0) {
       b.paceDistance += num(act.distance);
       b.paceTime += num(act.movingTime);
     }
@@ -852,7 +848,14 @@ export async function coachAthleteGlance(athleteId, coachId) {
   const byType = Object.values(byTypeMap)
     .map((row) => ({
       ...row,
-      formatted: { distance: formatDistance(row.distance), time: formatDuration(row.time) },
+      formatted: {
+        distance: activityMetric(row.type, row.type) === 'duration'
+          ? formatDuration(row.time)
+          : activityMetric(row.type, row.type) === 'swim'
+            ? `${Math.round(row.distance)} m`
+            : formatDistance(row.distance),
+        time: formatDuration(row.time),
+      },
     }))
     .sort((a, b) => b.count - a.count);
 
@@ -958,10 +961,16 @@ function snapshot(activity, athlete = {}) {
     heartRateZone: insights.heartRateZone,
     paceConsistency: insights.paceConsistency,
     formatted: {
-      distance: metric === 'swim' ? `${Math.round(num(activity.distance))} m` : formatDistance(activity.distance),
+      distance: metric === 'duration'
+        ? formatDuration(activity.movingTime)
+        : metric === 'swim'
+          ? `${Math.round(num(activity.distance))} m`
+          : formatDistance(activity.distance),
       time: formatDuration(activity.movingTime),
-      pace: formatEffort(activity) || (insights.pace ? `${insights.pace} /km` : '—'),
-      elevation: `${Math.round(num(activity.elevationGain))} m`,
+      pace: metric === 'duration' ? null : (formatEffort(activity) || (insights.pace ? `${insights.pace} /km` : null)),
+      elevation: num(activity.elevationGain) > 0 && metric !== 'duration'
+        ? `${Math.round(num(activity.elevationGain))} m`
+        : null,
       hr: formatHr(activity.avgHeartrate),
       maxHr: formatHr(activity.maxHeartrate),
       cadence: activity.avgCadence ? `${Math.round(activity.avgCadence)} ${effortKind(activity.type, activity.sportType) === 'speed' ? 'rpm' : 'spm'}` : '—',
@@ -1024,7 +1033,7 @@ export function compareActivities(activityA, activityB, athlete = {}) {
         : `${speedDelta > 0 ? '+' : ''}${speedDelta.toFixed(1)} km/h`,
       better: 'higher',
     }));
-  } else if (older.paceSecPerKm && newer.paceSecPerKm) {
+  } else if (kind !== 'duration' && older.paceSecPerKm && newer.paceSecPerKm) {
     const paceDelta = newer.paceSecPerKm - older.paceSecPerKm;
     const unit = kind === 'swim' ? '/100m' : kind === 'row' ? '/500m' : '/km';
     const displayDelta = kind === 'swim' ? paceDelta / 10 : kind === 'row' ? paceDelta / 2 : paceDelta;
@@ -1058,13 +1067,15 @@ export function compareActivities(activityA, activityB, athlete = {}) {
     }));
   }
 
-  rows.push(compareRow('elevation', 'Elevation', older.formatted.elevation, newer.formatted.elevation, {
-    improved: null,
-    deltaLabel: `${newer.elevationGain - older.elevationGain >= 0 ? '+' : ''}${Math.round(newer.elevationGain - older.elevationGain)} m`,
-    better: 'neutral',
-  }));
+  if (metric !== 'duration' && (older.elevationGain || newer.elevationGain)) {
+    rows.push(compareRow('elevation', 'Elevation', older.formatted.elevation, newer.formatted.elevation, {
+      improved: null,
+      deltaLabel: `${newer.elevationGain - older.elevationGain >= 0 ? '+' : ''}${Math.round(newer.elevationGain - older.elevationGain)} m`,
+      better: 'neutral',
+    }));
+  }
 
-  if (older.avgCadence && newer.avgCadence) {
+  if (metric !== 'duration' && older.avgCadence && newer.avgCadence) {
     const cadDelta = newer.avgCadence - older.avgCadence;
     rows.push(compareRow('cadence', 'Cadence', older.formatted.cadence, newer.formatted.cadence, {
       improved: Math.abs(cadDelta) < 3 ? null : cadDelta > 0,

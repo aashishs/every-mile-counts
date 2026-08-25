@@ -7,11 +7,12 @@ import AddActivityModal from '../components/AddActivityModal';
 import { PoweredByStrava, ViewOnStrava } from '../components/StravaBrand';
 import { useAuth } from '../context/AuthContext';
 import {
+  activitySummaryParts,
+  formatActivityDistance,
+  formatActivityEffort,
   formatDate,
   formatDateShort,
-  formatDistance,
   formatDuration,
-  formatEffort,
   getActivityIcon,
   initialActivityType,
   rememberActivityType,
@@ -282,10 +283,9 @@ export default function Activities() {
                     {formatDateShort(act.startDate)} · {getActivityIcon(act.type)} {act.type || 'Session'}
                   </div>
                   <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted mt-3">
-                    <span>{formatDistance(act.distance)}</span>
-                    <span>{formatDuration(act.movingTime || act.elapsedTime)}</span>
-                    <span>{formatEffort(act) || '—'}</span>
-                    <span>{act.avgHeartrate ? `${Math.round(act.avgHeartrate)} bpm` : 'No HR'}</span>
+                    {activitySummaryParts(act).map((part) => (
+                      <span key={part}>{part}</span>
+                    ))}
                   </div>
                 </button>
                 <div className="mt-1">
@@ -326,11 +326,11 @@ export default function Activities() {
                     <td className="p-3 whitespace-nowrap">
                       {getActivityIcon(act.type)} {act.type || '—'}
                     </td>
-                    <td className="p-3 whitespace-nowrap">{formatDistance(act.distance)}</td>
+                    <td className="p-3 whitespace-nowrap">{formatActivityDistance(act)}</td>
                     <td className="p-3 whitespace-nowrap">{formatDuration(act.movingTime || act.elapsedTime)}</td>
-                    <td className="p-3 whitespace-nowrap">{formatEffort(act) || '—'}</td>
+                    <td className="p-3 whitespace-nowrap">{formatActivityEffort(act)}</td>
                     <td className="p-3 whitespace-nowrap">
-                      {act.avgHeartrate ? `${Math.round(act.avgHeartrate)} bpm` : '—'}
+                      {act.avgHeartrate ? `${Math.round(act.avgHeartrate)} bpm` : ''}
                     </td>
                   </tr>
                 ))}

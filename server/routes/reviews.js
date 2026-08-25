@@ -116,7 +116,7 @@ router.get(
     const offset = (safePage - 1) * parsedLimit;
     const requests = camelMany(
       await many(
-        `SELECT rr.*, a.name AS activity_name, a.type, a.distance, a.start_date,
+        `SELECT rr.*, a.name AS activity_name, a.type, a.sport_type, a.distance, a.moving_time, a.elapsed_time, a.start_date,
                 u.first_name, u.last_name
          FROM review_requests rr
          JOIN activities a ON a.id = rr.activity_id

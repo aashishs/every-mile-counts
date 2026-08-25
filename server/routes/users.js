@@ -2,7 +2,8 @@ import express from 'express';
 import bcrypt from 'bcryptjs';
 import { camel, one, query } from '../config/db.js';
 import { protect, requireMembership } from '../middleware/auth.js';
-import { publicUser, isAthleteUser, getAdminClub, getUserMembership } from '../utils/membership.js';
+import { setHeadCoach } from '../utils/headCoach.js';
+import { publicUser, isAthleteUser, getAdminClub, getUserMembership, getUserRoles } from '../utils/membership.js';
 import { validateDateOfBirth, ageAndMafFromDob } from '../utils/maf.js';
 import { slugify } from '../utils/format.js';
 import { writeAudit } from '../services/auditService.js';
@@ -166,6 +167,29 @@ router.post(
     await query('UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2', [hash, req.user.id]);
     await writeAudit({ userId: req.user.id, action: 'change_password', entityType: 'user', entityId: req.user.id });
     res.json({ message: 'Password updated' });
+  })
+);
+
+router.post(
+  '/me/head-coach',
+  asyncHandler(async (req, res) => {
+    if (!req.user.roles.includes('club_admin')) {
+      return res.status(403).json({ message: 'Club admin required' });
+    }
+    const enabled = Boolean(req.body?.enabled);
+    try {
+      await setHeadCoach(req.user.id, enabled);
+    } catch (err) {
+      return res.status(err.status || 400).json({ message: err.message });
+    }
+    const user = camel(await one('SELECT * FROM users WHERE id = $1', [req.user.id]));
+    const roles = await getUserRoles(req.user.id);
+    res.json({
+      user: await publicUser(user, { roles }),
+      message: enabled
+        ? 'You are the head coach for your club. Members are on your coaching list.'
+        : 'Head coach turned off for your club.',
+    });
   })
 );
 

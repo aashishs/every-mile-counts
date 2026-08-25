@@ -4,10 +4,8 @@ import api from '../api/client';
 import Layout from '../components/Layout';
 import { useAuth } from '../context/AuthContext';
 import {
+  activitySummaryParts,
   formatDateShort,
-  formatDuration,
-  formatEffort,
-  formatActivityPrimary,
   getActivityIcon,
 } from '../utils/format';
 import { PROGRAM_STATUS_LABEL, statusClass } from '../utils/training';
@@ -58,10 +56,9 @@ function SessionRow({ activity, athleteId, navigate }) {
             </div>
             <div className="text-xs text-muted mt-1 flex flex-wrap gap-x-2">
               <span>{formatDateShort(activity.startDate)}</span>
-              <span>{formatActivityPrimary(activity)}</span>
-              <span>{formatDuration(activity.movingTime || activity.elapsedTime)}</span>
-              {formatEffort(activity) ? <span>{formatEffort(activity)}</span> : null}
-              {activity.avgHeartrate ? <span>{Math.round(activity.avgHeartrate)} bpm</span> : null}
+              {activitySummaryParts(activity).map((part) => (
+                <span key={part}>{part}</span>
+              ))}
             </div>
           </div>
           {activity.reviewedByMe ? (
@@ -296,10 +293,9 @@ export default function CoachAthleteActivities() {
                 </div>
                 <div className="text-sm text-muted mt-2 flex flex-wrap gap-x-3 gap-y-1">
                   <span>{formatDateShort(glance.lastActivity.startDate)}</span>
-                  <span>{formatActivityPrimary(glance.lastActivity)}</span>
-                  <span>{formatDuration(glance.lastActivity.movingTime || glance.lastActivity.elapsedTime)}</span>
-                  {formatEffort(glance.lastActivity) ? <span>{formatEffort(glance.lastActivity)}</span> : null}
-                  {glance.lastActivity.avgHeartrate ? <span>{Math.round(glance.lastActivity.avgHeartrate)} bpm</span> : null}
+                  {activitySummaryParts(glance.lastActivity).map((part) => (
+                    <span key={part}>{part}</span>
+                  ))}
                 </div>
               </div>
               <span className="text-sm font-semibold shrink-0">
