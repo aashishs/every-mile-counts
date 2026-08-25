@@ -1,7 +1,7 @@
 import express from 'express';
 import { camel, camelMany, many, one, query } from '../config/db.js';
 import { protect, requireMembership, rejectAppAdmin } from '../middleware/auth.js';
-import { analyzeActivity, athleteDashboard, coachAthleteGlance, compareActivities, periodAnalysis } from '../services/analysisService.js';
+import { analyzeActivity, athleteDashboard, coachAthleteGlance, compareActivitySet, periodAnalysis } from '../services/analysisService.js';
 import { enrichStravaActivity } from '../services/stravaService.js';
 import { athleteHrContext } from '../utils/maf.js';
 import { syncUserActivities } from '../services/syncService.js';
@@ -9,6 +9,8 @@ import { mappedFromFile, mappedFromManual, saveManualActivity } from '../service
 import { asyncHandler } from '../middleware/error.js';
 import { familySqlClause, parseStoredSyncTypes } from '../utils/activityTypes.js';
 import { assignmentClubMatches, getAssignment } from '../utils/coachingAccess.js';
+import { ensureKmSplits } from '../utils/kmSplits.js';
+import { rankSimilarActivities, similarHeading, similarSport, similarSupported } from '../utils/similarActivities.js';
 import { canViewerSeeActivity, stravaShareClause, stravaShareFilterSql } from '../utils/stravaShare.js';
 
 const router = express.Router();
@@ -221,13 +223,14 @@ router.post(
 router.get(
   '/compare',
   asyncHandler(async (req, res) => {
-    const a = String(req.query.a || '').trim();
-    const b = String(req.query.b || '').trim();
-    if (!a || !b) {
-      return res.status(400).json({ message: 'Pick two activities to compare.' });
-    }
-    if (a === b) {
-      return res.status(400).json({ message: 'Choose two different activities.' });
+    const fromIds = String(req.query.ids || '')
+      .split(',')
+      .map((id) => id.trim())
+      .filter(Boolean);
+    const fromParams = ['a', 'b', 'c'].map((key) => String(req.query[key] || '').trim()).filter(Boolean);
+    const ids = [...new Set(fromIds.length ? fromIds : fromParams)];
+    if (ids.length < 2 || ids.length > 3) {
+      return res.status(400).json({ message: 'Pick 2 or 3 activities to compare.' });
     }
     const loadActivity = async (id) => camel(
       await one(
@@ -238,20 +241,28 @@ router.get(
         [id]
       )
     );
-    const first = await loadActivity(a);
-    const second = await loadActivity(b);
-    if (!first || !second) return res.status(404).json({ message: 'Activity not found' });
-    if (first.athleteId !== second.athleteId) {
-      return res.status(400).json({ message: 'Compare two sessions from the same athlete.' });
+    const loaded = [];
+    for (const id of ids) {
+      const row = await loadActivity(id);
+      if (!row) return res.status(404).json({ message: 'Activity not found' });
+      loaded.push(row);
     }
-    if (!(await canViewAthlete(req, first.athleteId))) {
+    if (loaded.some((act) => act.athleteId !== loaded[0].athleteId)) {
+      return res.status(400).json({ message: 'Compare sessions from the same athlete.' });
+    }
+    if (!(await canViewAthlete(req, loaded[0].athleteId))) {
       return res.status(403).json({ message: 'Not authorized' });
     }
-    if (!(await canViewerSeeActivity(req, first)) || !(await canViewerSeeActivity(req, second))) {
-      return res.status(403).json({ message: 'This athlete has not shared Strava activities with coaches.' });
+    for (const act of loaded) {
+      if (!(await canViewerSeeActivity(req, act))) {
+        return res.status(403).json({ message: 'This athlete has not shared Strava activities with coaches.' });
+      }
     }
-    const comparison = compareActivities(first, second, athleteHrContext(first));
-    res.json(comparison);
+    const prepared = await Promise.all(loaded.map(async (act) => {
+      const detailed = await enrichStravaActivity(act);
+      return { ...detailed, splits: ensureKmSplits(detailed) };
+    }));
+    res.json(compareActivitySet(prepared, athleteHrContext(prepared[0])));
   })
 );
 
@@ -323,6 +334,74 @@ router.get(
       limit,
       sort: sortKey,
       dir: dirSql.toLowerCase(),
+    });
+  })
+);
+
+router.get(
+  '/:id/similar',
+  asyncHandler(async (req, res) => {
+    const seed = camel(
+      await one(
+        `SELECT a.*
+         FROM activities a
+         WHERE a.id = $1`,
+        [req.params.id]
+      )
+    );
+    if (!seed) return res.status(404).json({ message: 'Activity not found' });
+    if (!(await canViewAthlete(req, seed.athleteId))) {
+      return res.status(403).json({ message: 'Not authorized' });
+    }
+    if (!(await canViewerSeeActivity(req, seed))) {
+      return res.status(403).json({ message: 'This athlete has not shared Strava activities with coaches.' });
+    }
+
+    const sport = similarSport(seed);
+    if (!similarSupported(sport)) {
+      return res.json({ sport, supported: false, heading: null, activities: [] });
+    }
+    const typeFilter = activityTypeSql(sport);
+    const filters = ['a.athlete_id = $1', 'a.id <> $2'];
+    const params = [seed.athleteId, seed.id];
+    let i = 3;
+    if (typeFilter.params.length) {
+      filters.push(typeFilter.clause.replace(/\$n/g, `$${i}`));
+      params.push(...typeFilter.params);
+      i += typeFilter.params.length;
+    } else {
+      filters.push(typeFilter.clause);
+    }
+
+    const shareClause = stravaShareClause(req, seed.athleteId);
+    if (shareClause) filters.push(shareClause);
+
+    const rows = camelMany(
+      await many(
+        `SELECT a.id, a.athlete_id, a.name, a.type, a.sport_type, a.source, a.source_activity_id,
+                a.distance, a.moving_time, a.elapsed_time, a.elevation_gain, a.start_date,
+                a.avg_speed, a.avg_heartrate, a.calories, a.polyline
+         FROM activities a
+         WHERE ${filters.join(' AND ')}
+         ORDER BY a.start_date DESC
+         LIMIT 500`,
+        params
+      )
+    );
+
+    const ranked = rankSimilarActivities(seed, rows, { limit: 8 });
+    res.json({
+      sport,
+      supported: true,
+      heading: similarHeading(sport),
+      activities: ranked.map((row) => {
+        const { polyline: _polyline, ...rest } = publicListActivity(row.activity);
+        return {
+          ...rest,
+          why: row.why,
+          size: row.size,
+        };
+      }),
     });
   })
 );

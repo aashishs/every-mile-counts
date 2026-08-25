@@ -56,7 +56,7 @@ export default function Layout({ children }) {
   const opsAdmin = isOpsAdminAccount(user);
   const supportOnly = isSupportAdminAccount(user) && !superAdmin && !opsAdmin;
   const isAthlete = isAthleteAccount(user);
-  const isCoachUser = !staff && (user?.roles?.includes('coach'));
+  const isCoachUser = !staff && (user?.roles?.includes('coach') || user?.isHeadCoach);
   const clubHome = !staff && user?.roles?.includes('club_admin') && !isAthlete;
   const staffTabs = supportOnly
     ? [

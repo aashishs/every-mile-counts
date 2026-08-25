@@ -130,7 +130,7 @@ export async function getAdminClub(userId) {
 
 export async function publicUser(user, extras = {}) {
   if (!user) return null;
-  const roles = extras.roles || (await getUserRoles(user.id));
+  let roles = extras.roles ? [...extras.roles] : await getUserRoles(user.id);
   const dateOfBirth = parseDateOfBirth(user.dateOfBirth ?? user.date_of_birth);
   const age = ageFromDob(dateOfBirth);
   const firstName = String(user.firstName ?? user.first_name ?? '').trim();
@@ -144,6 +144,10 @@ export async function publicUser(user, extras = {}) {
     adminClubName = adminClub?.name || null;
   }
   const isHeadCoach = Boolean(adminClub?.headCoachUserId && adminClub.headCoachUserId === user.id);
+  if (isHeadCoach && !roles.includes('coach')) {
+    await query(`INSERT INTO user_roles (user_id, role) VALUES ($1, 'coach') ON CONFLICT DO NOTHING`, [user.id]);
+    roles = [...roles, 'coach'];
+  }
   return {
     id: user.id,
     email: user.email,

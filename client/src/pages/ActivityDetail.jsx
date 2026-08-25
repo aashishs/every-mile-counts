@@ -39,11 +39,18 @@ export default function ActivityDetail() {
   const [reviewCoachId, setReviewCoachId] = useState('');
   const [asking, setAsking] = useState(false);
   const [loadError, setLoadError] = useState('');
+  const [similar, setSimilar] = useState(null);
+  const [pickedSimilar, setPickedSimilar] = useState([]);
 
   useEffect(() => {
     setLoadError('');
+    setSimilar(null);
+    setPickedSimilar([]);
     api.get(`/activities/${id}`).then((res) => setData(res.data)).catch((err) => {
       setLoadError(err.response?.data?.message || 'Could not load this session');
+    });
+    api.get(`/activities/${id}/similar`).then((res) => setSimilar(res.data)).catch(() => {
+      setSimilar({ supported: false, activities: [] });
     });
     api.get('/coaches/my-coaches').then((res) => setCoaches(res.data.coaches || [])).catch(() => {});
   }, [id]);
@@ -268,6 +275,62 @@ export default function ActivityDetail() {
         </p>
       )}
       <ActivitySplits activity={activity} />
+
+      {similar?.supported && (
+      <section className="mb-6">
+        <div className="flex items-center justify-between gap-3 mb-3">
+          <h3 className="section-title mb-0">{similar.heading || 'Similar sessions'}</h3>
+          <button
+            type="button"
+            className="btn-outline btn-sm shrink-0"
+            disabled={pickedSimilar.length < 1 || pickedSimilar.length > 2}
+            onClick={() => navigate(
+              `/activities/compare?a=${activity.id}&b=${pickedSimilar[0]}${pickedSimilar[1] ? `&c=${pickedSimilar[1]}` : ''}&from=/activities/${activity.id}`
+            )}
+          >
+            Compare {pickedSimilar.length ? pickedSimilar.length + 1 : ''}
+          </button>
+        </div>
+        <p className="text-xs text-muted mb-3">
+          Same route, or the same title at a matching distance
+          {Number(activity.elevationGain) >= 200 ? ', or a similar climb' : ''}. Select 1 or 2 to compare.
+        </p>
+        {!similar.activities?.length ? (
+          <div className="card text-muted text-sm">
+            No matching {String(similar.heading || 'Similar sessions').replace(/^Similar /i, '')} yet.
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {similar.activities.map((act) => {
+              const checked = pickedSimilar.includes(act.id);
+              return (
+                <div key={act.id} className="card flex items-center gap-3 py-3">
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    aria-label={`Select ${act.name || 'session'} to compare`}
+                    onChange={() => {
+                      setPickedSimilar((prev) => {
+                        if (prev.includes(act.id)) return prev.filter((id) => id !== act.id);
+                        if (prev.length >= 2) return prev;
+                        return [...prev, act.id];
+                      });
+                    }}
+                  />
+                  <Link to={`/activities/${act.id}`} className="min-w-0 flex-1 text-inherit no-underline">
+                    <div className="font-semibold truncate">{act.name || 'Session'}</div>
+                    <div className="text-xs text-muted mt-1">
+                      {formatDate(act.startDate)} · {act.size || formatActivityPrimary(act)}
+                      {act.why ? ` · ${act.why}` : ''}
+                    </div>
+                  </Link>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+      )}
 
       {(insights || athleteInsights) && (
         <section className="mb-6">

@@ -79,7 +79,7 @@ export function AuthProvider({ children }) {
         refresh,
         updateUser: setUser,
         hasRole,
-        isCoach: hasRole('coach'),
+        isCoach: hasRole('coach') || Boolean(user?.isHeadCoach),
         isClubAdmin: hasRole('club_admin'),
         isAppAdmin: ['super_admin', 'app_admin', 'admin', 'support_admin'].some((r) => hasRole(r)),
         isSuperAdmin: hasRole('super_admin') || hasRole('app_admin'),

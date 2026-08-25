@@ -148,6 +148,32 @@ export async function ensureSchemaPatches() {
       )
   `);
 
+  await pool.query(`
+    INSERT INTO user_roles (user_id, role)
+    SELECT DISTINCT c.head_coach_user_id, 'coach'
+    FROM clubs c
+    WHERE c.head_coach_user_id IS NOT NULL
+    ON CONFLICT DO NOTHING
+  `);
+
+  await pool.query(`
+    INSERT INTO coach_assignments (athlete_id, coach_id, club_id, assigned_by, status)
+    SELECT cm.user_id, c.head_coach_user_id, c.id, c.head_coach_user_id, 'active'
+    FROM clubs c
+    JOIN club_members cm ON cm.club_id = c.id AND cm.status = 'active' AND cm.role = 'member'
+    WHERE c.head_coach_user_id IS NOT NULL
+      AND cm.user_id <> c.head_coach_user_id
+      AND NOT EXISTS (
+        SELECT 1 FROM coach_assignments ca
+        WHERE ca.athlete_id = cm.user_id AND ca.coach_id = c.head_coach_user_id
+      )
+      AND (
+        SELECT COUNT(*) FROM coach_assignments ca
+        WHERE ca.athlete_id = cm.user_id AND ca.status = 'active'
+      ) < 3
+    ON CONFLICT (athlete_id, coach_id) DO NOTHING
+  `);
+
   await pool.query(`ALTER TABLE review_requests DROP CONSTRAINT IF EXISTS review_requests_status_check`);
   await pool.query(
     `ALTER TABLE review_requests ADD CONSTRAINT review_requests_status_check
