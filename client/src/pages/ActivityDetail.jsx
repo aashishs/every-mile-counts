@@ -20,6 +20,7 @@ import ActivitySplits from '../components/ActivitySplits';
 import { PoweredByStrava, ViewOnStrava } from '../components/StravaBrand';
 import CoachReviewForm, { PublishedReviews } from '../components/CoachReviewForm';
 import { activityOriginLabel } from '../utils/activityOrigin';
+import { stepsPerMinute } from '../utils/cadence';
 
 export default function ActivityDetail() {
   const { id } = useParams();
@@ -94,6 +95,7 @@ export default function ActivityDetail() {
   const glance = insights || athleteInsights || {};
   const metric = activityMetric(activity.type, activity.sportType);
   const effort = effortStat(activity);
+  const cadenceSpm = stepsPerMinute(activity.avgCadence, activity);
   const primary = formatActivityPrimary(activity);
   const primaryLabel = metric === 'duration' ? 'Duration' : metric === 'swim' ? 'Distance' : 'Distance';
 
@@ -148,6 +150,13 @@ export default function ActivityDetail() {
           : null,
         activity.avgHeartrate
           ? { label: 'Avg HR', value: `${Math.round(activity.avgHeartrate)}`, unit: 'bpm' }
+          : null,
+        cadenceSpm
+          ? {
+              label: 'Cadence',
+              value: `${Math.round(cadenceSpm)}`,
+              unit: effort.kind === 'speed' ? 'rpm' : 'spm',
+            }
           : null,
       ].filter(Boolean);
 
@@ -323,7 +332,7 @@ export default function ActivityDetail() {
                 hint={
                   glance.mafCheck.maxAboveMaf
                     ? `MAF ${glance.mafCheck.mafHeartRate} bpm · max ${glance.mafCheck.maxHeartrate} spiked above`
-                    : `MAF ${glance.mafCheck.mafHeartRate} bpm (180 − age)`
+                    : `MAF ${glance.mafCheck.mafHeartRate} bpm`
                 }
               />
             )}

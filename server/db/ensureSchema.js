@@ -6,6 +6,12 @@ export async function ensureSchemaPatches() {
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS sync_activity_types_confirmed_at TIMESTAMPTZ`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMPTZ`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS age INTEGER`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS maf_offset SMALLINT NOT NULL DEFAULT 0`);
+  await pool.query(`
+    UPDATE users
+    SET maf_offset = GREATEST(0, LEAST(5, COALESCE(maf_heart_rate, 0) - (180 - age)))
+    WHERE age IS NOT NULL AND age > 0 AND maf_heart_rate IS NOT NULL
+  `);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS week_starts_on SMALLINT NOT NULL DEFAULT 1`);
   await pool.query(`ALTER TABLE events ADD COLUMN IF NOT EXISTS event_time TIME`);
   await pool.query(`ALTER TABLE goals ADD COLUMN IF NOT EXISTS target_time INTEGER`);
@@ -486,4 +492,18 @@ async function ensureTrainingPlanSchema() {
     )
   `);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_training_day_unavailability_athlete ON training_day_unavailability (athlete_id, unavailable_date)`);
+
+  // Strava/FIT store run cadence as one foot; UI and analysis use total steps/min.
+  await pool.query(`
+    UPDATE activities
+    SET avg_cadence = avg_cadence * 2
+    WHERE avg_cadence IS NOT NULL
+      AND avg_cadence > 0
+      AND avg_cadence < 130
+      AND COALESCE(source, '') <> 'garmin'
+      AND (
+        type ~* '(run|walk|hike|trail)'
+        OR COALESCE(sport_type, '') ~* '(run|walk|hike|trail)'
+      )
+  `);
 }

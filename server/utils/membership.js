@@ -1,5 +1,5 @@
 import { camel, many, one, query } from '../config/db.js';
-import { ageFromDob, mafHeartRate, parseDateOfBirth } from './maf.js';
+import { ageFromDob, clampMafOffset, mafHeartRate, parseDateOfBirth } from './maf.js';
 import { isStaffUser, isSuperAdminUser } from './staff.js';
 import { parseStoredSyncTypes } from './activityTypes.js';
 
@@ -159,7 +159,11 @@ export async function publicUser(user, extras = {}) {
     timezone: user.timezone,
     dateOfBirth,
     age,
-    mafHeartRate: mafHeartRate(age),
+    mafOffset: clampMafOffset(user.mafOffset ?? user.maf_offset),
+    mafHeartRate:
+      user.mafHeartRate
+      ?? user.maf_heart_rate
+      ?? mafHeartRate(age, user.mafOffset ?? user.maf_offset),
     maxHeartRate: user.maxHeartRate ?? user.max_heart_rate,
     restingHeartRate: user.restingHeartRate ?? user.resting_heart_rate,
     defaultActivityType: user.defaultActivityType ?? user.default_activity_type ?? 'Run',

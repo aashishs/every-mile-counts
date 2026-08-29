@@ -7,6 +7,7 @@ import {
   formatDuration,
   formatEffort,
 } from './format.js';
+import { stepsPerMinute } from './cadence.js';
 import { formatSplitClock, normalizeSplits } from './splits.js';
 
 function hasValue(value) {
@@ -90,6 +91,7 @@ export function buildActivityMarkdown(activity, insights) {
       : null;
   const weatherTemp = activity.weather?.temp ?? activity.weather?.temperature;
   const effortLabel = kind === 'speed' ? 'Speed' : kind === 'duration' ? null : 'Pace';
+  const cadenceSpm = stepsPerMinute(activity.avgCadence, activity);
 
   const numbers = table([
     row('Distance', distance),
@@ -103,7 +105,9 @@ export function buildActivityMarkdown(activity, insights) {
       : null),
     row('Avg HR', activity.avgHeartrate != null ? `${Math.round(Number(activity.avgHeartrate))} bpm` : null),
     row('Max HR', activity.maxHeartrate != null ? `${Math.round(Number(activity.maxHeartrate))} bpm` : null),
-    row('Avg cadence', metric !== 'duration' && activity.avgCadence != null ? `${Math.round(Number(activity.avgCadence))} ${kind === 'speed' ? 'rpm' : 'spm'}` : null),
+    row('Avg cadence', metric !== 'duration' && cadenceSpm != null
+      ? `${Math.round(cadenceSpm)} ${kind === 'speed' ? 'rpm' : 'spm'}`
+      : null),
     row('Avg power', activity.avgPower != null ? `${Math.round(Number(activity.avgPower))} W` : null),
     row('Calories', activity.calories != null ? `${Math.round(Number(activity.calories))} kcal` : null),
     row('Temperature', weatherTemp != null ? `${weatherTemp} °C` : null),

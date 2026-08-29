@@ -13,6 +13,7 @@ import { ensureKmSplits } from '../utils/kmSplits.js';
 import { rankSimilarActivities, similarHeading, similarSport, similarSupported } from '../utils/similarActivities.js';
 import { canViewerSeeActivity, stravaShareClause, stravaShareFilterSql } from '../utils/stravaShare.js';
 import { activityOrigin } from '../utils/activityOrigin.js';
+import { stepsPerMinute } from '../utils/cadence.js';
 
 const router = express.Router();
 router.use(protect, requireMembership, rejectAppAdmin);
@@ -447,6 +448,7 @@ router.get(
     const detailed = await enrichStravaActivity(activity);
     const hr = athleteHrContext(detailed);
     const insights = analyzeActivity(detailed, hr);
+    detailed.avgCadence = stepsPerMinute(detailed.avgCadence, detailed);
     const isCoach = req.user.roles.includes('coach') && req.user.id !== detailed.athleteId;
 
     const reviews = camelMany(

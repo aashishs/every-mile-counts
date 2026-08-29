@@ -1,3 +1,5 @@
+export const MAF_BONUS_MAX = 5;
+
 export function parseDateOfBirth(value) {
   if (!value) return null;
   if (value instanceof Date && !Number.isNaN(value.getTime())) {
@@ -25,9 +27,36 @@ export function ageFromDob(value, on = new Date()) {
   return age;
 }
 
-export function mafHeartRate(age) {
+export function mafBase(age) {
   if (age == null || !Number.isFinite(Number(age)) || age < 1) return null;
   return 180 - Math.round(Number(age));
+}
+
+export function clampMafOffset(offset) {
+  const n = Math.round(Number(offset) || 0);
+  if (!Number.isFinite(n)) return 0;
+  return Math.min(MAF_BONUS_MAX, Math.max(0, n));
+}
+
+export function mafHeartRate(age, offset = 0) {
+  const base = mafBase(age);
+  if (base == null) return null;
+  return base + clampMafOffset(offset);
+}
+
+export function mafOffsetFromValue(age, value) {
+  const base = mafBase(age);
+  if (base == null || value == null || value === '') return 0;
+  return clampMafOffset(Number(value) - base);
+}
+
+export function clampMafHeartRate(age, value) {
+  const base = mafBase(age);
+  if (base == null) return '';
+  if (value == null || value === '') return base;
+  const n = Number(value);
+  if (!Number.isFinite(n)) return base;
+  return Math.min(base + MAF_BONUS_MAX, Math.max(base, Math.round(n)));
 }
 
 export function todayIsoDate(on = new Date()) {

@@ -6,7 +6,7 @@ import { useAuth } from '../context/AuthContext';
 import { DEFAULT_ACTIVITY_TYPE, visibleActivityTypeOptions } from '../utils/format';
 import { afterJoinPath, hasRole, homePath, isAppAdminAccount, isAthleteAccount, needsProfile } from '../utils/roles';
 import { WEEK_START_DAYS } from '../utils/week';
-import { ageFromDob, mafHeartRate, parseDateOfBirth, todayIsoDate } from '../utils/maf';
+import { ageFromDob, clampMafHeartRate, mafBase, mafHeartRate, mafOffsetFromValue, parseDateOfBirth, todayIsoDate } from '../utils/maf';
 import StravaCard from '../components/StravaCard';
 import ActivityTypesSettings from '../components/ActivityTypesSettings';
 import ConfirmDialog from '../components/ConfirmDialog';
@@ -37,6 +37,7 @@ export default function Profile() {
     maxHeartRate: user.maxHeartRate || '',
     restingHeartRate: user.restingHeartRate || '',
     dateOfBirth: parseDateOfBirth(user.dateOfBirth) || '',
+    mafHeartRate: user.mafHeartRate || '',
     defaultActivityType: user.defaultActivityType || DEFAULT_ACTIVITY_TYPE,
     weekStartsOn: Number.isInteger(user.weekStartsOn) ? user.weekStartsOn : 1,
     notificationPrefs: user.notificationPrefs || {},
@@ -107,6 +108,9 @@ export default function Profile() {
     try {
       await api.patch('/users/me', {
         ...form,
+        ...(athlete && previewAge != null
+          ? { mafHeartRate: clampMafHeartRate(previewAge, form.mafHeartRate) }
+          : {}),
         ...(clubAdmin && !user.adminClubId ? { clubName: form.clubName.trim() } : {}),
       });
       const next = await refresh();
@@ -250,7 +254,22 @@ export default function Profile() {
   const canJoinClub = athleteClubCount < maxClubs;
 
   const previewAge = ageFromDob(form.dateOfBirth);
-  const previewMaf = mafHeartRate(previewAge);
+  const previewBaseMaf = mafBase(previewAge);
+  const previewMaf = previewAge != null
+    ? clampMafHeartRate(previewAge, form.mafHeartRate || previewBaseMaf)
+    : null;
+  const previewBonus = previewAge != null ? mafOffsetFromValue(previewAge, previewMaf) : 0;
+
+  const setDateOfBirth = (dateOfBirth) => {
+    const nextAge = ageFromDob(dateOfBirth);
+    const prevAge = ageFromDob(form.dateOfBirth);
+    const offset = prevAge != null ? mafOffsetFromValue(prevAge, form.mafHeartRate) : 0;
+    setForm({
+      ...form,
+      dateOfBirth,
+      mafHeartRate: nextAge != null ? mafHeartRate(nextAge, offset) : '',
+    });
+  };
 
   const tabs = TAB_DEFS.filter((t) => !t.athleteOnly || athlete);
   const requestedTab = completing ? 'profile' : searchParams.get('tab');
@@ -315,7 +334,7 @@ export default function Profile() {
       {completing && tab === 'profile' && (
         <div className="card mb-4 text-sm text-orange-200">
           Finish your profile to continue.
-          {athlete ? ' Date of birth sets your age and MAF (180 − age).' : ''}
+          {athlete ? ' Date of birth sets your age. MAF starts at 180 − age; you can add up to 5 bpm.' : ''}
           {clubAdmin && !user.adminClubId ? ' Add your club name to create the club.' : ''}
         </div>
       )}
@@ -367,13 +386,35 @@ export default function Profile() {
                 id="dateOfBirth"
                 type="date"
                 value={form.dateOfBirth}
-                onChange={(e) => setForm({ ...form, dateOfBirth: e.target.value })}
+                onChange={(e) => setDateOfBirth(e.target.value)}
                 required
                 max={todayIsoDate()}
               />
-              {previewAge != null && previewMaf != null && (
+              {previewAge != null && (
+                <p className="text-xs text-muted mt-1">Age {previewAge}</p>
+              )}
+            </div>
+            <div>
+              <label htmlFor="mafHeartRate">MAF</label>
+              <input
+                id="mafHeartRate"
+                type="number"
+                min={previewBaseMaf || undefined}
+                max={previewBaseMaf != null ? previewBaseMaf + 5 : undefined}
+                step="1"
+                value={previewMaf ?? ''}
+                onChange={(e) => setForm({
+                  ...form,
+                  mafHeartRate: e.target.value === '' ? '' : clampMafHeartRate(previewAge, e.target.value),
+                })}
+                required
+                disabled={previewAge == null}
+                placeholder="bpm"
+              />
+              {previewBaseMaf != null && (
                 <p className="text-xs text-muted mt-1">
-                  Age {previewAge} · MAF {previewMaf} bpm (180 − age)
+                  {previewBaseMaf} bpm is 180 − age
+                  {previewBonus > 0 ? ` · +${previewBonus} for consistent training` : '. You can add up to 5 bpm.'}
                 </p>
               )}
             </div>

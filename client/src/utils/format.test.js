@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { activityMetric, activitySummaryParts, effortKind, effortStat, formatActivityPrimary, formatEffort, formatPace, formatSpeed, formatSwimPace } from './format.js';
+import { activityMetric, activitySummaryParts, effortKind, effortStat, formatActivityPrimary, formatDate, formatDateTime, formatEffort, formatPace, formatSpeed, formatSwimPace, isCalendarDate, parseStamp } from './format.js';
+import { stepsPerMinute } from './cadence.js';
 
 describe('effort display', () => {
   it('uses speed for rides and pace for runs', () => {
@@ -41,5 +42,39 @@ describe('effort display', () => {
     assert.equal(effortStat({ type: 'Ride', avgSpeed: 8.333 }).label, 'Speed');
     assert.equal(effortStat({ type: 'Run', avgSpeed: 3.333 }).unit, '/km');
     assert.equal(effortStat({ type: 'Swim', avgSpeed: 1.25 }).unit, '/100m');
+  });
+});
+
+describe('local date display', () => {
+  it('keeps YYYY-MM-DD on the calendar day, not UTC midnight', () => {
+    assert.equal(isCalendarDate('2026-08-23'), true);
+    const d = parseStamp('2026-08-23');
+    assert.equal(d.getFullYear(), 2026);
+    assert.equal(d.getMonth(), 7);
+    assert.equal(d.getDate(), 23);
+    assert.match(formatDate('2026-08-23'), /Aug 23/);
+    assert.equal(formatDateTime('2026-08-23'), formatDate('2026-08-23'));
+  });
+
+  it('formats UTC instants in the local timezone', () => {
+    const iso = '2026-08-23T00:29:37.000Z';
+    const expected = new Date(iso).toLocaleString('en-US', {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    });
+    assert.equal(formatDateTime(iso), expected);
+    assert.match(formatDateTime(iso), /\d{1,2}:\d{2}/);
+  });
+});
+
+describe('running cadence', () => {
+  it('doubles Strava one-foot cadence to total SPM', () => {
+    assert.equal(stepsPerMinute(74, { type: 'Run', source: 'strava' }), 148);
+    assert.equal(stepsPerMinute(148, { type: 'Run', source: 'strava' }), 148);
+    assert.equal(stepsPerMinute(88, { type: 'Ride', source: 'strava' }), 88);
   });
 });

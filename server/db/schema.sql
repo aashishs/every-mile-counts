@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS users (
   date_of_birth DATE,
   age INTEGER,
   maf_heart_rate INTEGER,
+  maf_offset SMALLINT NOT NULL DEFAULT 0,
   max_heart_rate INTEGER,
   resting_heart_rate INTEGER,
   status TEXT NOT NULL DEFAULT 'active'
