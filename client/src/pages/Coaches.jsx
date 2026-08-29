@@ -385,7 +385,7 @@ export default function Coaches() {
                       <div className="text-xs text-muted truncate mt-0.5">{a.email}</div>
                       <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted mt-2">
                         <span>{a.activityCount ?? 0} activities</span>
-                        <span>Last {a.lastActivityAt ? formatDateShort(a.lastActivityAt) : '—'}</span>
+                        <span>Last {a.lastActivityAt ? formatDateTime(a.lastActivityAt) : '—'}</span>
                         <span>{a.mafHeartRate ? `MAF ${a.mafHeartRate}` : 'MAF —'}</span>
                       </div>
                     </button>
