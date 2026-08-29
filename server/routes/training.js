@@ -56,6 +56,46 @@ function asDate(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
 }
 
+async function listCoachTemplates(coachId, clubId) {
+  const params = [coachId];
+  let sql = `SELECT p.*, c.name AS club_name,
+                    (SELECT COUNT(*)::int FROM planned_workouts w WHERE w.program_id = p.id) AS workout_count,
+                    (SELECT COUNT(*)::int FROM training_weeks tw WHERE tw.program_id = p.id) AS week_count
+             FROM training_programs p
+             JOIN clubs c ON c.id = p.club_id
+             WHERE p.coach_id = $1 AND p.is_template = TRUE`;
+  if (clubId) {
+    params.push(clubId);
+    sql += ` AND p.club_id = $${params.length}`;
+  }
+  sql += ` ORDER BY p.name`;
+  return camelMany(await many(sql, params));
+}
+
+async function deployProgramCopies(req, program, body) {
+  const startDate = asDate(body.startDate);
+  if (!startDate) throw httpError(400, 'Choose a start date');
+  const targets = await resolveTargets(req.user, {
+    athleteId: body.athleteId,
+    groupId: body.groupId,
+    athleteIds: body.athleteIds,
+    clubId: program.clubId,
+  });
+  const copies = [];
+  for (const athlete of targets.athletes) {
+    const copy = await cloneProgramForAthlete(program, athlete.athleteId, targets.group?.id || null, { startDate });
+    await createNotification({
+      userId: athlete.athleteId,
+      type: 'training',
+      title: 'New training plan',
+      body: `${req.user.firstName} assigned ${copy.name}${targets.group ? ` to ${targets.group.name}` : ' to you'}.`,
+      data: { programId: copy.id, url: `/training/programs/${copy.id}` },
+    });
+    copies.push(copy);
+  }
+  return { copies, group: targets.group };
+}
+
 async function loadDayNotes(athleteId, from, to) {
   return camelMany(
     await many(
@@ -223,6 +263,14 @@ router.get(
   })
 );
 
+router.get(
+  '/templates',
+  requireRole('coach'),
+  asyncHandler(async (req, res) => {
+    res.json({ templates: await listCoachTemplates(req.user.id, req.query.clubId || null) });
+  })
+);
+
 router.post(
   '/groups',
   requireRole('coach'),
@@ -360,6 +408,7 @@ router.get(
          JOIN clubs c ON c.id = p.club_id
          LEFT JOIN users u ON u.id = p.athlete_id
          WHERE p.coach_id = $1
+           AND COALESCE(p.is_template, FALSE) = FALSE
          ORDER BY CASE p.status
            WHEN 'active' THEN 0 WHEN 'paused' THEN 1 WHEN 'halted' THEN 2 WHEN 'draft' THEN 3
            WHEN 'completed' THEN 4 ELSE 5 END, p.updated_at DESC`,
@@ -427,6 +476,7 @@ router.get(
     }));
 
     const groups = await listCoachGroups(req.user.id);
+    const templates = await listCoachTemplates(req.user.id);
     const summaries = athletes.map((row) => {
       const athletePrograms = programsWithPrep.filter((p) => p.athleteId === row.athleteId);
       const singles = toPrepare.filter((w) => w.athleteId === row.athleteId && !w.programId);
@@ -445,6 +495,7 @@ router.get(
       counts,
       programs: programsWithPrep,
       groups,
+      templates,
       toPrepare,
       today,
       upcoming: toPrepare.filter((w) => asDate(w.scheduledDate) !== todayYmd()),
@@ -673,7 +724,7 @@ router.get(
          FROM training_programs p
          JOIN clubs c ON c.id = p.club_id
          LEFT JOIN users u ON u.id = p.athlete_id
-         WHERE p.coach_id = $1
+         WHERE p.coach_id = $1 AND COALESCE(p.is_template, FALSE) = FALSE
          ORDER BY p.updated_at DESC`,
         [req.user.id]
       )
@@ -771,10 +822,56 @@ router.delete(
 );
 
 router.post(
+  '/programs/:id/save-template',
+  requireRole('coach'),
+  asyncHandler(async (req, res) => {
+    const program = await loadProgramOwnedOrThrow(req);
+    if (program.isTemplate) {
+      return res.json({ program: await hydrateProgram(program, req.user.id), already: true });
+    }
+    const sessions = await one('SELECT COUNT(*)::int AS n FROM planned_workouts WHERE program_id = $1', [program.id]);
+    if (!sessions?.n) throw httpError(400, 'Add at least one session before saving as a template');
+    const name = String(req.body.name || program.name).trim();
+    if (!name) throw httpError(400, 'Template name is required');
+    const template = await cloneProgramForAthlete(program, null, null, { asTemplate: true, name });
+    res.status(201).json({ program: await hydrateProgram(template, req.user.id) });
+  })
+);
+
+router.post(
+  '/templates/:id/deploy',
+  requireRole('coach'),
+  asyncHandler(async (req, res) => {
+    const program = await loadProgramOwnedOrThrow(req);
+    if (!program.isTemplate) throw httpError(400, 'Save this plan as a template first');
+    const result = await deployProgramCopies(req, program, req.body || {});
+    res.status(201).json({
+      assigned: result.copies.length,
+      groupId: result.group?.id || null,
+      programs: result.copies,
+      program: result.copies[0]
+        ? await hydrateProgram(result.copies[0], req.user.id)
+        : await hydrateProgram(program, req.user.id),
+    });
+  })
+);
+
+router.post(
   '/programs/:id/assign',
   requireRole('coach'),
   asyncHandler(async (req, res) => {
     const program = await loadProgramOwnedOrThrow(req);
+    if (program.isTemplate) {
+      const result = await deployProgramCopies(req, program, req.body || {});
+      return res.json({
+        assigned: result.copies.length,
+        groupId: result.group?.id || null,
+        programs: result.copies,
+        program: result.copies[0]
+          ? await hydrateProgram(result.copies[0], req.user.id)
+          : await hydrateProgram(program, req.user.id),
+      });
+    }
     const groupId = req.body.groupId || null;
     const athleteIds = Array.isArray(req.body.athleteIds) ? req.body.athleteIds : [];
     if (groupId || athleteIds.length > 1) {
@@ -856,6 +953,7 @@ router.post(
       completed: ['archived'],
       archived: [],
     };
+    if (next === 'active' && program.isTemplate) throw httpError(400, 'Use this template for an athlete or group instead of activating it');
     if (next === 'active' && !program.athleteId) throw httpError(400, 'Assign an athlete before activating');
     if (!(allowed[program.status] || []).includes(next)) {
       throw httpError(400, `Cannot change ${program.status} to ${next}`);

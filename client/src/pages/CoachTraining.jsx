@@ -10,6 +10,7 @@ import {
   PROGRAM_STATUS_LABEL,
   statusClass,
 } from '../utils/training';
+import DeployTemplate from '../components/DeployTemplate';
 
 const FILTERS = [
   { id: 'all', label: 'All' },
@@ -23,6 +24,8 @@ export default function CoachTraining() {
   const [error, setError] = useState('');
   const [filter, setFilter] = useState('active');
   const [query, setQuery] = useState('');
+  const [deploy, setDeploy] = useState(null);
+  const [msg, setMsg] = useState('');
   const assignedCount = location.state?.assigned;
 
   useEffect(() => {
@@ -66,6 +69,7 @@ export default function CoachTraining() {
           Scheduled {assignedCount} session{assignedCount === 1 ? '' : 's'}. Athletes will see it on Training.
         </div>
       ) : null}
+      {msg ? <div className="card mb-4 text-sm">{msg}</div> : null}
 
       <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mb-6">
         <CountCard label="Active" value={counts.active || 0} onClick={() => setFilter('active')} active={filter === 'active'} />
@@ -89,6 +93,34 @@ export default function CoachTraining() {
                 <div className="font-semibold">{g.name}</div>
                 <div className="text-xs text-muted mt-1">{g.clubName} · {g.athleteCount || g.athletes?.length || 0} athletes</div>
               </button>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="mb-8">
+        <h3 className="section-title mb-3">Plan templates</h3>
+        <p className="text-sm text-muted mb-3">Reuse “base 8-week 10k” or “return from injury” instead of rebuilding.</p>
+        {!data.templates?.length ? (
+          <div className="card text-muted text-sm">
+            Open a plan you like and choose Save as template. Then assign a copy to an athlete or group with a start date.
+          </div>
+        ) : (
+          <div className="grid sm:grid-cols-2 gap-2">
+            {data.templates.map((t) => (
+              <article key={t.id} className="card">
+                <button type="button" className="w-full text-left bg-transparent border-0 p-0" onClick={() => navigate(`/coaches/programs/${t.id}`)}>
+                  <div className="font-semibold">{t.name}</div>
+                  <div className="text-xs text-muted mt-1">
+                    {t.clubName} · {t.sport}
+                    {t.weekCount ? ` · ${t.weekCount} week${t.weekCount === 1 ? '' : 's'}` : ''}
+                    {t.workoutCount ? ` · ${t.workoutCount} sessions` : ''}
+                  </div>
+                </button>
+                <button type="button" className="btn-primary btn-sm mt-3" onClick={() => setDeploy(t)}>
+                  Use template
+                </button>
+              </article>
             ))}
           </div>
         )}
@@ -258,6 +290,19 @@ export default function CoachTraining() {
           </div>
         )}
       </section>
+      {deploy && (
+        <DeployTemplate
+          template={deploy}
+          athletes={data.athletes}
+          groups={data.groups}
+          onCancel={() => setDeploy(null)}
+          onDone={(result) => {
+            setDeploy(null);
+            setMsg(`Assigned ${result.assigned} cop${result.assigned === 1 ? 'y' : 'ies'}. Athletes will see it on Training.`);
+            api.get('/training/coach-dashboard').then((res) => setData(res.data)).catch(() => {});
+          }}
+        />
+      )}
     </Layout>
   );
 }

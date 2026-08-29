@@ -327,6 +327,9 @@ async function ensureTrainingPlanSchema() {
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_training_programs_coach ON training_programs (coach_id, status)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_training_programs_athlete ON training_programs (athlete_id, status)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_training_programs_club ON training_programs (club_id)`);
+  await pool.query(`ALTER TABLE training_programs ADD COLUMN IF NOT EXISTS is_template BOOLEAN NOT NULL DEFAULT FALSE`);
+  await pool.query(`ALTER TABLE training_programs ADD COLUMN IF NOT EXISTS source_program_id UUID REFERENCES training_programs(id) ON DELETE SET NULL`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_training_programs_templates ON training_programs (coach_id) WHERE is_template = TRUE`);
   await pool.query(`DROP INDEX IF EXISTS idx_training_programs_one_live`);
   await pool.query(`ALTER TABLE training_programs DROP CONSTRAINT IF EXISTS training_programs_status_check`);
   await pool.query(`
