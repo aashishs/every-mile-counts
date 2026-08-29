@@ -242,6 +242,10 @@ export async function markMissedWorkouts() {
          AND LOWER(w.workout_type) <> 'rest'
          AND w.scheduled_date < CURRENT_DATE
          AND w.athlete_id IS NOT NULL
+         AND NOT EXISTS (
+           SELECT 1 FROM training_day_unavailability u
+           WHERE u.athlete_id = w.athlete_id AND u.unavailable_date = w.scheduled_date
+         )
          AND (
            w.program_id IS NULL
            OR EXISTS (SELECT 1 FROM training_programs p WHERE p.id = w.program_id AND p.status = 'active')

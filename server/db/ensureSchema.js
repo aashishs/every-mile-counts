@@ -6,8 +6,24 @@ export async function ensureSchemaPatches() {
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS sync_activity_types_confirmed_at TIMESTAMPTZ`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMPTZ`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS age INTEGER`);
-  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS maf_heart_rate INTEGER`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS week_starts_on SMALLINT NOT NULL DEFAULT 1`);
   await pool.query(`ALTER TABLE events ADD COLUMN IF NOT EXISTS event_time TIME`);
+  await pool.query(`ALTER TABLE goals ADD COLUMN IF NOT EXISTS target_time INTEGER`);
+  await pool.query(`ALTER TABLE goals ADD COLUMN IF NOT EXISTS activity_type TEXT NOT NULL DEFAULT 'Run'`);
+  await pool.query(`ALTER TABLE goals ADD COLUMN IF NOT EXISTS matched_activity_id UUID REFERENCES activities(id) ON DELETE SET NULL`);
+  await pool.query(`ALTER TABLE goals ADD COLUMN IF NOT EXISTS coach_visible BOOLEAN NOT NULL DEFAULT FALSE`);
+  const goalTypeCheck = await pool.query(
+    `SELECT pg_get_constraintdef(oid) AS def
+     FROM pg_constraint
+     WHERE conrelid = 'goals'::regclass AND conname = 'goals_type_check'`
+  );
+  if (!/weekly_mileage/.test(goalTypeCheck.rows[0]?.def || '')) {
+    await pool.query(`ALTER TABLE goals DROP CONSTRAINT IF EXISTS goals_type_check`);
+    await pool.query(`
+      ALTER TABLE goals ADD CONSTRAINT goals_type_check
+      CHECK (type IN ('race', 'distance', 'weekly_mileage', 'time', 'challenge', 'other'))
+    `);
+  }
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS password_reset_tokens (
@@ -440,4 +456,34 @@ async function ensureTrainingPlanSchema() {
       AND ca.coach_id = rr.coach_id
       AND ca.club_id IS NOT NULL
   `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS training_day_notes (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      athlete_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      coach_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      club_id UUID REFERENCES clubs(id) ON DELETE SET NULL,
+      note_date DATE NOT NULL,
+      body TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (athlete_id, coach_id, note_date)
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_training_day_notes_athlete_date ON training_day_notes (athlete_id, note_date)`);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS training_day_unavailability (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      athlete_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      unavailable_date DATE NOT NULL,
+      reason TEXT NOT NULL DEFAULT 'rest'
+        CHECK (reason IN ('injury', 'travel', 'rest', 'other')),
+      note TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (athlete_id, unavailable_date)
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_training_day_unavailability_athlete ON training_day_unavailability (athlete_id, unavailable_date)`);
 }

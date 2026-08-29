@@ -67,7 +67,7 @@ if (!self.define) {
     });
   };
 }
-define(['./workbox-43e44e5a'], (function (workbox) { 'use strict';
+define(['./workbox-aeb6ecaf'], (function (workbox) { 'use strict';
 
   importScripts("push-handler.js");
   self.skipWaiting();
@@ -79,7 +79,7 @@ define(['./workbox-43e44e5a'], (function (workbox) { 'use strict';
    */
   workbox.precacheAndRoute([{
     "url": "index.html",
-    "revision": "0.uf95jd7ftp"
+    "revision": "0.ebud4soukpg"
   }], {});
   workbox.cleanupOutdatedCaches();
   workbox.registerRoute(new workbox.NavigationRoute(workbox.createHandlerBoundToURL("index.html"), {
@@ -91,17 +91,6 @@ define(['./workbox-43e44e5a'], (function (workbox) { 'use strict';
   }) => url.pathname.startsWith("/api/"), new workbox.NetworkOnly({
     "cacheName": "emc-api",
     plugins: []
-  }), 'GET');
-  workbox.registerRoute(({
-    url
-  }) => url.hostname === "tile.openstreetmap.org", new workbox.CacheFirst({
-    "cacheName": "emc-osm-tiles",
-    plugins: [new workbox.ExpirationPlugin({
-      maxEntries: 200,
-      maxAgeSeconds: 604800
-    }), new workbox.CacheableResponsePlugin({
-      statuses: [0, 200]
-    })]
   }), 'GET');
 
 }));

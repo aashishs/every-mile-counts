@@ -163,6 +163,12 @@ export async function publicUser(user, extras = {}) {
     maxHeartRate: user.maxHeartRate ?? user.max_heart_rate,
     restingHeartRate: user.restingHeartRate ?? user.resting_heart_rate,
     defaultActivityType: user.defaultActivityType ?? user.default_activity_type ?? 'Run',
+    weekStartsOn: (() => {
+      const raw = user.weekStartsOn ?? user.week_starts_on;
+      if (raw == null || raw === '') return 1;
+      const n = Number(raw);
+      return Number.isInteger(n) && n >= 0 && n <= 6 ? n : 1;
+    })(),
     syncActivityTypes: parseStoredSyncTypes(user.syncActivityTypes ?? user.sync_activity_types),
     syncActivityTypesConfirmed: Boolean(user.syncActivityTypesConfirmedAt ?? user.sync_activity_types_confirmed_at),
     status: user.status,

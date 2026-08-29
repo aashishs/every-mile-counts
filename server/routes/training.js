@@ -56,6 +56,60 @@ function asDate(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
 }
 
+async function loadDayNotes(athleteId, from, to) {
+  return camelMany(
+    await many(
+      `SELECT n.id, n.athlete_id, n.coach_id, n.club_id, n.note_date, n.body, n.updated_at,
+              u.first_name AS coach_first_name, u.last_name AS coach_last_name
+       FROM training_day_notes n
+       JOIN users u ON u.id = n.coach_id
+       WHERE n.athlete_id = $1 AND n.note_date BETWEEN $2 AND $3
+       ORDER BY n.updated_at DESC`,
+      [athleteId, from, to]
+    )
+  );
+}
+
+async function loadUnavailable(athleteId, from, to) {
+  return camelMany(
+    await many(
+      `SELECT id, athlete_id, unavailable_date, reason, note, updated_at
+       FROM training_day_unavailability
+       WHERE athlete_id = $1 AND unavailable_date BETWEEN $2 AND $3
+       ORDER BY unavailable_date`,
+      [athleteId, from, to]
+    )
+  );
+}
+
+const UNAVAILABLE_REASONS = ['injury', 'travel', 'rest', 'other'];
+
+async function skipWorkoutsForUnavailable(athleteId, date) {
+  await query(
+    `UPDATE planned_workouts
+     SET completion_status = 'skipped', updated_at = NOW()
+     WHERE athlete_id = $1 AND scheduled_date = $2
+       AND completion_status IN ('planned', 'pending_match', 'missed')
+       AND LOWER(workout_type) <> 'rest'`,
+    [athleteId, date]
+  );
+}
+
+async function restoreWorkoutsAfterUnavailable(athleteId, date) {
+  await query(
+    `UPDATE planned_workouts w
+     SET completion_status = 'planned', updated_at = NOW()
+     WHERE w.athlete_id = $1 AND w.scheduled_date = $2
+       AND w.completion_status = 'skipped'
+       AND LOWER(w.workout_type) <> 'rest'
+       AND NOT EXISTS (
+         SELECT 1 FROM workout_activity_matches m
+         WHERE m.planned_workout_id = w.id AND m.status IN ('auto', 'confirmed')
+       )`,
+    [athleteId, date]
+  );
+}
+
 function mondayOf(ymd) {
   const [y, m, d] = String(ymd).split('-').map(Number);
   if (!y || !m || !d) return ymd;
@@ -439,7 +493,7 @@ router.get(
       )
     );
     const reviews = await clubReviewsForAthlete(req.user.id, req.params.athleteId, assignment.clubId);
-    const athlete = camel(await one('SELECT id, first_name, last_name, email, avatar_url FROM users WHERE id = $1', [req.params.athleteId]));
+    const athlete = camel(await one('SELECT id, first_name, last_name, email, avatar_url, week_starts_on FROM users WHERE id = $1', [req.params.athleteId]));
     res.json({
       athlete,
       assignment,
@@ -459,7 +513,11 @@ router.get(
     const to = asDate(req.query.to) || from;
     const athleteId = req.query.athleteId || req.user.id;
     if (athleteId !== req.user.id) {
-      if (!(req.user.roles || []).includes('coach')) throw httpError(403, 'Access denied');
+      const roles = req.user.roles || [];
+      if (!roles.includes('coach')) {
+        const head = await one('SELECT 1 FROM clubs WHERE head_coach_user_id = $1 LIMIT 1', [req.user.id]);
+        if (!head) throw httpError(403, 'Access denied');
+      }
       const assignment = await assertAssignedCoach(req.user.id, athleteId);
       if (req.query.clubId && req.query.clubId !== assignment.clubId) {
         throw httpError(403, 'Access denied');
@@ -480,9 +538,20 @@ router.get(
     const workouts = camelMany(
       await many(
         `SELECT w.id, w.scheduled_date, w.name, w.sport, w.workout_type, w.completion_status,
-                w.distance, w.duration, COALESCE(p.name, 'Assigned activity') AS program_name
+                w.distance, w.duration, w.target_pace,
+                COALESCE(p.name, 'Assigned activity') AS program_name,
+                a.id AS activity_id, a.name AS activity_name,
+                a.distance AS actual_distance, a.moving_time AS actual_duration
          FROM planned_workouts w
          LEFT JOIN training_programs p ON p.id = w.program_id
+         LEFT JOIN LATERAL (
+           SELECT m.activity_id
+           FROM workout_activity_matches m
+           WHERE m.planned_workout_id = w.id AND m.status IN ('auto', 'confirmed')
+           ORDER BY m.matched_at DESC
+           LIMIT 1
+         ) match ON TRUE
+         LEFT JOIN activities a ON a.id = match.activity_id
          WHERE w.athlete_id = $1
            AND w.scheduled_date BETWEEN $2 AND $3
            AND (w.program_id IS NULL OR p.status IN ('active', 'paused', 'completed'))
@@ -491,7 +560,106 @@ router.get(
         params
       )
     );
-    res.json({ workouts });
+    const dayNotes = await loadDayNotes(athleteId, from, to);
+    const unavailable = await loadUnavailable(athleteId, from, to);
+    res.json({ workouts, dayNotes, unavailable });
+  })
+);
+
+router.put(
+  '/availability',
+  asyncHandler(async (req, res) => {
+    const noteDate = asDate(req.body.date);
+    if (!noteDate) throw httpError(400, 'Pick a day');
+    const athleteId = req.user.id;
+    const clear = req.body.unavailable === false || req.body.unavailable === 'false';
+    if (clear) {
+      await query(
+        `DELETE FROM training_day_unavailability WHERE athlete_id = $1 AND unavailable_date = $2`,
+        [athleteId, noteDate]
+      );
+      await restoreWorkoutsAfterUnavailable(athleteId, noteDate);
+      return res.json({ unavailable: null });
+    }
+    const reason = UNAVAILABLE_REASONS.includes(req.body.reason) ? req.body.reason : 'rest';
+    const note = String(req.body.note || '').trim().slice(0, 280) || null;
+    const existing = camel(
+      await one(
+        `SELECT id FROM training_day_unavailability WHERE athlete_id = $1 AND unavailable_date = $2`,
+        [athleteId, noteDate]
+      )
+    );
+    const row = camel(
+      await one(
+        `INSERT INTO training_day_unavailability (athlete_id, unavailable_date, reason, note)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (athlete_id, unavailable_date) DO UPDATE SET
+           reason = EXCLUDED.reason,
+           note = EXCLUDED.note,
+           updated_at = NOW()
+         RETURNING *`,
+        [athleteId, noteDate, reason, note]
+      )
+    );
+    await skipWorkoutsForUnavailable(athleteId, noteDate);
+    if (!existing) {
+      const coaches = camelMany(
+        await many(
+          `SELECT coach_id FROM coach_assignments WHERE athlete_id = $1 AND status = 'active'`,
+          [athleteId]
+        )
+      );
+      const reasonLabel = reason === 'injury' ? 'injury' : reason === 'travel' ? 'travel' : reason === 'other' ? 'other' : 'rest';
+      const body = `${req.user.firstName} can’t train on ${noteDate} (${reasonLabel}${note ? ` · ${note}` : ''}).`;
+      for (const coach of coaches) {
+        await createNotification({
+          userId: coach.coachId,
+          type: 'training',
+          title: 'Athlete can’t train',
+          body,
+          data: { athleteId, date: noteDate, url: `/coaches/athletes/${athleteId}/training` },
+        });
+      }
+    }
+    res.json({ unavailable: row });
+  })
+);
+
+router.put(
+  '/day-notes',
+  requireRole('coach'),
+  asyncHandler(async (req, res) => {
+    const athleteId = req.body.athleteId;
+    const noteDate = asDate(req.body.date);
+    const body = String(req.body.body || '').trim().slice(0, 280);
+    if (!athleteId || !noteDate) throw httpError(400, 'Pick a day');
+    const assignment = await assertAssignedCoach(req.user.id, athleteId);
+    if (!body) {
+      await query(
+        `DELETE FROM training_day_notes WHERE athlete_id = $1 AND coach_id = $2 AND note_date = $3`,
+        [athleteId, req.user.id, noteDate]
+      );
+      return res.json({ note: null });
+    }
+    const row = camel(
+      await one(
+        `INSERT INTO training_day_notes (athlete_id, coach_id, club_id, note_date, body)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (athlete_id, coach_id, note_date) DO UPDATE SET
+           body = EXCLUDED.body,
+           club_id = COALESCE(EXCLUDED.club_id, training_day_notes.club_id),
+           updated_at = NOW()
+         RETURNING *`,
+        [athleteId, req.user.id, assignment.clubId || null, noteDate, body]
+      )
+    );
+    res.json({
+      note: {
+        ...row,
+        coachFirstName: req.user.firstName,
+        coachLastName: req.user.lastName,
+      },
+    });
   })
 );
 

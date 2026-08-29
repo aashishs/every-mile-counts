@@ -36,6 +36,7 @@ router.patch(
       'restingHeartRate',
       'notificationPrefs',
       'defaultActivityType',
+      'weekStartsOn',
     ];
     const map = {
       firstName: 'first_name',
@@ -46,10 +47,18 @@ router.patch(
       restingHeartRate: 'resting_heart_rate',
       notificationPrefs: 'notification_prefs',
       defaultActivityType: 'default_activity_type',
+      weekStartsOn: 'week_starts_on',
     };
     const allowedTypes = ACTIVITY_TYPES;
     if (req.body.defaultActivityType !== undefined && !allowedTypes.includes(req.body.defaultActivityType)) {
       return res.status(400).json({ message: 'Choose a valid default activity type' });
+    }
+    if (req.body.weekStartsOn !== undefined) {
+      const n = Number(req.body.weekStartsOn);
+      if (!Number.isInteger(n) || n < 0 || n > 6) {
+        return res.status(400).json({ message: 'Choose which day your week starts on' });
+      }
+      req.body.weekStartsOn = n;
     }
     if (req.body.defaultActivityType !== undefined) {
       const selected = parseStoredSyncTypes(req.user.syncActivityTypes);
@@ -122,7 +131,9 @@ router.patch(
               ? null
               : ['firstName', 'lastName'].includes(key)
                 ? String(req.body[key]).trim()
-                : req.body[key]
+                : key === 'weekStartsOn'
+                  ? Number(req.body[key])
+                  : req.body[key]
         );
       }
     }

@@ -1,10 +1,16 @@
+function isPgErrorCode(code) {
+  return typeof code === 'string' && /^[0-9A-Z]{5}$/.test(code);
+}
+
 export function errorHandler(err, _req, res, _next) {
   console.error(err);
-  const status = err.status || 500;
-  res.status(status).json({
-    message: err.message || 'Internal server error',
-    ...(err.code ? { code: err.code } : {}),
-  });
+  const status = Number(err.status) || 500;
+  const expose = status < 500 && Boolean(err.status) && !isPgErrorCode(err.code);
+  const payload = {
+    message: expose ? err.message || 'Request failed' : 'Something went wrong. Try again.',
+  };
+  if (expose && err.code && !isPgErrorCode(err.code)) payload.code = err.code;
+  res.status(status).json(payload);
 }
 
 export function asyncHandler(fn) {

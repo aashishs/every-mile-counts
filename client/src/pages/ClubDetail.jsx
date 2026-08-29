@@ -4,7 +4,7 @@ import api from '../api/client';
 import Layout from '../components/Layout';
 import { useAuth } from '../context/AuthContext';
 import { isAthleteAccount } from '../utils/roles';
-import { formatActivityPrimary, formatDate, formatDateShort, getActivityIcon } from '../utils/format';
+import { formatActivityPrimary, formatDate, formatDateShort, formatDateTime, getActivityIcon } from '../utils/format';
 import ClubInviteCodes from '../components/ClubInviteCodes';
 
 const PAGE_SIZES = [10, 20, 50, 100];
@@ -762,7 +762,7 @@ export default function ClubDetail() {
                                   <span className="truncate">{act.name}</span>
                                 </span>
                                 <span className="text-xs text-muted shrink-0">
-                                  {formatActivityPrimary(act)} · {formatDate(act.startDate)}
+                                  {formatActivityPrimary(act)} · {formatDateTime(act.startDate)}
                                 </span>
                               </Link>
                             ))
@@ -818,7 +818,7 @@ export default function ClubDetail() {
                                         <span className="truncate">{act.name}</span>
                                       </span>
                                       <span className="text-xs text-muted shrink-0">
-                                        {formatActivityPrimary(act)} · {formatDate(act.startDate)}
+                                        {formatActivityPrimary(act)} · {formatDateTime(act.startDate)}
                                       </span>
                                     </Link>
                                   ))
@@ -829,7 +829,7 @@ export default function ClubDetail() {
                           <td className="p-3 text-muted">{a.email}</td>
                           <td className="p-3 whitespace-nowrap">{a.activityCount ?? 0}</td>
                           <td className="p-3 whitespace-nowrap text-muted">
-                            {a.lastActivityAt ? formatDate(a.lastActivityAt) : '—'}
+                            {a.lastActivityAt ? formatDateTime(a.lastActivityAt) : '—'}
                           </td>
                           <td className="p-3">
                             <div className="flex flex-wrap gap-1 mb-2">

@@ -5,6 +5,7 @@ import Layout from '../components/Layout';
 import { useAuth } from '../context/AuthContext';
 import { DEFAULT_ACTIVITY_TYPE, visibleActivityTypeOptions } from '../utils/format';
 import { afterJoinPath, hasRole, homePath, isAppAdminAccount, isAthleteAccount, needsProfile } from '../utils/roles';
+import { WEEK_START_DAYS } from '../utils/week';
 import { ageFromDob, mafHeartRate, parseDateOfBirth, todayIsoDate } from '../utils/maf';
 import StravaCard from '../components/StravaCard';
 import ActivityTypesSettings from '../components/ActivityTypesSettings';
@@ -37,6 +38,7 @@ export default function Profile() {
     restingHeartRate: user.restingHeartRate || '',
     dateOfBirth: parseDateOfBirth(user.dateOfBirth) || '',
     defaultActivityType: user.defaultActivityType || DEFAULT_ACTIVITY_TYPE,
+    weekStartsOn: Number.isInteger(user.weekStartsOn) ? user.weekStartsOn : 1,
     notificationPrefs: user.notificationPrefs || {},
     clubName: user.adminClubName || '',
   });
@@ -394,6 +396,19 @@ export default function Profile() {
                   <option key={opt.value} value={opt.value}>{opt.label}</option>
                 ))}
               </select>
+            </div>
+            <div>
+              <label htmlFor="weekStartsOn">Week starts on</label>
+              <select
+                id="weekStartsOn"
+                value={form.weekStartsOn}
+                onChange={(e) => setForm({ ...form, weekStartsOn: Number(e.target.value) })}
+              >
+                {WEEK_START_DAYS.map((d) => (
+                  <option key={d.value} value={d.value}>{d.label}</option>
+                ))}
+              </select>
+              <p className="text-xs text-muted mt-1">Used for weekly km goals. Default is Monday–Sunday.</p>
             </div>
           </>
         )}

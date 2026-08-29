@@ -12,6 +12,7 @@ import { assignmentClubMatches, getAssignment } from '../utils/coachingAccess.js
 import { ensureKmSplits } from '../utils/kmSplits.js';
 import { rankSimilarActivities, similarHeading, similarSport, similarSupported } from '../utils/similarActivities.js';
 import { canViewerSeeActivity, stravaShareClause, stravaShareFilterSql } from '../utils/stravaShare.js';
+import { activityOrigin } from '../utils/activityOrigin.js';
 
 const router = express.Router();
 router.use(protect, requireMembership, rejectAppAdmin);
@@ -262,7 +263,24 @@ router.get(
       const detailed = await enrichStravaActivity(act);
       return { ...detailed, splits: ensureKmSplits(detailed) };
     }));
-    res.json(compareActivitySet(prepared, athleteHrContext(prepared[0])));
+    const payload = compareActivitySet(prepared, athleteHrContext(prepared[0]));
+    const athleteId = prepared[0]?.athleteId;
+    if (req.user.roles.includes('coach') && athleteId && athleteId !== req.user.id) {
+      const assignment = await getAssignment(req.user.id, athleteId);
+      if (assignment) {
+        const reviewed = camelMany(
+          await many(
+            `SELECT activity_id FROM activity_reviews
+             WHERE coach_id = $1 AND status = 'published' AND activity_id = ANY($2::uuid[])`,
+            [req.user.id, prepared.map((act) => act.id)]
+          )
+        );
+        payload.canReview = true;
+        payload.athleteId = athleteId;
+        payload.reviewedIds = reviewed.map((row) => row.activityId);
+      }
+    }
+    res.json(payload);
   })
 );
 
@@ -518,6 +536,7 @@ router.get(
     res.json({
       activity: {
         ...safeActivity,
+        origin: activityOrigin(detailed),
         sourceActivityId: detailed.sourceActivityId || detailed.raw?.id || null,
         age: hr.age,
         mafHeartRate: hr.mafHeartRate,
@@ -541,8 +560,8 @@ router.get(
 );
 
 function publicListActivity(row) {
-  const { raw, gpsPoints, email, polyline, ...rest } = row || {};
-  return rest;
+  const { raw, gpsPoints, email, polyline, importFormat, importSource, ...rest } = row || {};
+  return { ...rest, origin: activityOrigin(row) };
 }
 
 function activityTypeSql(type) {

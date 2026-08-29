@@ -5,6 +5,9 @@ dns.setDefaultResultOrder('verbatim');
 
 const { Pool } = pg;
 
+// Keep DATE columns as YYYY-MM-DD so the UI does not shift them through UTC midnight.
+pg.types.setTypeParser(1082, (val) => val);
+
 const connectionString = process.env.DATABASE_URL || '';
 const useSsl =
   process.env.PGSSL === 'true' ||

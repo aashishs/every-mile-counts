@@ -5,7 +5,7 @@ import ConfirmDialog from '../components/ConfirmDialog';
 import Badge, { CodeTypeBadge, RoleBadges, StatusBadge, StravaBadge } from '../components/Badge';
 import { useAuth } from '../context/AuthContext';
 import { isSuperAdminAccount } from '../utils/roles';
-import { formatActivityPrimary, formatActivitySecondary, formatDate, getActivityIcon } from '../utils/format';
+import { formatActivityPrimary, formatActivitySecondary, formatDate, formatDateTime, getActivityIcon } from '../utils/format';
 
 const ALL_TABS = [
   { id: 'staff', label: 'Staff', superOnly: true },
@@ -647,7 +647,7 @@ export default function Admin() {
                 </div>
                 <div className="stat-card">
                   <div className="stat-label">Last session</div>
-                  <div className="stat-value text-sm mt-2">{detail.totals?.lastActivityAt ? formatDate(detail.totals.lastActivityAt) : '—'}</div>
+                  <div className="stat-value text-sm mt-2">{detail.totals?.lastActivityAt ? formatDateTime(detail.totals.lastActivityAt) : '—'}</div>
                 </div>
               </div>
 
@@ -662,7 +662,7 @@ export default function Admin() {
                         <span className="text-xl">{getActivityIcon(act.type)}</span>
                         <div className="flex-1 min-w-0">
                           <div className="font-medium truncate">{act.name}</div>
-                          <div className="text-xs text-muted">{formatDate(act.startDate)}</div>
+                          <div className="text-xs text-muted">{formatDateTime(act.startDate)}</div>
                         </div>
                         <div className="text-right">
                           <div className="font-display font-bold text-brand">{formatActivityPrimary(act)}</div>

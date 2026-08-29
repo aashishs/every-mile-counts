@@ -364,9 +364,9 @@ export default function Events() {
 }
 
 function activityDay(activity) {
-  const raw = activity.startDateLocal || activity.startDate || '';
-  const text = String(raw);
-  if (/^\d{4}-\d{2}-\d{2}/.test(text)) return text.slice(0, 10);
+  const raw = activity.startDate || '';
+  const text = String(raw).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
   return raw ? ymd(new Date(raw)) : '';
 }
 

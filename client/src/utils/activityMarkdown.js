@@ -129,9 +129,11 @@ export function buildActivityMarkdown(activity, insights) {
     '## Session',
     '',
     `- **Name:** ${activity.name || 'Untitled activity'}`,
-    `- **When:** ${formatDateTime(activity.startDateLocal || activity.startDate) || formatDate(activity.startDate)}`,
+    `- **When:** ${formatDateTime(activity.startDate) || formatDate(activity.startDate)}`,
     `- **Sport:** ${activity.sportType || activity.type}`,
-    activity.source ? `- **Source:** ${activity.source}` : null,
+    activity.origin?.label || activity.source
+      ? `- **Source:** ${activity.origin?.label || activity.source}`
+      : null,
     '',
     '## Numbers',
     '',
@@ -178,7 +180,7 @@ export function buildComparePrompt(payload) {
     const km = formatKmSplitsLine(session.splits, session.type, session.sportType || session.sport)
       || 'Per-km: not available';
     return [
-      `${i + 1}. ${session.name || 'Session'} — ${formatDate(session.startDate)}`,
+      `${i + 1}. ${session.name || 'Session'} — ${formatDateTime(session.startDate) || formatDate(session.startDate)}`,
       bits.join(' · '),
       km,
     ].join('\n');

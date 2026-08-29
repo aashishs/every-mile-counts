@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import Layout from '../components/Layout';
 import { useAuth } from '../context/AuthContext';
-import { formatDate, formatDuration, formatActivityPrimary, getActivityIcon } from '../utils/format';
+import { formatDate, formatDateTime, formatDuration, formatActivityPrimary, getActivityIcon } from '../utils/format';
 import { COMPLETION_LABEL, formatComparisonValue, formatKm, formatPaceSec, statusClass } from '../utils/training';
 
 export default function WorkoutDetail() {
@@ -172,7 +172,7 @@ export default function WorkoutDetail() {
               <option value="">Choose a recent activity</option>
               {activities.map((a) => (
                 <option key={a.id} value={a.id}>
-                  {a.name || a.type} · {formatDate(a.startDate)}
+                  {a.name || a.type} · {formatDateTime(a.startDate)}
                 </option>
               ))}
             </select>
