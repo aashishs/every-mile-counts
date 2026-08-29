@@ -3,15 +3,21 @@ import { Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import Layout from '../components/Layout';
 import MonthCalendar, { ymd } from '../components/MonthCalendar';
+import { TrainingDayAvailability, TrainingDayNote, TrainingDayWorkouts, TrainingWeekRecap, AvailabilityBanner } from '../components/TrainingPlanGlance';
+import { useAuth } from '../context/AuthContext';
 import { formatDate, formatDuration, getActivityIcon } from '../utils/format';
-import { calendarDot, COMPLETION_LABEL, formatKm, formatPaceSec, PROGRAM_STATUS_LABEL, statusClass, ymdToday } from '../utils/training';
+import { calendarEvents, COMPLETION_LABEL, formatKm, formatPaceSec, notesOnDay, PROGRAM_STATUS_LABEL, statusClass, unavailableDays, unavailableLabel, unavailableOnDay, ymdToday } from '../utils/training';
 
 export default function MyTraining() {
+  const { user } = useAuth();
   const navigate = useNavigate();
   const [data, setData] = useState(null);
   const [month, setMonth] = useState(() => new Date());
   const [selected, setSelected] = useState(ymdToday());
   const [calendar, setCalendar] = useState([]);
+  const [dayNotes, setDayNotes] = useState([]);
+  const [unavailable, setUnavailable] = useState([]);
+  const [recapReload, setRecapReload] = useState(0);
   const [error, setError] = useState('');
 
   const load = async () => {
@@ -30,14 +36,25 @@ export default function MyTraining() {
     const end = new Date(month.getFullYear(), month.getMonth() + 1, 0);
     api.get('/training/calendar', { params: { from: ymd(start), to: ymd(end) } }).then((res) => {
       setCalendar(res.data.workouts || []);
-    }).catch(() => setCalendar([]));
+      setDayNotes(res.data.dayNotes || []);
+      setUnavailable(res.data.unavailable || []);
+    }).catch(() => {
+      setCalendar([]);
+      setDayNotes([]);
+      setUnavailable([]);
+    });
   }, [month]);
 
   const events = useMemo(
-    () => calendar.map((w) => ({ id: w.id, eventDate: w.scheduledDate, dotClass: calendarDot(w) })),
-    [calendar]
+    () => calendarEvents(calendar, dayNotes),
+    [calendar, dayNotes]
   );
   const selectedWorkouts = calendar.filter((w) => String(w.scheduledDate).slice(0, 10) === selected);
+  const selectedNotes = notesOnDay(dayNotes, selected);
+  const selectedUnavailable = unavailableOnDay(unavailable, selected);
+  const todayNotes = notesOnDay(dayNotes, ymdToday());
+  const todayUnavailable = unavailableOnDay(unavailable, ymdToday());
+  const mutedDays = unavailableDays(unavailable);
   const current = data?.current;
   const today = (data?.today || []).length ? data.today : (current?.todayWorkout ? [current.todayWorkout] : []);
   const progress = current?.progress;
@@ -45,7 +62,7 @@ export default function MyTraining() {
   return (
     <Layout>
       <h2 className="page-title">My Training</h2>
-      <p className="page-sub">What to prepare today, and how each plan is going</p>
+      <p className="page-sub">What was prescribed, and what you actually did</p>
       {error && <div className="card text-rose-200 mb-4">{error}</div>}
 
       {!current && !data?.upcoming?.length && !data?.today?.length ? (
@@ -126,6 +143,31 @@ export default function MyTraining() {
         </section>
       )}
 
+      {!!todayUnavailable && (
+        <div className="card text-sm mb-5">
+          <div className="text-[11px] uppercase tracking-wide text-muted mb-1">Can’t train · today</div>
+          <p className="mb-0">{unavailableLabel(todayUnavailable)}</p>
+        </div>
+      )}
+
+      {!!todayNotes.length && (
+        <div className="card text-sm mb-5">
+          <div className="text-[11px] uppercase tracking-wide text-muted mb-1">Coach note · today</div>
+          {todayNotes.map((n) => (
+            <p key={n.id} className="mb-0">
+              <span className="text-muted">{n.coachFirstName} {n.coachLastName}. </span>
+              {n.body}
+            </p>
+          ))}
+        </div>
+      )}
+
+      <TrainingWeekRecap
+        weekStartsOn={user?.weekStartsOn}
+        reload={recapReload}
+        onOpen={(w) => navigate(`/training/workouts/${w.id}`)}
+      />
+
       <div className="grid md:grid-cols-2 gap-4 mb-6">
         <MonthCalendar
           value={selected}
@@ -133,25 +175,42 @@ export default function MyTraining() {
           events={events}
           monthDate={month}
           onMonthChange={setMonth}
+          mutedDays={mutedDays}
         />
-        <div className="card">
-          <h3 className="font-semibold mb-3">{formatDate(selected)}</h3>
-          {!selectedWorkouts.length ? (
-            <p className="text-muted text-sm mb-0">No planned workout on this day.</p>
-          ) : (
-            <div className="space-y-2">
-              {selectedWorkouts.map((w) => (
-                <button key={w.id} type="button" className="w-full text-left rounded-xl border border-line p-3 hover:border-brand" onClick={() => navigate(`/training/workouts/${w.id}`)}>
-                  <div className="flex justify-between gap-2">
-                    <span className="font-semibold">{getActivityIcon(w.sport)} {w.name || w.workoutType}</span>
-                    <span className={`badge ${statusClass(w.completionStatus)}`}>{COMPLETION_LABEL[w.completionStatus]}</span>
-                  </div>
-                  <div className="text-xs text-muted mt-1">{w.workoutType} · {formatKm(w.distance)}</div>
-                </button>
-              ))}
-            </div>
+        <TrainingDayWorkouts
+          dateLabel={formatDate(selected)}
+          workouts={selectedWorkouts}
+          emptyText="No planned workout on this day."
+          onOpen={(w) => navigate(`/training/workouts/${w.id}`)}
+          banner={<AvailabilityBanner row={selectedUnavailable} />}
+          note={(
+            <>
+              <TrainingDayAvailability
+                date={selected}
+                current={selectedUnavailable}
+                onSave={async ({ unavailable: marked, reason, note }) => {
+                  await api.put('/training/availability', {
+                    date: selected,
+                    unavailable: marked,
+                    reason,
+                    note,
+                  });
+                  const start = new Date(month.getFullYear(), month.getMonth(), 1);
+                  const end = new Date(month.getFullYear(), month.getMonth() + 1, 0);
+                  const { data: fresh } = await api.get('/training/calendar', {
+                    params: { from: ymd(start), to: ymd(end) },
+                  });
+                  setCalendar(fresh.workouts || []);
+                  setDayNotes(fresh.dayNotes || []);
+                  setUnavailable(fresh.unavailable || []);
+                  setRecapReload((n) => n + 1);
+                  load();
+                }}
+              />
+              <TrainingDayNote notes={selectedNotes} date={selected} />
+            </>
           )}
-        </div>
+        />
       </div>
 
       {!!data?.upcoming?.length && (

@@ -3,6 +3,7 @@ import { formatDistance, formatDuration, paceFromSpeed, formatEffort, effortKind
 import { athleteHrContext } from '../utils/maf.js';
 import { parseStoredSyncTypes } from '../utils/activityTypes.js';
 import { STRAVA_COACH_SHARE_SQL, getCoachShareState } from '../utils/stravaShare.js';
+import { activityOrigin, withActivityOrigin } from '../utils/activityOrigin.js';
 
 function num(v) {
   return v == null ? 0 : Number(v);
@@ -782,7 +783,8 @@ export async function periodAnalysis(athleteId, period = '90', { type, syncTypes
 }
 
 const GLANCE_COLS = `a.id, a.name, a.type, a.sport_type, a.start_date, a.distance, a.moving_time, a.elapsed_time,
-  a.avg_speed, a.avg_heartrate, a.elevation_gain, a.source, a.source_activity_id`;
+  a.avg_speed, a.avg_heartrate, a.elevation_gain, a.source, a.source_activity_id,
+  a.raw->>'format' AS import_format, a.raw->>'source' AS import_source`;
 
 function packVolume(list) {
   const distance = list.reduce((a, b) => a + num(b.distance), 0);
@@ -907,8 +909,8 @@ export async function coachAthleteGlance(athleteId, coachId) {
     },
     consistency: Math.round((daysWithActivity / 30) * 100),
     byType,
-    lastActivity,
-    needsReview,
+    lastActivity: lastActivity ? withActivityOrigin(lastActivity) : lastActivity,
+    needsReview: needsReview.map(withActivityOrigin),
     stravaConnected: share.connected,
     stravaSharedWithCoach: share.consented,
   };
@@ -941,9 +943,11 @@ function snapshot(activity, athlete = {}) {
   const paceSec = paceSecondsPerKm(activity);
   return {
     id: activity.id,
+    athleteId: activity.athleteId,
     name: activity.name,
     type: activity.type,
     sport: sportFamily(activity),
+    origin: activityOrigin(activity),
     metric,
     startDate: activity.startDate,
     distance: num(activity.distance),

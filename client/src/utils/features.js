@@ -1,1 +1,1 @@
-export const GOALS_ENABLED = false;
+export const GOALS_ENABLED = true;

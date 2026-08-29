@@ -4,14 +4,16 @@ import api from '../api/client';
 import Layout from '../components/Layout';
 import ActivityTypeFilter from '../components/ActivityTypeFilter';
 import AddActivityModal from '../components/AddActivityModal';
+import { CompareCheck, ComparePickBar } from '../components/CompareCheck';
 import { PoweredByStrava, ViewOnStrava } from '../components/StravaBrand';
 import { useAuth } from '../context/AuthContext';
+import { activityOriginLabel } from '../utils/activityOrigin';
+import { useComparePick } from '../utils/comparePick';
 import {
   activitySummaryParts,
   formatActivityDistance,
   formatActivityEffort,
-  formatDate,
-  formatDateShort,
+  formatDateTime,
   formatDuration,
   getActivityIcon,
   initialActivityType,
@@ -68,6 +70,18 @@ export default function Activities() {
   const [sort, setSort] = useState('date');
   const [dir, setDir] = useState('desc');
   const [searchOpen, setSearchOpen] = useState(false);
+  const {
+    comparing,
+    picked,
+    canCompare,
+    start: startCompare,
+    cancel: cancelCompare,
+    togglePick,
+    isPicked,
+    pickDisabled,
+    pickHint,
+    goCompare,
+  } = useComparePick('/activities');
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -151,6 +165,14 @@ export default function Activities() {
 
   const hasExtraFilters = Boolean(applied.q.trim() || applied.startDate || applied.endDate);
 
+  const openActivity = (activity) => {
+    if (comparing) {
+      togglePick(activity);
+      return;
+    }
+    navigate(`/activities/${activity.id}`);
+  };
+
   const closeAdd = () => {
     setAdding(false);
     if (searchParams.get('add')) {
@@ -170,9 +192,20 @@ export default function Activities() {
           <h2 className="page-title">Log</h2>
           <p className="text-muted text-sm">Your sessions</p>
         </div>
-        <button className="btn-primary w-full sm:w-auto" type="button" onClick={() => setAdding(true)}>
-          Add activity
-        </button>
+        <div className="flex gap-2 w-full sm:w-auto">
+          {(comparing || total >= 2) && (
+            <button
+              className="btn-outline w-full sm:w-auto"
+              type="button"
+              onClick={comparing ? cancelCompare : startCompare}
+            >
+              {comparing ? 'Cancel' : 'Compare'}
+            </button>
+          )}
+          <button className="btn-primary w-full sm:w-auto" type="button" onClick={() => setAdding(true)}>
+            Add activity
+          </button>
+        </div>
       </div>
       <ActivityTypeFilter
         value={typeFilter}
@@ -257,6 +290,10 @@ export default function Activities() {
         </div>
       )}
 
+      {comparing && (
+        <ComparePickBar hint={pickHint} canCompare={canCompare} count={picked.length} onCompare={goCompare} />
+      )}
+
       {loading ? (
         <p className="text-muted">Loading…</p>
       ) : !activities.length ? (
@@ -272,24 +309,39 @@ export default function Activities() {
         <>
           <div className="space-y-2 md:hidden">
             {activities.map((act) => (
-              <div key={act.id} className="card">
-                <button
-                  type="button"
-                  className="w-full text-left bg-transparent border-0 p-0 text-inherit"
-                  onClick={() => navigate(`/activities/${act.id}`)}
-                >
-                  <div className="font-semibold truncate">{act.name || 'Session'}</div>
-                  <div className="text-xs text-muted mt-1">
-                    {formatDateShort(act.startDate)} · {getActivityIcon(act.type)} {act.type || 'Session'}
+              <div key={act.id} className={`card ${comparing && isPicked(act) ? 'border-brand' : ''}`}>
+                <div className={`flex gap-3 ${comparing ? 'items-start' : ''}`}>
+                  {comparing && (
+                    <div className="pt-1">
+                      <CompareCheck
+                        activity={act}
+                        checked={isPicked(act)}
+                        disabled={pickDisabled(act)}
+                        onToggle={togglePick}
+                      />
+                    </div>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <button
+                      type="button"
+                      className="w-full text-left bg-transparent border-0 p-0 text-inherit"
+                      onClick={() => openActivity(act)}
+                    >
+                      <div className="font-semibold truncate">{act.name || 'Session'}</div>
+                      <div className="text-xs text-muted mt-1">
+                        {formatDateTime(act.startDate)} · {getActivityIcon(act.type)} {act.type || 'Session'}
+                        {activityOriginLabel(act) ? ` · ${activityOriginLabel(act)}` : ''}
+                      </div>
+                      <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted mt-3">
+                        {activitySummaryParts(act).map((part) => (
+                          <span key={part}>{part}</span>
+                        ))}
+                      </div>
+                    </button>
+                    <div className="mt-1">
+                      <ViewOnStrava activity={act} />
+                    </div>
                   </div>
-                  <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted mt-3">
-                    {activitySummaryParts(act).map((part) => (
-                      <span key={part}>{part}</span>
-                    ))}
-                  </div>
-                </button>
-                <div className="mt-1">
-                  <ViewOnStrava activity={act} />
                 </div>
               </div>
             ))}
@@ -298,6 +350,7 @@ export default function Activities() {
             <table className="w-full text-sm min-w-[720px]">
               <thead>
                 <tr className="text-left border-b border-line">
+                  {comparing && <th className="p-3 w-10" aria-label="Select to compare" />}
                   <th className="p-3">
                     <SortHeader label="Date" column="date" sort={sort} dir={dir} onSort={changeSort} />
                   </th>
@@ -315,13 +368,28 @@ export default function Activities() {
                 {activities.map((act) => (
                   <tr
                     key={act.id}
-                    className="border-t border-line hover:bg-hover/60 cursor-pointer"
-                    onClick={() => navigate(`/activities/${act.id}`)}
+                    className={`border-t border-line hover:bg-hover/60 cursor-pointer ${comparing && isPicked(act) ? 'bg-brand/10' : ''}`}
+                    onClick={() => openActivity(act)}
                   >
-                    <td className="p-3 whitespace-nowrap text-muted">{formatDate(act.startDate)}</td>
+                    {comparing && (
+                      <td className="p-3" onClick={(e) => e.stopPropagation()}>
+                        <CompareCheck
+                          activity={act}
+                          checked={isPicked(act)}
+                          disabled={pickDisabled(act)}
+                          onToggle={togglePick}
+                        />
+                      </td>
+                    )}
+                    <td className="p-3 whitespace-nowrap text-muted">{formatDateTime(act.startDate)}</td>
                     <td className="p-3">
                       <div className="font-semibold text-slate-100">{act.name || 'Session'}</div>
-                      <ViewOnStrava activity={act} className="text-xs" />
+                      <div className="flex flex-wrap items-center gap-x-2">
+                        {activityOriginLabel(act) ? (
+                          <span className="text-xs text-muted">{activityOriginLabel(act)}</span>
+                        ) : null}
+                        <ViewOnStrava activity={act} className="text-xs" />
+                      </div>
                     </td>
                     <td className="p-3 whitespace-nowrap">
                       {getActivityIcon(act.type)} {act.type || '—'}

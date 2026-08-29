@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS users (
   sync_activity_types JSONB NOT NULL DEFAULT '["Run","Ride","Swim","Walk","Hike","Workout","WeightTraining","Yoga","HIIT"]'::jsonb,
   sync_activity_types_confirmed_at TIMESTAMPTZ,
   email_verified_at TIMESTAMPTZ,
+  week_starts_on SMALLINT NOT NULL DEFAULT 1,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -422,6 +423,32 @@ CREATE INDEX IF NOT EXISTS idx_planned_workouts_athlete_date ON planned_workouts
 CREATE INDEX IF NOT EXISTS idx_planned_workouts_program ON planned_workouts (program_id, scheduled_date);
 CREATE INDEX IF NOT EXISTS idx_planned_workouts_status ON planned_workouts (athlete_id, completion_status, scheduled_date);
 
+CREATE TABLE IF NOT EXISTS training_day_notes (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  athlete_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  coach_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  club_id UUID REFERENCES clubs(id) ON DELETE SET NULL,
+  note_date DATE NOT NULL,
+  body TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (athlete_id, coach_id, note_date)
+);
+CREATE INDEX IF NOT EXISTS idx_training_day_notes_athlete_date ON training_day_notes (athlete_id, note_date);
+
+CREATE TABLE IF NOT EXISTS training_day_unavailability (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  athlete_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  unavailable_date DATE NOT NULL,
+  reason TEXT NOT NULL DEFAULT 'rest'
+    CHECK (reason IN ('injury', 'travel', 'rest', 'other')),
+  note TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (athlete_id, unavailable_date)
+);
+CREATE INDEX IF NOT EXISTS idx_training_day_unavailability_athlete ON training_day_unavailability (athlete_id, unavailable_date);
+
 CREATE TABLE IF NOT EXISTS workout_activity_matches (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   planned_workout_id UUID NOT NULL REFERENCES planned_workouts(id) ON DELETE CASCADE,
@@ -455,11 +482,15 @@ CREATE TABLE IF NOT EXISTS goals (
     CHECK (type IN ('race', 'distance', 'weekly_mileage', 'time', 'challenge', 'other')),
   target_value NUMERIC,
   target_unit TEXT,
+  target_time INTEGER,
+  activity_type TEXT NOT NULL DEFAULT 'Run',
   target_date DATE,
   current_value NUMERIC DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'active'
     CHECK (status IN ('active', 'completed', 'abandoned')),
   notes TEXT,
+  matched_activity_id UUID REFERENCES activities(id) ON DELETE SET NULL,
+  coach_visible BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -560,6 +591,7 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS default_activity_type TEXT NOT NULL D
 ALTER TABLE users ADD COLUMN IF NOT EXISTS sync_activity_types JSONB NOT NULL DEFAULT '["Run","Ride","Swim","Walk","Hike","Workout","WeightTraining","Yoga","HIIT"]'::jsonb;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS sync_activity_types_confirmed_at TIMESTAMPTZ;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMPTZ;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS week_starts_on SMALLINT NOT NULL DEFAULT 1;
 ALTER TABLE events ADD COLUMN IF NOT EXISTS event_time TIME;
 
 CREATE TABLE IF NOT EXISTS password_reset_tokens (

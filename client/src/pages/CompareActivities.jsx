@@ -2,20 +2,16 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../api/client';
 import Layout from '../components/Layout';
+import CoachReviewForm, { PublishedReviews } from '../components/CoachReviewForm';
+import { useAuth } from '../context/AuthContext';
 import { buildComparePrompt, copyText } from '../utils/activityMarkdown';
 import {
   formatActivityPrimary,
-  formatDate,
+  formatDateTime,
   getActivityIcon,
+  sportFamily,
 } from '../utils/format';
-
-function familyOf(act) {
-  const t = `${act?.type || ''} ${act?.sportType || ''}`.toLowerCase();
-  if (t.includes('swim')) return 'Swim';
-  if (t.includes('ride') || t.includes('cycle') || t.includes('bike')) return 'Ride';
-  if (t.includes('run') || t.includes('trail')) return 'Run';
-  return act?.type || '';
-}
+import { activityOriginLabel } from '../utils/activityOrigin';
 
 function idsFromParams(searchParams) {
   const fromIds = String(searchParams.get('ids') || '')
@@ -28,6 +24,7 @@ function idsFromParams(searchParams) {
 
 export default function CompareActivities() {
   const navigate = useNavigate();
+  const { user, isCoach } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const selected = idsFromParams(searchParams);
   const [options, setOptions] = useState([]);
@@ -36,6 +33,9 @@ export default function CompareActivities() {
   const [err, setErr] = useState('');
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [reviewId, setReviewId] = useState(null);
+  const [reviewDetail, setReviewDetail] = useState(null);
+  const [reviewedIds, setReviewedIds] = useState([]);
 
   useEffect(() => {
     setPicked([selected[0] || '', selected[1] || '', selected[2] || '']);
@@ -50,7 +50,7 @@ export default function CompareActivities() {
         if (seed) {
           const { data: detail } = await api.get(`/activities/${seed}`);
           athleteId = detail.activity?.athleteId;
-          sport = familyOf(detail.activity) || detail.activity?.type;
+          sport = sportFamily(detail.activity) || detail.activity?.type;
         }
         const params = { limit: 100, page: 1 };
         if (athleteId) params.athleteId = athleteId;
@@ -64,12 +64,12 @@ export default function CompareActivities() {
     loadList();
   }, [selected[0]]);
 
-  const typeA = familyOf(options.find((act) => act.id === picked[0])) || data?.sport;
+  const typeA = sportFamily(options.find((act) => act.id === picked[0])) || data?.sport;
   const otherOptions = useMemo(() => {
     return options.filter((act) => {
       if (!picked[0] || act.id === picked[0]) return false;
       if (!typeA) return true;
-      return familyOf(act) === typeA;
+      return sportFamily(act) === typeA;
     });
   }, [options, picked[0], typeA]);
 
@@ -85,7 +85,12 @@ export default function CompareActivities() {
     setErr('');
     api.get('/activities/compare', { params: { ids: unique.join(',') } })
       .then((res) => {
-        if (!cancelled) setData(res.data);
+        if (!cancelled) {
+          setData(res.data);
+          setReviewedIds(res.data.reviewedIds || []);
+          setReviewId(null);
+          setReviewDetail(null);
+        }
       })
       .catch((error) => {
         if (!cancelled) {
@@ -132,7 +137,35 @@ export default function CompareActivities() {
     }
   };
 
+  const canReview = Boolean(isCoach && data?.canReview && data.athleteId && data.athleteId !== user?.id);
+
+  useEffect(() => {
+    if (!reviewId || !canReview) {
+      setReviewDetail(null);
+      return undefined;
+    }
+    let cancelled = false;
+    api.get(`/activities/${reviewId}`).then((res) => {
+      if (!cancelled) setReviewDetail(res.data);
+    }).catch(() => {
+      if (!cancelled) setReviewDetail(null);
+    });
+    return () => { cancelled = true; };
+  }, [reviewId, canReview]);
+
+  useEffect(() => {
+    if (!reviewId) return undefined;
+    const el = document.getElementById('compare-review');
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    return undefined;
+  }, [reviewId]);
+
   const labels = ['First session', 'Second session', 'Third session (optional)'];
+  const reviewSession = data?.sessions?.find((session) => session.id === reviewId);
+  const myPendingRequest = (reviewDetail?.requests || []).find(
+    (r) => r.status === 'pending' && r.coachId === user?.id
+  );
+  const myReview = (reviewDetail?.reviews || []).find((r) => r.coachId === user?.id);
 
   return (
     <Layout>
@@ -166,7 +199,7 @@ export default function CompareActivities() {
               <option value="">{index === 2 ? 'None' : index === 0 ? 'Select activity' : 'Select matching activity'}</option>
               {(index === 0 ? options : otherOptions.filter((act) => act.id !== picked[index === 1 ? 2 : 1])).map((act) => (
                 <option key={act.id} value={act.id}>
-                  {formatDate(act.startDate)} · {act.name} · {formatActivityPrimary(act)}
+                  {formatDateTime(act.startDate)} · {act.name} · {formatActivityPrimary(act)}
                 </option>
               ))}
             </select>
@@ -189,6 +222,10 @@ export default function CompareActivities() {
                 key={session.id}
                 label={index === 0 ? 'Oldest' : index === data.sessions.length - 1 ? 'Newest' : 'Middle'}
                 session={session}
+                reviewable={canReview}
+                reviewing={reviewId === session.id}
+                alreadyReviewed={reviewedIds.includes(session.id)}
+                onReview={() => setReviewId((id) => (id === session.id ? null : session.id))}
               />
             ))}
           </div>
@@ -200,7 +237,7 @@ export default function CompareActivities() {
                 <tr className="text-left text-muted">
                   <th className="pb-2 font-medium">Metric</th>
                   {data.sessions.map((session) => (
-                    <th key={session.id} className="pb-2 font-medium">{formatDate(session.startDate)}</th>
+                    <th key={session.id} className="pb-2 font-medium">{formatDateTime(session.startDate)}</th>
                   ))}
                 </tr>
               </thead>
@@ -226,31 +263,64 @@ export default function CompareActivities() {
               {copied ? 'Copied' : 'Copy AI prompt'}
             </button>
           </div>
+
+          {canReview && reviewId && (
+            <div className="mt-5" id="compare-review">
+              <h3 className="section-title mb-3">
+                Review {reviewSession?.name || 'session'}
+              </h3>
+              {reviewedIds.includes(reviewId) && !reviewDetail && (
+                <p className="text-muted">Loading review…</p>
+              )}
+              <PublishedReviews reviews={reviewDetail?.reviews || []} />
+              {!reviewedIds.includes(reviewId) && !myReview && (
+                <CoachReviewForm
+                  key={reviewId}
+                  activityId={reviewId}
+                  requestId={myPendingRequest?.id}
+                  programId={reviewDetail?.plannedWorkout?.programId}
+                  plannedWorkoutId={reviewDetail?.plannedWorkout?.id}
+                  title=""
+                  onPublished={() => {
+                    setReviewedIds((ids) => (ids.includes(reviewId) ? ids : [...ids, reviewId]));
+                    api.get(`/activities/${reviewId}`).then((res) => setReviewDetail(res.data)).catch(() => {});
+                  }}
+                />
+              )}
+            </div>
+          )}
         </>
       )}
     </Layout>
   );
 }
 
-function SessionCard({ label, session }) {
+function SessionCard({ label, session, reviewable, reviewing, alreadyReviewed, onReview }) {
   return (
-    <Link to={`/activities/${session.id}`} className="card text-inherit no-underline hover:border-brand">
-      <div className="stat-label">{label} · {session.sport}</div>
-      <div className="flex items-start gap-3 mt-2">
-        <div className="text-2xl">{getActivityIcon(session.type)}</div>
-        <div className="min-w-0">
-          <div className="font-semibold truncate">{session.name}</div>
-          <div className="text-xs text-muted">{formatDate(session.startDate)}</div>
-          <div className="font-display text-2xl font-bold text-brand mt-2">
-            {session.metric === 'duration' ? session.formatted.time : session.formatted.distance}
-          </div>
-          <div className="text-xs text-muted mt-1">
-            {session.formatted.time}
-            {session.pace ? ` · ${session.formatted.pace}` : ''}
-            {session.avgHeartrate ? ` · ${session.formatted.hr}` : ''}
+    <div className={`card ${reviewing ? 'border-brand' : ''}`}>
+      <Link to={`/activities/${session.id}`} className="text-inherit no-underline hover:text-brand">
+        <div className="stat-label">{label} · {session.sport}</div>
+        <div className="flex items-start gap-3 mt-2">
+          <div className="text-2xl">{getActivityIcon(session.type)}</div>
+          <div className="min-w-0">
+            <div className="font-semibold truncate">{session.name}</div>
+            <div className="text-xs text-muted">{formatDateTime(session.startDate)}{activityOriginLabel(session) ? ` · ${activityOriginLabel(session)}` : ''}</div>
+            <div className="font-display text-2xl font-bold text-brand mt-2">
+              {session.metric === 'duration' ? session.formatted.time : session.formatted.distance}
+            </div>
+            <div className="text-xs text-muted mt-1">
+              {session.formatted.time}
+              {session.pace ? ` · ${session.formatted.pace}` : ''}
+              {session.avgHeartrate ? ` · ${session.formatted.hr}` : ''}
+            </div>
           </div>
         </div>
-      </div>
-    </Link>
+      </Link>
+      {reviewable && (
+        <button type="button" className="btn-outline btn-sm mt-3 w-full" onClick={onReview}>
+          {alreadyReviewed ? (reviewing ? 'Hide review' : 'View review') : reviewing ? 'Cancel review' : 'Write review'}
+        </button>
+      )}
+    </div>
   );
 }

@@ -6,10 +6,13 @@ import ActivityTypeFilter from '../components/ActivityTypeFilter';
 import PersonalRecords from '../components/PersonalRecords';
 import DailyCheckin from '../components/DailyCheckin';
 import { useAuth } from '../context/AuthContext';
-import { formatDate, formatTime, getActivityIcon, initialActivityType, rememberActivityType, visibleActivityTypeOptions } from '../utils/format';
+import { formatDate, formatTime, parseStamp, getActivityIcon, initialActivityType, rememberActivityType, visibleActivityTypeOptions } from '../utils/format';
 import { hasRole, isAthleteAccount } from '../utils/roles';
 import { hasSeenCheckin, markCheckinSeen } from '../utils/dailyQuotes';
+import { GOALS_ENABLED } from '../utils/features';
+import { nextRaceGoal, goalDatePassed } from '../utils/goals';
 import StravaCard from '../components/StravaCard';
+import RaceCountdown from '../components/RaceCountdown';
 
 function greeting() {
   const h = new Date().getHours();
@@ -22,7 +25,8 @@ function greeting() {
 function daysOut(date) {
   const start = new Date();
   start.setHours(0, 0, 0, 0);
-  const target = new Date(date);
+  const target = parseStamp(date);
+  if (!target) return '';
   target.setHours(0, 0, 0, 0);
   const d = Math.round((target - start) / 86400000);
   if (d < 0) return 'Done';
@@ -39,6 +43,7 @@ export default function Dashboard() {
   const [searchParams] = useSearchParams();
   const [type, setType] = useState(() => initialActivityType(user, searchParams.get('type')));
   const [todayWorkout, setTodayWorkout] = useState(null);
+  const [goals, setGoals] = useState([]);
   const [error, setError] = useState('');
   const [showCheckin, setShowCheckin] = useState(false);
   const alertKey = searchParams.get('strava');
@@ -83,6 +88,14 @@ export default function Dashboard() {
       } catch {
         setTodayWorkout(null);
       }
+      if (GOALS_ENABLED) {
+        try {
+          const { data: goalData } = await api.get('/goals');
+          setGoals(goalData.goals || []);
+        } catch {
+          setGoals([]);
+        }
+      }
     }
   };
 
@@ -112,6 +125,8 @@ export default function Dashboard() {
   };
   const sportTotal = (data?.distanceSports || []).find((s) => s.type === type);
   const nextEvent = data?.upcomingEvents?.[0];
+  const raceGoal = athlete && GOALS_ENABLED ? nextRaceGoal(goals) : null;
+  const glanceGoals = goals.filter((g) => g.status !== 'completed' && g.id !== raceGoal?.id && !goalDatePassed(g)).slice(0, 3);
 
   return (
     <Layout>
@@ -139,6 +154,36 @@ export default function Dashboard() {
       {error && <div className="card text-rose-200 mb-5">{error}</div>}
       {!data && !error && <p className="text-muted mb-5">Loading…</p>}
       {athlete && <StravaCard user={user} autoConnect={searchParams.get('connect') === 'strava'} />}
+      {athlete && GOALS_ENABLED && <RaceCountdown goal={raceGoal} href="/goals" />}
+      {athlete && GOALS_ENABLED && (!raceGoal || glanceGoals.length > 0) && (
+        <section className="card mb-5">
+          <div className="flex items-center justify-between gap-3 mb-3">
+            <div className="stat-label mb-0">Goals</div>
+            <Link to="/goals" className="text-sm text-brand no-underline">
+              {goals.length ? 'All goals' : 'Set a goal'}
+            </Link>
+          </div>
+          {!glanceGoals.length ? (
+            <p className="text-sm text-muted mb-0">
+              {raceGoal ? 'Other goals appear here. Progress comes from your log.' : 'Race times, weekly km, or a PB. Progress comes from your log.'}
+            </p>
+          ) : (
+            <div className="space-y-3">
+              {glanceGoals.map((g) => (
+                <Link key={g.id} to="/goals" className="block no-underline text-inherit">
+                  <div className="flex justify-between gap-2 text-sm">
+                    <span className="font-semibold truncate">{g.title}</span>
+                    <span className="text-muted shrink-0">{g.completionPct || 0}%</span>
+                  </div>
+                  <div className="h-1.5 bg-ink rounded-full overflow-hidden mt-1">
+                    <div className="h-full bg-brand" style={{ width: `${g.completionPct || 0}%` }} />
+                  </div>
+                </Link>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
       {athlete && todayWorkout && (
         <Link to={`/training/workouts/${todayWorkout.id}`} className="card mb-5 flex items-center justify-between gap-3 text-inherit no-underline hover:border-brand">
           <div>

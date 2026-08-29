@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { Decoder, Stream } from '@garmin/fitsdk';
 import { upsertActivity } from './stravaService.js';
 import { encodePolyline } from '../utils/polyline.js';
 import { trackFromGpsPoints } from '../utils/track.js';
@@ -224,6 +225,172 @@ function defaultName(type, startDate) {
   return `${when} ${type || 'activity'}`;
 }
 
+function asDate(value) {
+  if (!value) return null;
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function field(obj, ...names) {
+  for (const name of names) {
+    if (obj?.[name] != null && obj[name] !== '') return obj[name];
+  }
+  return null;
+}
+
+function isFitBuffer(buf) {
+  return Buffer.isBuffer(buf) && buf.length >= 12 && buf.subarray(8, 12).toString('ascii') === '.FIT';
+}
+
+function fitCoord(semi) {
+  const n = Number(semi);
+  if (!Number.isFinite(n) || n === 0x7FFFFFFF || n === -0x7FFFFFFF) return null;
+  if (Math.abs(n) <= 180) return n;
+  return (n * 180) / 2147483648;
+}
+
+function fitSeconds(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  if (n > 48 * 3600) return Math.round(n / 1000);
+  return n;
+}
+
+function parseFitPoints(records) {
+  const points = [];
+  for (const rec of records || []) {
+    const lat = fitCoord(field(rec, 'positionLat', 'position_lat'));
+    const lon = fitCoord(field(rec, 'positionLong', 'position_long', 'positionLon', 'position_lon'));
+    const time = asDate(field(rec, 'timestamp'));
+    const ele = num(field(rec, 'enhancedAltitude', 'enhanced_altitude', 'altitude'));
+    const hr = num(field(rec, 'heartRate', 'heart_rate'));
+    const cadence = num(field(rec, 'cadence'));
+    const distance = num(field(rec, 'distance'));
+    if (lat == null && lon == null && !time && distance == null && hr == null) continue;
+    points.push({ lat, lon, ele, time, hr, cadence, distance });
+  }
+  return points;
+}
+
+function fitBufferFromRequest({ filename, content, encoding }) {
+  const name = String(filename || '').toLowerCase();
+  const enc = String(encoding || '').toLowerCase();
+
+  if (Buffer.isBuffer(content) || content instanceof Uint8Array) {
+    const buf = Buffer.from(content);
+    if (isFitBuffer(buf)) return buf;
+    if (name.endsWith('.fit')) fail(400, 'That file is not a valid FIT activity.');
+    return null;
+  }
+
+  const raw = String(content || '');
+  if (enc === 'base64') {
+    if (!raw.trim()) fail(400, 'The file is empty');
+    const buf = Buffer.from(raw.trim(), 'base64');
+    if (!isFitBuffer(buf)) fail(400, 'That file is not a valid FIT activity.');
+    return buf;
+  }
+
+  if (name.endsWith('.fit')) {
+    if (raw.trim() && !raw.includes('<')) {
+      const buf = Buffer.from(raw.trim(), 'base64');
+      if (isFitBuffer(buf)) return buf;
+    }
+    fail(400, 'This FIT file was sent as text. Choose the file again and import.');
+  }
+
+  return null;
+}
+
+function decodeFitMessages(buffer) {
+  if (!buffer?.length) fail(400, 'The file is empty');
+  if (buffer.length > MAX_FILE_CHARS) fail(400, 'File is too large. Export a smaller FIT, GPX, or TCX.');
+  if (!Decoder.isFIT(Stream.fromBuffer(buffer))) {
+    fail(400, 'That file is not a valid FIT activity.');
+  }
+  try {
+    const decoder = new Decoder(Stream.fromBuffer(buffer));
+    const { messages } = decoder.read({
+      convertDateTimesToDates: true,
+      convertTypesToStrings: true,
+      applyScaleAndOffset: true,
+    });
+    return messages || {};
+  } catch {
+    fail(400, 'Could not read that FIT file.');
+  }
+}
+
+function mappedFromFit({ buffer, filename, name, type, movingTimeSeconds, description }) {
+  const messages = decodeFitMessages(buffer);
+  const session = (messages.sessionMesgs || [])[0] || {};
+  const sportMsg = (messages.sportMesgs || [])[0] || {};
+  const points = parseFitPoints(messages.recordMesgs);
+  const stats = summarizePoints(points);
+
+  const sessionTime =
+    fitSeconds(field(session, 'totalTimerTime', 'total_timer_time'))
+    || fitSeconds(field(session, 'totalElapsedTime', 'total_elapsed_time'));
+  let movingTime = parseHms(movingTimeSeconds) || stats.movingTime || sessionTime || 0;
+  if (movingTime < 10) fail(400, 'This file has no timestamps. Add the activity manually and enter duration.');
+
+  const sessionDist = num(field(session, 'totalDistance', 'total_distance')) || 0;
+  const distance = stats.distance || sessionDist || 0;
+  const startDate =
+    stats.startDate
+    || asDate(field(session, 'startTime', 'start_time'))
+    || asDate(field((messages.activityMesgs || [])[0], 'timestamp'));
+  if (!startDate) fail(400, 'This file has no start time.');
+
+  const sportLabel = [
+    field(session, 'sport'),
+    field(session, 'subSport', 'sub_sport'),
+    field(sportMsg, 'sport'),
+    field(sportMsg, 'name'),
+  ].filter(Boolean).join(' ');
+  const sport = normalizeType(inferType(type) || inferType(sportLabel) || inferType(field(session, 'sport')) || 'Run');
+  const title = String(name || '').trim() || defaultName(sport, startDate);
+  const avgSpeed = distance > 0 && movingTime > 0 ? distance / movingTime : null;
+  const hash = crypto.createHash('sha256').update(buffer).digest('hex').slice(0, 24);
+  const gpsPoints = trackFromGpsPoints(points);
+  const polyline = gpsPoints?.latlng?.length
+    ? encodePolyline(gpsPoints.latlng)
+    : encodePolyline(points.filter((p) => p.lat != null).map((p) => [p.lat, p.lon]));
+  const powers = (messages.recordMesgs || []).map((r) => num(field(r, 'power'))).filter((n) => n != null);
+  const avgPower =
+    num(field(session, 'avgPower', 'avg_power'))
+    || (powers.length ? powers.reduce((a, b) => a + b, 0) / powers.length : null);
+
+  return {
+    sourceActivityId: null,
+    fileHash: hash,
+    name: title,
+    type: sport,
+    sportType: sport,
+    distance,
+    movingTime: Math.round(movingTime),
+    elapsedTime: Math.round(stats.elapsedTime || sessionTime || movingTime),
+    elevationGain: Math.round(stats.elevationGain || num(field(session, 'totalAscent', 'total_ascent')) || 0),
+    startDate,
+    startDateLocal: startDate,
+    avgSpeed,
+    maxSpeed: stats.maxSpeed || num(field(session, 'maxSpeed', 'max_speed')) || null,
+    avgHeartrate: stats.avgHeartrate || num(field(session, 'avgHeartRate', 'avg_heart_rate')),
+    maxHeartrate: stats.maxHeartrate || num(field(session, 'maxHeartRate', 'max_heart_rate')),
+    avgCadence: stats.avgCadence,
+    avgPower,
+    calories: num(field(session, 'totalCalories', 'total_calories')),
+    description: String(description || '').trim() || null,
+    polyline,
+    gpsPoints,
+    splits: kmSplits(points, distance),
+    weather: null,
+    trainingLoad: null,
+    raw: { source: 'file', format: 'fit', filename, points: points.length },
+  };
+}
+
 function normalizeType(type) {
   if (ALLOWED_TYPES.includes(type)) return type;
   return inferType(type) || 'Workout';
@@ -274,23 +441,31 @@ export function mappedFromManual(body) {
   };
 }
 
-export function mappedFromFile({ filename, content, name, type, movingTimeSeconds, description }) {
+export function mappedFromFile({ filename, content, name, type, movingTimeSeconds, description, encoding }) {
   const fileName = String(filename || 'activity.gpx');
-  const xml = String(content || '');
-  if (!xml.trim()) fail(400, 'The file is empty');
-  if (xml.length > MAX_FILE_CHARS) fail(400, 'File is too large. Export a smaller GPX or TCX.');
-
-  const ext = fileName.toLowerCase();
-  if (ext.endsWith('.fit') || xml.startsWith('FIT') || xml.includes('\0')) {
-    fail(400, 'FIT files are not supported yet. Export GPX or TCX from Strava or Garmin.');
+  const fitBuf = fitBufferFromRequest({ filename: fileName, content, encoding });
+  if (fitBuf) {
+    return mappedFromFit({
+      buffer: fitBuf,
+      filename: fileName,
+      name,
+      type,
+      movingTimeSeconds,
+      description,
+    });
   }
 
+  const xml = String(content || '');
+  if (!xml.trim()) fail(400, 'The file is empty');
+  if (xml.length > MAX_FILE_CHARS) fail(400, 'File is too large. Export a smaller FIT, GPX, or TCX.');
+
+  const ext = fileName.toLowerCase();
   const looksXml = xml.includes('<');
-  if (!looksXml) fail(400, 'Could not read that file. Use a .gpx or .tcx export.');
+  if (!looksXml) fail(400, 'Could not read that file. Use a .gpx, .tcx, or .fit export.');
 
   const isTcx = ext.endsWith('.tcx') || /<TrainingCenterDatabase/i.test(xml);
   const isGpx = ext.endsWith('.gpx') || /<gpx\b/i.test(xml);
-  if (!isTcx && !isGpx) fail(400, 'Use a .gpx or .tcx file.');
+  if (!isTcx && !isGpx) fail(400, 'Use a .gpx, .tcx, or .fit file.');
 
   const points = isTcx ? parseTcxPoints(xml) : parseGpxPoints(xml);
   if (points.length < 2 && !tagText(xml, 'TotalTimeSeconds')) {

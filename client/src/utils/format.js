@@ -33,6 +33,21 @@ export function activityMetric(type, sportType) {
   return 'duration';
 }
 
+export function sportFamily(activity) {
+  if (!activity) return '';
+  const t = `${activity.type || ''} ${activity.sportType || ''}`.toLowerCase();
+  if (t.includes('swim')) return 'Swim';
+  if (t.includes('ride') || t.includes('cycle') || t.includes('bike')) return 'Ride';
+  if (t.includes('run') || t.includes('trail')) return 'Run';
+  if (t.includes('walk')) return 'Walk';
+  if (t.includes('hike')) return 'Hike';
+  if (t.includes('yoga')) return 'Yoga';
+  if (t.includes('weight') || t.includes('strength')) return 'WeightTraining';
+  if (t.includes('hiit') || t.includes('highintensity')) return 'HIIT';
+  if (t.includes('workout')) return 'Workout';
+  return activity?.type || 'Other';
+}
+
 export function formatActivityPrimary(activity) {
   const metric = activityMetric(activity?.type, activity?.sportType);
   if (metric === 'swim' && Number(activity?.distance) > 0) return `${Math.round(Number(activity.distance))} m`;
@@ -154,23 +169,43 @@ export function effortStat(activity) {
   return { kind, label: 'Pace', value: formatted.replace(/ \/km$/, ''), unit: '/km' };
 }
 
+export function isCalendarDate(value) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(value || '').trim());
+}
+
+export function parseStamp(value) {
+  if (value == null || value === '') return null;
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+  const s = String(value).trim();
+  if (isCalendarDate(s)) {
+    const [y, m, d] = s.split('-').map(Number);
+    return new Date(y, m - 1, d);
+  }
+  const parsed = new Date(s);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+const DATE_OPTS = { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' };
+const DATE_SHORT_OPTS = { month: 'short', day: 'numeric', year: 'numeric' };
+const DATETIME_OPTS = {
+  weekday: 'short',
+  month: 'short',
+  day: 'numeric',
+  year: 'numeric',
+  hour: 'numeric',
+  minute: '2-digit',
+};
+
 export function formatDate(date) {
-  if (!date) return '';
-  return new Date(date).toLocaleDateString('en-US', {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  });
+  const d = parseStamp(date);
+  if (!d) return '';
+  return d.toLocaleDateString('en-US', DATE_OPTS);
 }
 
 export function formatDateShort(date) {
-  if (!date) return '';
-  return new Date(date).toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  });
+  const d = parseStamp(date);
+  if (!d) return '';
+  return d.toLocaleDateString('en-US', DATE_SHORT_OPTS);
 }
 
 export function formatTime(value) {
@@ -180,13 +215,10 @@ export function formatTime(value) {
 }
 
 export function formatDateTime(date) {
-  if (!date) return '';
-  return new Date(date).toLocaleString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  });
+  const d = parseStamp(date);
+  if (!d) return '';
+  if (isCalendarDate(date)) return formatDate(date);
+  return d.toLocaleString('en-US', DATETIME_OPTS);
 }
 
 export const ACTIVITY_ICONS = {
@@ -264,6 +296,8 @@ export const EVENT_TYPES = [
   { value: 'walk', label: 'Walk' },
   { value: 'other', label: 'Other' },
 ];
+
+export const GOAL_ACTIVITY_TYPES = ['Run', 'Ride', 'Swim', 'Walk'];
 
 export const GOAL_TYPES = [
   { value: 'race', label: 'Race / PB' },

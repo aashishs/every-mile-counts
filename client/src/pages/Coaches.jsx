@@ -4,7 +4,7 @@ import api from '../api/client';
 import Layout from '../components/Layout';
 import { useAuth } from '../context/AuthContext';
 import { isAthleteAccount } from '../utils/roles';
-import { formatActivityPrimary, formatDate, formatDateShort, getActivityIcon } from '../utils/format';
+import { formatActivityPrimary, formatDate, formatDateShort, formatDateTime, getActivityIcon } from '../utils/format';
 
 const PAGE_SIZES = [10, 20, 50, 100];
 
@@ -311,7 +311,7 @@ export default function Coaches() {
                           {getActivityIcon(r.type)} {r.type || '—'}
                         </td>
                         <td className="p-3 whitespace-nowrap">{formatActivityPrimary(r)}</td>
-                        <td className="p-3 whitespace-nowrap text-muted">{formatDate(r.startDate)}</td>
+                        <td className="p-3 whitespace-nowrap text-muted">{formatDateTime(r.startDate)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -385,7 +385,7 @@ export default function Coaches() {
                       <div className="text-xs text-muted truncate mt-0.5">{a.email}</div>
                       <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted mt-2">
                         <span>{a.activityCount ?? 0} activities</span>
-                        <span>Last {a.lastActivityAt ? formatDateShort(a.lastActivityAt) : '—'}</span>
+                        <span>Last {a.lastActivityAt ? formatDateTime(a.lastActivityAt) : '—'}</span>
                         <span>{a.mafHeartRate ? `MAF ${a.mafHeartRate}` : 'MAF —'}</span>
                       </div>
                     </button>
@@ -432,7 +432,7 @@ export default function Coaches() {
                         <td className="p-3 text-muted">{a.email}</td>
                         <td className="p-3 whitespace-nowrap">{a.activityCount ?? 0}</td>
                         <td className="p-3 whitespace-nowrap text-muted">
-                          {a.lastActivityAt ? formatDate(a.lastActivityAt) : '—'}
+                          {a.lastActivityAt ? formatDateTime(a.lastActivityAt) : '—'}
                         </td>
                         <td className="p-3 whitespace-nowrap">{a.mafHeartRate ? `${a.mafHeartRate}` : '—'}</td>
                         <td className="p-3 whitespace-nowrap">

@@ -1,14 +1,22 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
+import { AthleteGoalsGlance } from '../components/GoalCard';
+import RaceCountdown from '../components/RaceCountdown';
 import Layout from '../components/Layout';
+import { CompareCheck, ComparePickBar } from '../components/CompareCheck';
 import { useAuth } from '../context/AuthContext';
 import {
   activitySummaryParts,
   formatDateShort,
+  formatDateTime,
   getActivityIcon,
 } from '../utils/format';
+import { useComparePick } from '../utils/comparePick';
 import { PROGRAM_STATUS_LABEL, statusClass } from '../utils/training';
+import { GOALS_ENABLED } from '../utils/features';
+import { nextRaceGoal } from '../utils/goals';
+import { activityOriginLabel } from '../utils/activityOrigin';
 import { ViewOnStrava } from '../components/StravaBrand';
 
 const FILTERS = [
@@ -41,35 +49,58 @@ function openActivity(navigate, athleteId, id) {
   navigate(`/activities/${id}`, { state: { fromAthlete: athleteId } });
 }
 
-function SessionRow({ activity, athleteId, navigate }) {
+function SessionRow({ activity, athleteId, navigate, comparing, isPicked, pickDisabled, togglePick }) {
+  const selected = comparing && isPicked?.(activity);
+  const open = () => {
+    if (comparing) {
+      togglePick(activity);
+      return;
+    }
+    openActivity(navigate, athleteId, activity.id);
+  };
   return (
-    <div className="card">
-      <button
-        type="button"
-        className="w-full text-left bg-transparent border-0 p-0 text-inherit"
-        onClick={() => openActivity(navigate, athleteId, activity.id)}
-      >
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="font-semibold truncate">
-              {getActivityIcon(activity.type)} {activity.name || activity.type || 'Session'}
-            </div>
-            <div className="text-xs text-muted mt-1 flex flex-wrap gap-x-2">
-              <span>{formatDateShort(activity.startDate)}</span>
-              {activitySummaryParts(activity).map((part) => (
-                <span key={part}>{part}</span>
-              ))}
-            </div>
+    <div className={`card ${selected ? 'border-brand' : ''}`}>
+      <div className={`flex gap-3 ${comparing ? 'items-start' : ''}`}>
+        {comparing && (
+          <div className="pt-1">
+            <CompareCheck
+              activity={activity}
+              checked={Boolean(selected)}
+              disabled={pickDisabled(activity)}
+              onToggle={togglePick}
+            />
           </div>
-          {activity.reviewedByMe ? (
-            <span className="text-[11px] font-semibold text-brand shrink-0">Reviewed</span>
-          ) : (
-            <span className="text-[11px] font-semibold text-orange-200 shrink-0">Review</span>
-          )}
+        )}
+        <div className="min-w-0 flex-1">
+          <button
+            type="button"
+            className="w-full text-left bg-transparent border-0 p-0 text-inherit"
+            onClick={open}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="font-semibold truncate">
+                  {getActivityIcon(activity.type)} {activity.name || activity.type || 'Session'}
+                </div>
+                <div className="text-xs text-muted mt-1 flex flex-wrap gap-x-2">
+                  <span>{formatDateTime(activity.startDate)}</span>
+                  {activityOriginLabel(activity) ? <span>{activityOriginLabel(activity)}</span> : null}
+                  {activitySummaryParts(activity).map((part) => (
+                    <span key={part}>{part}</span>
+                  ))}
+                </div>
+              </div>
+              {activity.reviewedByMe ? (
+                <span className="text-[11px] font-semibold text-brand shrink-0">Reviewed</span>
+              ) : (
+                <span className="text-[11px] font-semibold text-orange-200 shrink-0">Review</span>
+              )}
+            </div>
+          </button>
+          <div className="mt-1">
+            <ViewOnStrava activity={activity} />
+          </div>
         </div>
-      </button>
-      <div className="mt-1">
-        <ViewOnStrava activity={activity} />
       </div>
     </div>
   );
@@ -83,6 +114,7 @@ export default function CoachAthleteActivities() {
   const [activities, setActivities] = useState([]);
   const [glance, setGlance] = useState(null);
   const [training, setTraining] = useState(null);
+  const [goals, setGoals] = useState([]);
   const [filter, setFilter] = useState('all');
   const [page, setPage] = useState(1);
   const [limit] = useState(10);
@@ -92,6 +124,18 @@ export default function CoachAthleteActivities() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const assigned = Boolean(athlete);
+  const {
+    comparing,
+    picked,
+    canCompare,
+    start: startCompare,
+    cancel: cancelCompare,
+    togglePick,
+    isPicked,
+    pickDisabled,
+    pickHint,
+    goCompare,
+  } = useComparePick(`/coaches/athletes/${athleteId}`);
 
   useEffect(() => {
     if (!isCoach) navigate('/coaches', { replace: true });
@@ -104,6 +148,7 @@ export default function CoachAthleteActivities() {
     setAthlete(null);
     setGlance(null);
     setTraining(null);
+    setGoals([]);
     setActivities([]);
     api.get('/coaches/my-athletes', { params: { athleteId } }).then((res) => {
       if (cancelled) return;
@@ -127,6 +172,13 @@ export default function CoachAthleteActivities() {
     }).catch(() => {
       if (!cancelled) setTraining(null);
     });
+    if (GOALS_ENABLED) {
+      api.get('/goals', { params: { athleteId } }).then((res) => {
+        if (!cancelled) setGoals(res.data.goals || []);
+      }).catch(() => {
+        if (!cancelled) setGoals([]);
+      });
+    }
     return () => {
       cancelled = true;
     };
@@ -172,6 +224,17 @@ export default function CoachAthleteActivities() {
   const nextWorkout = training?.toPrepare?.[0];
   const week = glance?.thisWeek;
   const month = glance?.last30;
+  const raceGoal = nextRaceGoal(goals);
+  const sessionCount = athlete?.activityCount ?? total;
+  const pickProps = { comparing, isPicked, pickDisabled, togglePick };
+
+  const openOrPick = (activity) => {
+    if (comparing) {
+      togglePick(activity);
+      return;
+    }
+    openActivity(navigate, athleteId, activity.id);
+  };
 
   return (
     <Layout>
@@ -190,6 +253,15 @@ export default function CoachAthleteActivities() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2 shrink-0">
+          {(comparing || sessionCount >= 2) && (
+            <button
+              type="button"
+              className="btn-outline btn-sm"
+              onClick={comparing ? cancelCompare : startCompare}
+            >
+              {comparing ? 'Cancel' : 'Compare'}
+            </button>
+          )}
           <Link to={`/coaches/activities/new?athleteId=${athleteId}`} className="btn-outline btn-sm no-underline">
             Schedule session
           </Link>
@@ -278,37 +350,59 @@ export default function CoachAthleteActivities() {
         </Link>
       )}
 
+      {!error && assigned && GOALS_ENABLED && (
+        <>
+          <RaceCountdown goal={raceGoal} href={`/coaches/athletes/${athleteId}/training`} />
+          <AthleteGoalsGlance goals={goals} moreHref={`/coaches/athletes/${athleteId}/training`} />
+        </>
+      )}
+
       {!error && glance?.lastActivity && filter === 'all' && page === 1 && (
-        <div className="card mb-5">
-          <button
-            type="button"
-            className="w-full text-left bg-transparent border-0 p-0 text-inherit"
-            onClick={() => openActivity(navigate, athleteId, glance.lastActivity.id)}
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <div className="stat-label">Last session</div>
-                <div className="font-display text-2xl font-bold tracking-tight mt-1">
-                  {getActivityIcon(glance.lastActivity.type)} {glance.lastActivity.name || glance.lastActivity.type}
-                </div>
-                <div className="text-sm text-muted mt-2 flex flex-wrap gap-x-3 gap-y-1">
-                  <span>{formatDateShort(glance.lastActivity.startDate)}</span>
-                  {activitySummaryParts(glance.lastActivity).map((part) => (
-                    <span key={part}>{part}</span>
-                  ))}
-                </div>
+        <div className={`card mb-5 ${comparing && isPicked(glance.lastActivity) ? 'border-brand' : ''}`}>
+          <div className={`flex gap-3 ${comparing ? 'items-start' : ''}`}>
+            {comparing && (
+              <div className="pt-1">
+                <CompareCheck
+                  activity={glance.lastActivity}
+                  checked={isPicked(glance.lastActivity)}
+                  disabled={pickDisabled(glance.lastActivity)}
+                  onToggle={togglePick}
+                />
               </div>
-              <span className="text-sm font-semibold shrink-0">
-                {glance.lastActivity.reviewedByMe ? (
-                  <span className="text-brand">Reviewed</span>
-                ) : (
-                  <span className="text-orange-200">Review</span>
-                )}
-              </span>
+            )}
+            <div className="min-w-0 flex-1">
+              <button
+                type="button"
+                className="w-full text-left bg-transparent border-0 p-0 text-inherit"
+                onClick={() => openOrPick(glance.lastActivity)}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="stat-label">Last session</div>
+                    <div className="font-display text-2xl font-bold tracking-tight mt-1">
+                      {getActivityIcon(glance.lastActivity.type)} {glance.lastActivity.name || glance.lastActivity.type}
+                    </div>
+                    <div className="text-sm text-muted mt-2 flex flex-wrap gap-x-3 gap-y-1">
+                      <span>{formatDateTime(glance.lastActivity.startDate)}</span>
+                      {activityOriginLabel(glance.lastActivity) ? <span>{activityOriginLabel(glance.lastActivity)}</span> : null}
+                      {activitySummaryParts(glance.lastActivity).map((part) => (
+                        <span key={part}>{part}</span>
+                      ))}
+                    </div>
+                  </div>
+                  <span className="text-sm font-semibold shrink-0">
+                    {glance.lastActivity.reviewedByMe ? (
+                      <span className="text-brand">Reviewed</span>
+                    ) : (
+                      <span className="text-orange-200">Review</span>
+                    )}
+                  </span>
+                </div>
+              </button>
+              <div className="mt-1">
+                <ViewOnStrava activity={glance.lastActivity} />
+              </div>
             </div>
-          </button>
-          <div className="mt-1">
-            <ViewOnStrava activity={glance.lastActivity} />
           </div>
         </div>
       )}
@@ -325,7 +419,7 @@ export default function CoachAthleteActivities() {
           </div>
           <div className="space-y-2">
             {glance.needsReview.filter((act) => act.id !== glance.lastActivity?.id).map((act) => (
-              <SessionRow key={act.id} activity={act} athleteId={athleteId} navigate={navigate} />
+              <SessionRow key={act.id} activity={act} athleteId={athleteId} navigate={navigate} {...pickProps} />
             ))}
           </div>
         </section>
@@ -349,6 +443,10 @@ export default function CoachAthleteActivities() {
             </div>
           </div>
 
+          {comparing && (
+            <ComparePickBar hint={pickHint} canCompare={canCompare} count={picked.length} onCompare={goCompare} />
+          )}
+
           {loading ? (
             <p className="text-muted">Loading…</p>
           ) : !activities.length ? (
@@ -363,7 +461,7 @@ export default function CoachAthleteActivities() {
             <>
               <div className="space-y-2">
                 {activities.map((act) => (
-                  <SessionRow key={act.id} activity={act} athleteId={athleteId} navigate={navigate} />
+                  <SessionRow key={act.id} activity={act} athleteId={athleteId} navigate={navigate} {...pickProps} />
                 ))}
               </div>
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mt-4">
