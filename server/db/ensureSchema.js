@@ -197,10 +197,20 @@ export async function ensureSchemaPatches() {
   `);
 
   await pool.query(`ALTER TABLE review_requests DROP CONSTRAINT IF EXISTS review_requests_status_check`);
-  await pool.query(
-    `ALTER TABLE review_requests ADD CONSTRAINT review_requests_status_check
-     CHECK (status IN ('pending', 'completed', 'cancelled'))`
-  );
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'review_requests_status_check'
+          AND conrelid = 'review_requests'::regclass
+      ) THEN
+        ALTER TABLE review_requests
+          ADD CONSTRAINT review_requests_status_check
+          CHECK (status IN ('pending', 'completed', 'cancelled'));
+      END IF;
+    END $$;
+  `);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS coach_assignment_requests (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -492,6 +502,36 @@ async function ensureTrainingPlanSchema() {
     )
   `);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_training_day_unavailability_athlete ON training_day_unavailability (athlete_id, unavailable_date)`);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS group_sessions (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      club_id UUID NOT NULL REFERENCES clubs(id) ON DELETE CASCADE,
+      created_by UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      session_date DATE NOT NULL,
+      session_time TIME NOT NULL,
+      sport TEXT NOT NULL DEFAULT 'run'
+        CHECK (sport IN ('run', 'ride', 'swim', 'walk', 'other')),
+      meetup_point TEXT NOT NULL,
+      notes TEXT,
+      status TEXT NOT NULL DEFAULT 'upcoming' CHECK (status IN ('upcoming', 'cancelled')),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_group_sessions_club_date ON group_sessions (club_id, session_date, session_time)`);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS group_session_rsvps (
+      session_id UUID NOT NULL REFERENCES group_sessions(id) ON DELETE CASCADE,
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      status TEXT NOT NULL CHECK (status IN ('going', 'maybe', 'not_going')),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (session_id, user_id)
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_group_session_rsvps_user ON group_session_rsvps (user_id)`);
 
   // Strava/FIT store run cadence as one foot; UI and analysis use total steps/min.
   await pool.query(`

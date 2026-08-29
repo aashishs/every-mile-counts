@@ -13,6 +13,7 @@ import { GOALS_ENABLED } from '../utils/features';
 import { nextRaceGoal, goalDatePassed } from '../utils/goals';
 import StravaCard from '../components/StravaCard';
 import RaceCountdown from '../components/RaceCountdown';
+import GroupSessions from '../components/GroupSessions';
 
 function greeting() {
   const h = new Date().getHours();
@@ -258,6 +259,8 @@ export default function Dashboard() {
               </div>
             </Link>
           )}
+
+          <GroupSessions compact />
 
           <section className="mb-8">
             <PersonalRecords records={data.personalRecords} sport={type} />
