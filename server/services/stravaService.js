@@ -13,6 +13,7 @@ import {
 } from '../utils/activityTypes.js';
 import { encodePolyline } from '../utils/polyline.js';
 import { downsampleStreams } from '../utils/track.js';
+import { stepsPerMinute } from '../utils/cadence.js';
 
 const STRAVA_API = 'https://www.strava.com/api/v3';
 const PER_PAGE = 200;
@@ -483,6 +484,7 @@ export async function applySyncActivityTypes(userId, types) {
 }
 
 function mapStravaActivity(act) {
+  const type = act.type || act.sport_type || 'Workout';
   const splits = (act.splits_metric || act.laps || []).map((s) => ({
     distance: s.distance,
     movingTime: s.moving_time || s.elapsed_time,
@@ -494,7 +496,7 @@ function mapStravaActivity(act) {
   return {
     sourceActivityId: String(act.id),
     name: act.name,
-    type: act.type || act.sport_type || 'Workout',
+    type,
     sportType: act.sport_type,
     distance: act.distance,
     movingTime: act.moving_time,
@@ -506,7 +508,7 @@ function mapStravaActivity(act) {
     maxSpeed: act.max_speed,
     avgHeartrate: act.average_heartrate,
     maxHeartrate: act.max_heartrate,
-    avgCadence: act.average_cadence,
+    avgCadence: stepsPerMinute(act.average_cadence, { type, sportType: act.sport_type, source: 'strava' }),
     avgPower: act.average_watts,
     calories: act.calories,
     description: act.description,

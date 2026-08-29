@@ -6,6 +6,7 @@ import { useAuth } from '../context/AuthContext';
 import { isAthleteAccount } from '../utils/roles';
 import { formatActivityPrimary, formatDate, formatDateShort, formatDateTime, getActivityIcon } from '../utils/format';
 import ClubInviteCodes from '../components/ClubInviteCodes';
+import GroupSessions from '../components/GroupSessions';
 
 const PAGE_SIZES = [10, 20, 50, 100];
 
@@ -503,6 +504,17 @@ export default function ClubDetail() {
             </button>
           </div>
         </div>
+      )}
+
+      {isMember && (
+        <GroupSessions
+          clubId={id}
+          clubName={club.name}
+          canPost={
+            myMembership?.status === 'active' &&
+            (myMembership.role === 'club_admin' || myMembership.role === 'coach')
+          }
+        />
       )}
 
       {isAdmin && (

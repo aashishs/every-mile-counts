@@ -3,6 +3,7 @@ import { Decoder, Stream } from '@garmin/fitsdk';
 import { upsertActivity } from './stravaService.js';
 import { encodePolyline } from '../utils/polyline.js';
 import { trackFromGpsPoints } from '../utils/track.js';
+import { stepsPerMinute } from '../utils/cadence.js';
 
 const ALLOWED_TYPES = [
   'Run', 'Ride', 'Swim', 'Walk', 'Hike', 'Workout', 'WeightTraining', 'Yoga', 'HIIT',
@@ -266,9 +267,10 @@ function parseFitPoints(records) {
     const ele = num(field(rec, 'enhancedAltitude', 'enhanced_altitude', 'altitude'));
     const hr = num(field(rec, 'heartRate', 'heart_rate'));
     const cadence = num(field(rec, 'cadence'));
+    const frac = num(field(rec, 'fractionalCadence', 'fractional_cadence')) || 0;
     const distance = num(field(rec, 'distance'));
     if (lat == null && lon == null && !time && distance == null && hr == null) continue;
-    points.push({ lat, lon, ele, time, hr, cadence, distance });
+    points.push({ lat, lon, ele, time, hr, cadence: cadence != null ? cadence + frac : null, distance });
   }
   return points;
 }
@@ -378,7 +380,7 @@ function mappedFromFit({ buffer, filename, name, type, movingTimeSeconds, descri
     maxSpeed: stats.maxSpeed || num(field(session, 'maxSpeed', 'max_speed')) || null,
     avgHeartrate: stats.avgHeartrate || num(field(session, 'avgHeartRate', 'avg_heart_rate')),
     maxHeartrate: stats.maxHeartrate || num(field(session, 'maxHeartRate', 'max_heart_rate')),
-    avgCadence: stats.avgCadence,
+    avgCadence: stepsPerMinute(stats.avgCadence, { type: sport, source: 'file' }),
     avgPower,
     calories: num(field(session, 'totalCalories', 'total_calories')),
     description: String(description || '').trim() || null,
@@ -523,7 +525,7 @@ export function mappedFromFile({ filename, content, name, type, movingTimeSecond
     maxSpeed: stats.maxSpeed || null,
     avgHeartrate: stats.avgHeartrate,
     maxHeartrate: stats.maxHeartrate,
-    avgCadence: stats.avgCadence,
+    avgCadence: stepsPerMinute(stats.avgCadence, { type: sport, source: 'file' }),
     avgPower: null,
     calories: tcxCal,
     description: String(description || '').trim() || null,

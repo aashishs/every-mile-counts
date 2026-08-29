@@ -12,6 +12,7 @@ import { ViewOnStrava } from '../components/StravaBrand';
 import { GOALS_ENABLED } from '../utils/features';
 import { nextRaceGoal } from '../utils/goals';
 import { calendarEvents, COMPLETION_LABEL, formatKm, notesOnDay, PROGRAM_STATUS_LABEL, statusClass, unavailableDays, unavailableOnDay, ymdToday } from '../utils/training';
+import DeployTemplate from '../components/DeployTemplate';
 
 export default function CoachAthleteTraining() {
   const { athleteId } = useParams();
@@ -25,11 +26,17 @@ export default function CoachAthleteTraining() {
   const [dayNotes, setDayNotes] = useState([]);
   const [unavailable, setUnavailable] = useState([]);
   const [goals, setGoals] = useState([]);
+  const [templates, setTemplates] = useState([]);
+  const [groups, setGroups] = useState([]);
+  const [deploy, setDeploy] = useState(null);
+  const [msg, setMsg] = useState('');
 
   useEffect(() => {
     api.get(`/training/athletes/${athleteId}`).then((res) => setData(res.data)).catch((err) => {
       setError(err.response?.data?.message || 'Not authorized to view this athlete');
     });
+    api.get('/training/templates').then((res) => setTemplates(res.data.templates || [])).catch(() => setTemplates([]));
+    api.get('/training/groups').then((res) => setGroups(res.data.groups || [])).catch(() => setGroups([]));
   }, [athleteId]);
 
   useEffect(() => {
@@ -76,7 +83,8 @@ export default function CoachAthleteTraining() {
   }
   if (!data) return <Layout><p className="text-muted">Loading…</p></Layout>;
 
-  const { athlete, current, programs, reviews, recentActivities } = data;
+  const { athlete, current, programs, reviews, recentActivities, assignment } = data;
+  const clubTemplates = templates.filter((t) => !assignment?.clubId || t.clubId === assignment.clubId);
   const progress = current?.progress;
   const programPath = (p) => (p?.owned ? `/coaches/programs/${p.id}` : `/training/programs/${p.id}`);
   const currentOwned = current && programs?.some((p) => p.id === current.id && p.owned);
@@ -94,9 +102,28 @@ export default function CoachAthleteTraining() {
           <h2 className="page-title mb-1">{athlete.firstName} {athlete.lastName}</h2>
           <p className="page-sub mb-0">Prescribed vs what they actually ran, rode, or swam</p>
         </div>
+        <div className="flex flex-col sm:flex-row gap-2">
           <Link to={`/coaches/activities/new?athleteId=${athleteId}`} className="btn-outline no-underline text-center">Assign activity</Link>
+          {clubTemplates.length ? (
+            <select
+              aria-label="Use template"
+              defaultValue=""
+              onChange={(e) => {
+                const t = clubTemplates.find((x) => x.id === e.target.value);
+                if (t) setDeploy(t);
+                e.target.value = '';
+              }}
+            >
+              <option value="">Use template</option>
+              {clubTemplates.map((t) => (
+                <option key={t.id} value={t.id}>{t.name}</option>
+              ))}
+            </select>
+          ) : null}
           <Link to="/coaches/programs/new" className="btn-outline no-underline text-center">New program</Link>
+        </div>
       </div>
+      {msg ? <div className="card mb-4 text-sm">{msg}</div> : null}
 
       {current ? (
         <div className="card mb-6">
@@ -232,6 +259,20 @@ export default function CoachAthleteTraining() {
             </Link>
           ))}
         </section>
+      )}
+      {deploy && (
+        <DeployTemplate
+          template={deploy}
+          athletes={[{ athleteId, firstName: athlete.firstName, lastName: athlete.lastName, clubId: assignment?.clubId }]}
+          groups={groups}
+          defaultAthleteId={athleteId}
+          onCancel={() => setDeploy(null)}
+          onDone={(result) => {
+            setDeploy(null);
+            setMsg(`Assigned ${result.assigned} cop${result.assigned === 1 ? 'y' : 'ies'}.`);
+            api.get(`/training/athletes/${athleteId}`).then((res) => setData(res.data)).catch(() => {});
+          }}
+        />
       )}
     </Layout>
   );

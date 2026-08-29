@@ -1,5 +1,6 @@
 import { camel, camelMany, many, one } from '../config/db.js';
 import { formatDistance, formatDuration, paceFromSpeed, formatEffort, effortKind, activityMetric, startOfMonth, startOfWeek, startOfYear } from '../utils/format.js';
+import { stepsPerMinute } from '../utils/cadence.js';
 import { athleteHrContext } from '../utils/maf.js';
 import { parseStoredSyncTypes } from '../utils/activityTypes.js';
 import { STRAVA_COACH_SHARE_SQL, getCoachShareState } from '../utils/stravaShare.js';
@@ -125,7 +126,7 @@ export function analyzeActivity(activity, athlete = {}) {
   const activityMaxHr = num(activity.maxHeartrate ?? activity.max_heartrate);
   const profile = athleteHrContext(athlete);
   const maxHr = activityMaxHr || profile.maxHeartRate;
-  const cadence = num(activity.avgCadence ?? activity.avg_cadence);
+  const cadence = stepsPerMinute(activity.avgCadence ?? activity.avg_cadence, activity);
   const avgSpeed = num(activity.avgSpeed ?? activity.avg_speed);
   const splits = activity.splits || [];
   const kind = effortKind(activity.type, activity.sportType);
@@ -941,6 +942,7 @@ function snapshot(activity, athlete = {}) {
   const insights = analyzeActivity(activity, athlete);
   const metric = volumeMetric(sportFamily(activity));
   const paceSec = paceSecondsPerKm(activity);
+  const avgCadence = stepsPerMinute(activity.avgCadence, activity);
   return {
     id: activity.id,
     athleteId: activity.athleteId,
@@ -955,7 +957,7 @@ function snapshot(activity, athlete = {}) {
     elevationGain: num(activity.elevationGain),
     avgHeartrate: num(activity.avgHeartrate) || null,
     maxHeartrate: num(activity.maxHeartrate) || null,
-    avgCadence: num(activity.avgCadence) || null,
+    avgCadence,
     avgPower: num(activity.avgPower) || null,
     avgSpeed: num(activity.avgSpeed) || null,
     calories: num(activity.calories) || null,
@@ -978,7 +980,7 @@ function snapshot(activity, athlete = {}) {
         : null,
       hr: formatHr(activity.avgHeartrate),
       maxHr: formatHr(activity.maxHeartrate),
-      cadence: activity.avgCadence ? `${Math.round(activity.avgCadence)} ${effortKind(activity.type, activity.sportType) === 'speed' ? 'rpm' : 'spm'}` : '—',
+      cadence: avgCadence ? `${Math.round(avgCadence)} ${effortKind(activity.type, activity.sportType) === 'speed' ? 'rpm' : 'spm'}` : '—',
       load: insights.trainingLoad != null ? String(Math.round(insights.trainingLoad)) : '—',
     },
   };

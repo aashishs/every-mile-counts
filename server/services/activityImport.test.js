@@ -61,6 +61,7 @@ test('imports a FIT run with GPS, HR, and session totals', () => {
   assert.ok(mapped.movingTime >= 20);
   assert.equal(mapped.startDate.toISOString(), '2026-08-23T06:30:00.000Z');
   assert.ok(mapped.avgHeartrate > 130);
+  assert.equal(Math.round(mapped.avgCadence), 176);
   assert.ok(mapped.polyline);
   assert.ok(mapped.gpsPoints?.latlng?.length >= 8);
   assert.equal(mapped.calories, 18);

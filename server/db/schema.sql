@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS users (
   date_of_birth DATE,
   age INTEGER,
   maf_heart_rate INTEGER,
+  maf_offset SMALLINT NOT NULL DEFAULT 0,
   max_heart_rate INTEGER,
   resting_heart_rate INTEGER,
   status TEXT NOT NULL DEFAULT 'active'
@@ -358,6 +359,8 @@ CREATE TABLE IF NOT EXISTS training_programs (
   target_event_name TEXT,
   status TEXT NOT NULL DEFAULT 'draft'
     CHECK (status IN ('draft', 'active', 'paused', 'halted', 'completed', 'archived')),
+  is_template BOOLEAN NOT NULL DEFAULT FALSE,
+  source_program_id UUID REFERENCES training_programs(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -365,6 +368,7 @@ CREATE TABLE IF NOT EXISTS training_programs (
 CREATE INDEX IF NOT EXISTS idx_training_programs_coach ON training_programs (coach_id, status);
 CREATE INDEX IF NOT EXISTS idx_training_programs_athlete ON training_programs (athlete_id, status);
 CREATE INDEX IF NOT EXISTS idx_training_programs_club ON training_programs (club_id);
+CREATE INDEX IF NOT EXISTS idx_training_programs_templates ON training_programs (coach_id) WHERE is_template = TRUE;
 
 CREATE TABLE IF NOT EXISTS training_phases (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -616,3 +620,33 @@ CREATE TABLE IF NOT EXISTS login_otps (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_login_otps_user ON login_otps (user_id, created_at DESC);
+
+-- ---------------------------------------------------------------------------
+-- Club group sessions (RSVP)
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS group_sessions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  club_id UUID NOT NULL REFERENCES clubs(id) ON DELETE CASCADE,
+  created_by UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  session_date DATE NOT NULL,
+  session_time TIME NOT NULL,
+  sport TEXT NOT NULL DEFAULT 'run'
+    CHECK (sport IN ('run', 'ride', 'swim', 'walk', 'other')),
+  meetup_point TEXT NOT NULL,
+  notes TEXT,
+  status TEXT NOT NULL DEFAULT 'upcoming' CHECK (status IN ('upcoming', 'cancelled')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_group_sessions_club_date ON group_sessions (club_id, session_date, session_time);
+
+CREATE TABLE IF NOT EXISTS group_session_rsvps (
+  session_id UUID NOT NULL REFERENCES group_sessions(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  status TEXT NOT NULL CHECK (status IN ('going', 'maybe', 'not_going')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (session_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_group_session_rsvps_user ON group_session_rsvps (user_id);

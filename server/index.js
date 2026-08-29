@@ -25,6 +25,7 @@ import adminRoutes from './routes/admin.js';
 import supportRoutes from './routes/support.js';
 import pushRoutes from './routes/push.js';
 import trainingRoutes from './routes/training.js';
+import groupSessionRoutes from './routes/groupSessions.js';
 
 await connectDB();
 await ensureSchemaPatches();
@@ -76,6 +77,7 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/support', supportRoutes);
 app.use('/api/push', pushRoutes);
 app.use('/api/training', trainingRoutes);
+app.use('/api/group-sessions', groupSessionRoutes);
 
 app.use(errorHandler);
 
