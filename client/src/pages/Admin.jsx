@@ -58,6 +58,7 @@ export default function Admin() {
   const [tab, setTab] = useState('users');
   const [overview, setOverview] = useState(null);
   const [users, setUsers] = useState([]);
+  const [userStats, setUserStats] = useState(null);
   const [clubs, setClubs] = useState([]);
   const [codes, setCodes] = useState([]);
   const [memberships, setMemberships] = useState([]);
@@ -109,7 +110,9 @@ export default function Admin() {
     if (next === 'users') {
       const params = {};
       if (userQ.trim()) params.q = userQ.trim();
-      setUsers((await api.get('/admin/users', { params })).data.users);
+      const { data } = await api.get('/admin/users', { params });
+      setUsers(data.users || []);
+      setUserStats(data.stats || null);
       setClubs((await api.get('/admin/clubs')).data.clubs);
     }
     if (next === 'clubs') setClubs((await api.get('/admin/clubs')).data.clubs);
@@ -537,6 +540,25 @@ export default function Admin() {
 
       {tab === 'users' && (
         <div className="space-y-4">
+          {userStats && (
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-8 gap-3">
+              <Tile label="Users" value={userStats.totalUsers ?? 0} />
+              <Tile label="Active" value={userStats.activeUsers ?? 0} />
+              <Tile label="Strava connected" value={userStats.stravaConnected ?? 0} />
+              <Tile label="Athletes" value={userStats.athletes ?? 0} />
+              <Tile label="Coaches" value={userStats.coaches ?? 0} />
+              <Tile label="Club admins" value={userStats.clubAdmins ?? 0} />
+              <Tile label="Clubs" value={userStats.clubs ?? 0} />
+              <Tile
+                label="Clubs (active)"
+                value={userStats.activeClubs ?? 0}
+                hint={[
+                  userStats.pendingCoachClubs ? `${userStats.pendingCoachClubs} pending coach` : null,
+                  userStats.readOnlyClubs ? `${userStats.readOnlyClubs} read-only` : null,
+                ].filter(Boolean).join(' · ') || undefined}
+              />
+            </div>
+          )}
           <form
             className="flex gap-2"
             onSubmit={(e) => {
@@ -549,6 +571,10 @@ export default function Admin() {
           </form>
           {adminErr && <div className="card text-orange-300 text-sm">{adminErr}</div>}
           {adminMsg && <div className="card text-brand text-sm">{adminMsg}</div>}
+          <div className="text-xs text-muted">
+            Showing {users.length} user{users.length === 1 ? '' : 's'}
+            {userQ.trim() ? ` matching “${userQ.trim()}”` : ''}
+          </div>
           <div className="card overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
@@ -1429,11 +1455,12 @@ function formatAuditDayLabel(day) {
   return date.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
 }
 
-function Tile({ label, value }) {
+function Tile({ label, value, hint }) {
   return (
     <div className="stat-card">
       <div className="text-sm text-muted">{label}</div>
       <div className="text-2xl font-bold text-brand">{value}</div>
+      {hint ? <div className="text-[11px] text-muted mt-1">{hint}</div> : null}
     </div>
   );
 }

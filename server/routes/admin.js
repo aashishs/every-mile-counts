@@ -155,7 +155,49 @@ router.get(
     sql += ' GROUP BY u.id ORDER BY u.created_at DESC LIMIT 200';
     let users = camelMany(await many(sql, params));
     if (role) users = users.filter((u) => (Array.isArray(u.roles) ? u.roles : []).includes(role));
-    res.json({ users });
+
+    const stats = camel(
+      await one(
+        `WITH platform_users AS (
+           SELECT u.id, u.status
+           FROM users u
+           WHERE u.status <> 'deleted'
+             AND NOT EXISTS (
+               SELECT 1 FROM user_roles ar WHERE ar.user_id = u.id AND ar.role IN ${STAFF_ROLE_SQL}
+             )
+         )
+         SELECT
+           (SELECT COUNT(*)::int FROM platform_users) AS total_users,
+           (SELECT COUNT(*)::int FROM platform_users WHERE status = 'active') AS active_users,
+           (
+             SELECT COUNT(DISTINCT pu.id)::int
+             FROM platform_users pu
+             JOIN oauth_connections oc ON oc.user_id = pu.id
+              AND oc.provider = 'strava' AND COALESCE(oc.connected, FALSE) = TRUE
+           ) AS strava_connected,
+           (
+             SELECT COUNT(DISTINCT pu.id)::int
+             FROM platform_users pu
+             JOIN user_roles ur ON ur.user_id = pu.id AND ur.role = 'athlete'
+           ) AS athletes,
+           (
+             SELECT COUNT(DISTINCT pu.id)::int
+             FROM platform_users pu
+             JOIN user_roles ur ON ur.user_id = pu.id AND ur.role = 'coach'
+           ) AS coaches,
+           (
+             SELECT COUNT(DISTINCT pu.id)::int
+             FROM platform_users pu
+             JOIN user_roles ur ON ur.user_id = pu.id AND ur.role = 'club_admin'
+           ) AS club_admins,
+           (SELECT COUNT(*)::int FROM clubs) AS clubs,
+           (SELECT COUNT(*)::int FROM clubs WHERE status = 'active') AS active_clubs,
+           (SELECT COUNT(*)::int FROM clubs WHERE status = 'pending_coach') AS pending_coach_clubs,
+           (SELECT COUNT(*)::int FROM clubs WHERE status = 'read_only') AS read_only_clubs`
+      )
+    );
+
+    res.json({ users, stats });
   })
 );
 
