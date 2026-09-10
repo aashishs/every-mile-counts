@@ -4,6 +4,7 @@ import api from '../api/client';
 import Layout from '../components/Layout';
 import ClubField, { coachClubList, onlyClubId } from '../components/ClubField';
 import WorkoutForm, { emptyWorkout, payloadFromForm, workoutFormFromRecord } from '../components/WorkoutForm';
+import DeployTemplate from '../components/DeployTemplate';
 import { ACTIVITY_TYPE_OPTIONS, formatDate, getActivityIcon } from '../utils/format';
 import {
   COMPLETION_LABEL,
@@ -40,6 +41,8 @@ export default function CoachProgramEditor() {
   const [athleteId, setAthleteId] = useState('');
   const [groupId, setGroupId] = useState('');
   const [groups, setGroups] = useState([]);
+  const [deployOpen, setDeployOpen] = useState(false);
+  const [templateMsg, setTemplateMsg] = useState('');
 
   const loadProgram = async (programId) => {
     const { data } = await api.get(`/training/programs/${programId}`);
@@ -171,11 +174,14 @@ export default function CoachProgramEditor() {
       <div className="flex items-start justify-between gap-3 mb-4">
         <div>
           <h2 className="page-title mb-1">{program.name}</h2>
-          <p className="page-sub mb-0">{program.club?.name} · {program.sport}</p>
+          <p className="page-sub mb-0">{program.club?.name} · {program.sport}{program.isTemplate ? ' · Template' : ''}</p>
         </div>
-        <span className={`badge ${statusClass(program.status)}`}>{PROGRAM_STATUS_LABEL[program.status]}</span>
+        <span className={`badge ${statusClass(program.isTemplate ? 'draft' : program.status)}`}>
+          {program.isTemplate ? 'Template' : PROGRAM_STATUS_LABEL[program.status]}
+        </span>
       </div>
       {error && <div className="card text-rose-200 mb-4">{error}</div>}
+      {templateMsg && <div className="card mb-4 text-sm">{templateMsg}</div>}
 
       <form className="card grid md:grid-cols-2 gap-3 mb-6" onSubmit={saveMeta}>
         <input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
@@ -190,47 +196,88 @@ export default function CoachProgramEditor() {
       </form>
 
       <div className="card mb-6 grid md:grid-cols-2 gap-3">
-        <div>
-          <label>Assign athlete</label>
-          <div className="flex gap-2">
-            <select value={athleteId || program.athleteId || ''} onChange={(e) => setAthleteId(e.target.value)}>
-              <option value="">Choose athlete in this club</option>
-              {clubAthletes.map((a) => (
-                <option key={a.athleteId} value={a.athleteId}>{a.firstName} {a.lastName}</option>
-              ))}
-            </select>
-            <button className="btn-primary" type="button" onClick={() => run(() => api.post(`/training/programs/${program.id}/assign`, { athleteId: athleteId || program.athleteId }))}>
-              Assign
+        {program.isTemplate ? (
+          <div className="md:col-span-2">
+            <p className="text-sm text-muted mt-0 mb-3">This template stays in your library. Assign a copy to an athlete or group with a start date.</p>
+            <button className="btn-primary" type="button" onClick={() => setDeployOpen(true)}>Use template</button>
+            <button
+              className="btn-outline ml-2"
+              type="button"
+              onClick={async () => {
+                setError('');
+                setSaving(true);
+                try {
+                  await api.delete(`/training/programs/${program.id}`);
+                  navigate('/coaches/training');
+                } catch (err) {
+                  setError(err.response?.data?.message || 'Could not delete template');
+                } finally {
+                  setSaving(false);
+                }
+              }}
+            >
+              Delete template
             </button>
           </div>
-        </div>
-        <div>
-          <label>Assign group</label>
-          <div className="flex gap-2">
-            <select value={groupId} onChange={(e) => setGroupId(e.target.value)}>
-              <option value="">Choose group in this club</option>
-              {clubGroups.map((g) => (
-                <option key={g.id} value={g.id}>{g.name} ({g.athleteCount || g.athletes?.length || 0})</option>
-              ))}
-            </select>
-            <button className="btn-primary" type="button" disabled={!groupId} onClick={() => run(() => api.post(`/training/programs/${program.id}/assign`, { groupId }))}>
-              Assign copies
-            </button>
+        ) : (
+          <>
+            <div>
+              <label>Assign athlete</label>
+              <div className="flex gap-2">
+                <select value={athleteId || program.athleteId || ''} onChange={(e) => setAthleteId(e.target.value)}>
+                  <option value="">Choose athlete in this club</option>
+                  {clubAthletes.map((a) => (
+                    <option key={a.athleteId} value={a.athleteId}>{a.firstName} {a.lastName}</option>
+                  ))}
+                </select>
+                <button className="btn-primary" type="button" onClick={() => run(() => api.post(`/training/programs/${program.id}/assign`, { athleteId: athleteId || program.athleteId }))}>
+                  Assign
+                </button>
+              </div>
+            </div>
+            <div>
+              <label>Assign group</label>
+              <div className="flex gap-2">
+                <select value={groupId} onChange={(e) => setGroupId(e.target.value)}>
+                  <option value="">Choose group in this club</option>
+                  {clubGroups.map((g) => (
+                    <option key={g.id} value={g.id}>{g.name} ({g.athleteCount || g.athletes?.length || 0})</option>
+                  ))}
+                </select>
+                <button className="btn-primary" type="button" disabled={!groupId} onClick={() => run(() => api.post(`/training/programs/${program.id}/assign`, { groupId }))}>
+                  Assign copies
+                </button>
+              </div>
+              <p className="text-xs text-muted mt-2 mb-0">Each athlete in the group gets their own copy of this plan.</p>
+            </div>
+            <div className="md:col-span-2">
+              <button
+                className="btn-outline"
+                type="button"
+                onClick={() => run(async () => {
+                  const { data } = await api.post(`/training/programs/${program.id}/save-template`);
+                  setTemplateMsg(`Saved as template: ${data.program.name}. Use it from Training.`);
+                })}
+              >
+                Save as template
+              </button>
+            </div>
+          </>
+        )}
+        {!program.isTemplate && (
+          <div className="md:col-span-2">
+            <label>Program status</label>
+            <div className="flex flex-wrap gap-2">
+              {program.status === 'draft' && <button className="btn-outline btn-sm" type="button" onClick={() => run(() => api.post(`/training/programs/${program.id}/status`, { status: 'active' }))}>Activate</button>}
+              {program.status === 'active' && <button className="btn-outline btn-sm" type="button" onClick={() => run(() => api.post(`/training/programs/${program.id}/status`, { status: 'paused' }))}>Pause</button>}
+              {program.status === 'paused' && <button className="btn-outline btn-sm" type="button" onClick={() => run(() => api.post(`/training/programs/${program.id}/status`, { status: 'active' }))}>Resume</button>}
+              {['active', 'paused'].includes(program.status) && <button className="btn-outline btn-sm" type="button" onClick={() => run(() => api.post(`/training/programs/${program.id}/status`, { status: 'halted' }))}>Halt</button>}
+              {program.status === 'halted' && <button className="btn-outline btn-sm" type="button" onClick={() => run(() => api.post(`/training/programs/${program.id}/status`, { status: 'active' }))}>Resume</button>}
+              {['active', 'paused'].includes(program.status) && <button className="btn-outline btn-sm" type="button" onClick={() => run(() => api.post(`/training/programs/${program.id}/status`, { status: 'completed' }))}>Complete</button>}
+              {program.status !== 'archived' && <button className="btn-outline btn-sm" type="button" onClick={() => run(() => api.post(`/training/programs/${program.id}/status`, { status: 'archived' }))}>Archive</button>}
+            </div>
           </div>
-          <p className="text-xs text-muted mt-2 mb-0">Each athlete in the group gets their own copy of this plan.</p>
-        </div>
-        <div className="md:col-span-2">
-          <label>Program status</label>
-          <div className="flex flex-wrap gap-2">
-            {program.status === 'draft' && <button className="btn-outline btn-sm" type="button" onClick={() => run(() => api.post(`/training/programs/${program.id}/status`, { status: 'active' }))}>Activate</button>}
-            {program.status === 'active' && <button className="btn-outline btn-sm" type="button" onClick={() => run(() => api.post(`/training/programs/${program.id}/status`, { status: 'paused' }))}>Pause</button>}
-            {program.status === 'paused' && <button className="btn-outline btn-sm" type="button" onClick={() => run(() => api.post(`/training/programs/${program.id}/status`, { status: 'active' }))}>Resume</button>}
-            {['active', 'paused'].includes(program.status) && <button className="btn-outline btn-sm" type="button" onClick={() => run(() => api.post(`/training/programs/${program.id}/status`, { status: 'halted' }))}>Halt</button>}
-            {program.status === 'halted' && <button className="btn-outline btn-sm" type="button" onClick={() => run(() => api.post(`/training/programs/${program.id}/status`, { status: 'active' }))}>Resume</button>}
-            {['active', 'paused'].includes(program.status) && <button className="btn-outline btn-sm" type="button" onClick={() => run(() => api.post(`/training/programs/${program.id}/status`, { status: 'completed' }))}>Complete</button>}
-            {program.status !== 'archived' && <button className="btn-outline btn-sm" type="button" onClick={() => run(() => api.post(`/training/programs/${program.id}/status`, { status: 'archived' }))}>Archive</button>}
-          </div>
-        </div>
+        )}
       </div>
 
       <div className="card mb-6">
@@ -343,6 +390,18 @@ export default function CoachProgramEditor() {
           ))}
         </section>
       ))}
+      {deployOpen && (
+        <DeployTemplate
+          template={program}
+          athletes={athletes}
+          groups={groups}
+          onCancel={() => setDeployOpen(false)}
+          onDone={(result) => {
+            setDeployOpen(false);
+            setTemplateMsg(`Assigned ${result.assigned} cop${result.assigned === 1 ? 'y' : 'ies'}.`);
+          }}
+        />
+      )}
     </Layout>
   );
 }

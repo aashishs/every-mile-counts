@@ -6,7 +6,9 @@ import {
   formatDistance,
   formatDuration,
   formatEffort,
-} from './format';
+} from './format.js';
+import { stepsPerMinute } from './cadence.js';
+import { formatSplitClock, normalizeSplits } from './splits.js';
 
 function hasValue(value) {
   return value != null && value !== '' && value !== '—';
@@ -87,6 +89,7 @@ export function buildActivityMarkdown(activity, insights) {
       : null;
   const weatherTemp = activity.weather?.temp ?? activity.weather?.temperature;
   const effortLabel = kind === 'speed' ? 'Speed' : kind === 'duration' ? null : 'Pace';
+  const cadenceSpm = stepsPerMinute(activity.avgCadence, activity);
 
   const numbers = table([
     row('Distance', distance),
@@ -100,7 +103,9 @@ export function buildActivityMarkdown(activity, insights) {
       : null),
     row('Avg HR', activity.avgHeartrate != null ? `${Math.round(Number(activity.avgHeartrate))} bpm` : null),
     row('Max HR', activity.maxHeartrate != null ? `${Math.round(Number(activity.maxHeartrate))} bpm` : null),
-    row('Avg cadence', metric !== 'duration' && activity.avgCadence != null ? `${Math.round(Number(activity.avgCadence))} ${kind === 'speed' ? 'rpm' : 'spm'}` : null),
+    row('Avg cadence', metric !== 'duration' && cadenceSpm != null
+      ? `${Math.round(cadenceSpm)} ${kind === 'speed' ? 'rpm' : 'spm'}`
+      : null),
     row('Avg power', activity.avgPower != null ? `${Math.round(Number(activity.avgPower))} W` : null),
     row('Calories', activity.calories != null ? `${Math.round(Number(activity.calories))} kcal` : null),
     row('Temperature', weatherTemp != null ? `${weatherTemp} °C` : null),
@@ -126,9 +131,11 @@ export function buildActivityMarkdown(activity, insights) {
     '## Session',
     '',
     `- **Name:** ${activity.name || 'Untitled activity'}`,
-    `- **When:** ${formatDateTime(activity.startDateLocal || activity.startDate) || formatDate(activity.startDate)}`,
+    `- **When:** ${formatDateTime(activity.startDate) || formatDate(activity.startDate)}`,
     `- **Sport:** ${activity.sportType || activity.type}`,
-    activity.source ? `- **Source:** ${activity.source}` : null,
+    activity.origin?.label || activity.source
+      ? `- **Source:** ${activity.origin?.label || activity.source}`
+      : null,
     '',
     '## Numbers',
     '',
@@ -138,6 +145,54 @@ export function buildActivityMarkdown(activity, insights) {
     splits ? ['', '## Splits', '', splits].join('\n') : null,
     '',
   ].filter((block) => block != null).join('\n').trim() + '\n';
+}
+
+export function formatKmSplitsLine(splits, type, sportType) {
+  const kind = effortKind(type, sportType);
+  const rows = normalizeSplits(splits);
+  if (!rows.length) return null;
+  const parts = rows.slice(0, 50).map((row) => {
+    let effort = '—';
+    if (kind === 'speed' && row.speedKmh) effort = row.speedKmh.toFixed(1);
+    else if (kind === 'swim' && row.paceSec) effort = `${formatSplitClock(row.paceSec / 10)}/100m`;
+    else if (row.paceSec) effort = formatSplitClock(row.paceSec);
+    const hr = row.hr ? ` (${row.hr})` : '';
+    return `${row.kmLabel} ${effort}${hr}`;
+  });
+  const unit = kind === 'speed' ? ' km/h' : '';
+  const extra = rows.length > 50 ? ` · +${rows.length - 50} more` : '';
+  return `Per-km${unit}: ${parts.join(' · ')}${extra}`;
+}
+
+export function buildComparePrompt(payload) {
+  const sessions = payload?.sessions || [];
+  const sport = String(payload?.sport || 'session').toLowerCase();
+  if (sessions.length < 2) return '';
+  const blocks = sessions.map((session, i) => {
+    const bits = [
+      session.formatted?.distance,
+      session.formatted?.time,
+      session.formatted?.pace,
+      session.avgHeartrate ? `HR ${Math.round(session.avgHeartrate)}` : null,
+      session.maxHeartrate ? `max ${Math.round(session.maxHeartrate)}` : null,
+      session.formatted?.elevation && session.formatted.elevation !== '—'
+        ? `${session.formatted.elevation} climb`
+        : null,
+    ].filter(Boolean);
+    const km = formatKmSplitsLine(session.splits, session.type, session.sportType || session.sport)
+      || 'Per-km: not available';
+    return [
+      `${i + 1}. ${session.name || 'Session'} — ${formatDateTime(session.startDate) || formatDate(session.startDate)}`,
+      bits.join(' · '),
+      km,
+    ].join('\n');
+  });
+  return [
+    `Compare these ${sessions.length} ${sport}s. What improved, what didn't, and one next-session cue. Use only these numbers, including per-km splits.`,
+    '',
+    ...blocks,
+    '',
+  ].join('\n');
 }
 
 export async function copyText(value) {

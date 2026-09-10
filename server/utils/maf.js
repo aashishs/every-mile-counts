@@ -1,3 +1,5 @@
+export const MAF_BONUS_MAX = 5;
+
 export function parseDateOfBirth(value) {
   if (!value) return null;
   if (value instanceof Date && !Number.isNaN(value.getTime())) {
@@ -25,9 +27,38 @@ export function ageFromDob(value, on = new Date()) {
   return age;
 }
 
-export function mafHeartRate(age) {
+export function mafBase(age) {
   if (age == null || !Number.isFinite(Number(age)) || age < 1) return null;
   return 180 - Math.round(Number(age));
+}
+
+export function clampMafOffset(offset) {
+  const n = Math.round(Number(offset) || 0);
+  if (!Number.isFinite(n)) return 0;
+  return Math.min(MAF_BONUS_MAX, Math.max(0, n));
+}
+
+export function mafHeartRate(age, offset = 0) {
+  const base = mafBase(age);
+  if (base == null) return null;
+  return base + clampMafOffset(offset);
+}
+
+export function mafOffsetFromValue(age, value) {
+  const base = mafBase(age);
+  if (base == null || value == null || value === '') return 0;
+  return clampMafOffset(Number(value) - base);
+}
+
+export function validateMafHeartRate(age, value) {
+  const base = mafBase(age);
+  if (base == null) return 'Set date of birth first';
+  const n = Number(value);
+  if (!Number.isFinite(n) || Math.round(n) !== n) return 'MAF must be a whole number';
+  if (n < base || n > base + MAF_BONUS_MAX) {
+    return `MAF must be between ${base} and ${base + MAF_BONUS_MAX} bpm`;
+  }
+  return null;
 }
 
 export function validateDateOfBirth(value) {
@@ -49,9 +80,9 @@ export function todayInTimeZone(tz = process.env.APP_TZ || 'Asia/Kolkata') {
   return new Date(pick('year'), pick('month') - 1, pick('day'));
 }
 
-export function ageAndMafFromDob(value, on = new Date()) {
+export function ageAndMafFromDob(value, on = new Date(), offset = 0) {
   const age = ageFromDob(value, on);
-  return { age, mafHeartRate: mafHeartRate(age) };
+  return { age, mafHeartRate: mafHeartRate(age, offset), mafOffset: clampMafOffset(offset) };
 }
 
 export function isBirthdayOn(value, on = new Date()) {
@@ -75,7 +106,8 @@ export function athleteHrContext(user = {}) {
   return {
     dateOfBirth,
     age,
-    mafHeartRate: user.mafHeartRate ?? user.maf_heart_rate ?? mafHeartRate(age),
+    mafHeartRate: user.mafHeartRate ?? user.maf_heart_rate ?? mafHeartRate(age, user.mafOffset ?? user.maf_offset),
+    mafOffset: clampMafOffset(user.mafOffset ?? user.maf_offset),
     maxHeartRate: user.maxHeartRate ?? user.max_heart_rate ?? null,
   };
 }

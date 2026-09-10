@@ -9,6 +9,7 @@ import {
   effortStat,
   formatActivityPrimary,
   formatDate,
+  formatDateTime,
   formatDuration,
   formatEffort,
   getActivityIcon,
@@ -17,6 +18,9 @@ import { buildActivityMarkdown, copyText } from '../utils/activityMarkdown';
 import { formatComparisonValue } from '../utils/training';
 import ActivitySplits from '../components/ActivitySplits';
 import { PoweredByStrava, ViewOnStrava } from '../components/StravaBrand';
+import CoachReviewForm, { PublishedReviews } from '../components/CoachReviewForm';
+import { activityOriginLabel } from '../utils/activityOrigin';
+import { stepsPerMinute } from '../utils/cadence';
 
 export default function ActivityDetail() {
   const { id } = useParams();
@@ -24,26 +28,23 @@ export default function ActivityDetail() {
   const { isCoach, user } = useAuth();
   const [data, setData] = useState(null);
   const [coaches, setCoaches] = useState([]);
-  const [form, setForm] = useState({
-    performanceSummary: '',
-    strengths: '',
-    improvements: '',
-    technique: '',
-    recommendations: '',
-    recoveryAdvice: '',
-    comments: '',
-    rating: 5,
-  });
   const [message, setMessage] = useState('');
   const [copied, setCopied] = useState(false);
   const [reviewCoachId, setReviewCoachId] = useState('');
   const [asking, setAsking] = useState(false);
   const [loadError, setLoadError] = useState('');
+  const [similar, setSimilar] = useState(null);
+  const [pickedSimilar, setPickedSimilar] = useState([]);
 
   useEffect(() => {
     setLoadError('');
+    setSimilar(null);
+    setPickedSimilar([]);
     api.get(`/activities/${id}`).then((res) => setData(res.data)).catch((err) => {
       setLoadError(err.response?.data?.message || 'Could not load this session');
+    });
+    api.get(`/activities/${id}/similar`).then((res) => setSimilar(res.data)).catch(() => {
+      setSimilar({ supported: false, activities: [] });
     });
     api.get('/coaches/my-coaches').then((res) => setCoaches(res.data.coaches || [])).catch(() => {});
   }, [id]);
@@ -94,6 +95,7 @@ export default function ActivityDetail() {
   const glance = insights || athleteInsights || {};
   const metric = activityMetric(activity.type, activity.sportType);
   const effort = effortStat(activity);
+  const cadenceSpm = stepsPerMinute(activity.avgCadence, activity);
   const primary = formatActivityPrimary(activity);
   const primaryLabel = metric === 'duration' ? 'Duration' : metric === 'swim' ? 'Distance' : 'Distance';
 
@@ -128,25 +130,6 @@ export default function ActivityDetail() {
     }
   };
 
-  const submitReview = async (e) => {
-    e.preventDefault();
-    try {
-      await api.post('/reviews', {
-        activityId: activity.id,
-        requestId: myPendingRequest?.id,
-        programId: plannedWorkout?.programId,
-        plannedWorkoutId: plannedWorkout?.id,
-        ...form,
-        status: 'published',
-      });
-      const { data: fresh } = await api.get(`/activities/${id}`);
-      setData(fresh);
-      setMessage('Review published');
-    } catch (err) {
-      setMessage(err.response?.data?.message || 'Could not save review');
-    }
-  };
-
   const stats = metric === 'duration'
     ? [
         Number(activity.calories) > 0
@@ -167,6 +150,13 @@ export default function ActivityDetail() {
           : null,
         activity.avgHeartrate
           ? { label: 'Avg HR', value: `${Math.round(activity.avgHeartrate)}`, unit: 'bpm' }
+          : null,
+        cadenceSpm
+          ? {
+              label: 'Cadence',
+              value: `${Math.round(cadenceSpm)}`,
+              unit: effort.kind === 'speed' ? 'rpm' : 'spm',
+            }
           : null,
       ].filter(Boolean);
 
@@ -191,7 +181,7 @@ export default function ActivityDetail() {
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
             <div className="stat-label text-teal-100/70">
-              {getActivityIcon(activity.type)} {activity.type} · {formatDate(activity.startDate)}
+              {getActivityIcon(activity.type)} {activity.type} · {formatDateTime(activity.startDate)}
               {isCoach && !mine && activity.mafHeartRate
                 ? ` · MAF ${activity.mafHeartRate} bpm`
                 : ''}
@@ -207,11 +197,10 @@ export default function ActivityDetail() {
         </div>
         <div className="stat-label text-teal-100/70 mt-2">{primaryLabel}</div>
         <div className="flex flex-wrap gap-2 mt-5">
-          {activity.source === 'strava' ? (
-            <span className="rounded-full bg-black/25 px-3 py-1 text-xs font-semibold">Compatible with Strava</span>
-          ) : (
-            <span className="rounded-full bg-black/25 px-3 py-1 text-xs font-semibold">{activity.source || 'manual'}</span>
-          )}
+          <span className="rounded-full bg-black/25 px-3 py-1 text-xs font-semibold">
+            {activityOriginLabel(activity)}
+            {activity.origin?.filename ? ` · ${activity.origin.filename}` : ''}
+          </span>
           {formatEffort(activity) && formatEffort(activity) !== '—' && (
             <span className="rounded-full bg-black/25 px-3 py-1 text-xs font-semibold">{formatEffort(activity)}</span>
           )}
@@ -266,6 +255,62 @@ export default function ActivityDetail() {
       )}
       <ActivitySplits activity={activity} />
 
+      {similar?.supported && (
+      <section className="mb-6">
+        <div className="flex items-center justify-between gap-3 mb-3">
+          <h3 className="section-title mb-0">{similar.heading || 'Similar sessions'}</h3>
+          <button
+            type="button"
+            className="btn-outline btn-sm shrink-0"
+            disabled={pickedSimilar.length < 1 || pickedSimilar.length > 2}
+            onClick={() => navigate(
+              `/activities/compare?a=${activity.id}&b=${pickedSimilar[0]}${pickedSimilar[1] ? `&c=${pickedSimilar[1]}` : ''}&from=/activities/${activity.id}`
+            )}
+          >
+            Compare {pickedSimilar.length ? pickedSimilar.length + 1 : ''}
+          </button>
+        </div>
+        <p className="text-xs text-muted mb-3">
+          Same route, or the same title at a matching distance
+          {Number(activity.elevationGain) >= 200 ? ', or a similar climb' : ''}. Select 1 or 2 to compare.
+        </p>
+        {!similar.activities?.length ? (
+          <div className="card text-muted text-sm">
+            No matching {String(similar.heading || 'Similar sessions').replace(/^Similar /i, '')} yet.
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {similar.activities.map((act) => {
+              const checked = pickedSimilar.includes(act.id);
+              return (
+                <div key={act.id} className="card flex items-center gap-3 py-3">
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    aria-label={`Select ${act.name || 'session'} to compare`}
+                    onChange={() => {
+                      setPickedSimilar((prev) => {
+                        if (prev.includes(act.id)) return prev.filter((id) => id !== act.id);
+                        if (prev.length >= 2) return prev;
+                        return [...prev, act.id];
+                      });
+                    }}
+                  />
+                  <Link to={`/activities/${act.id}`} className="min-w-0 flex-1 text-inherit no-underline">
+                    <div className="font-semibold truncate">{act.name || 'Session'}</div>
+                    <div className="text-xs text-muted mt-1">
+                      {formatDateTime(act.startDate)} · {act.size || formatActivityPrimary(act)}
+                      {act.why ? ` · ${act.why}` : ''}
+                    </div>
+                  </Link>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+      )}
+
       {(insights || athleteInsights) && (
         <section className="mb-6">
           <h3 className="section-title mb-3">Session read</h3>
@@ -281,7 +326,7 @@ export default function ActivityDetail() {
                 hint={
                   glance.mafCheck.maxAboveMaf
                     ? `MAF ${glance.mafCheck.mafHeartRate} bpm · max ${glance.mafCheck.maxHeartrate} spiked above`
-                    : `MAF ${glance.mafCheck.mafHeartRate} bpm (180 − age)`
+                    : `MAF ${glance.mafCheck.mafHeartRate} bpm`
                 }
               />
             )}
@@ -383,44 +428,20 @@ export default function ActivityDetail() {
         </div>
       )}
 
-      {reviews?.length > 0 && (
-        <section className="mb-6">
-          <h3 className="section-title mb-3">Coach notes</h3>
-          {reviews.map((r) => (
-            <div key={r.id} className="card mb-3 text-sm space-y-2">
-              <div className="flex items-center justify-between gap-2">
-                <span className="font-semibold">{r.coachFirstName} {r.coachLastName}{r.clubName ? ` · ${r.clubName}` : ''}</span>
-                {r.rating ? <span className="text-accent">{'★'.repeat(r.rating)}</span> : null}
-              </div>
-              {r.performanceSummary && <p className="mb-0">{r.performanceSummary}</p>}
-              {r.strengths && <p className="mb-0 text-muted"><span className="text-slate-100 font-medium">Strengths.</span> {r.strengths}</p>}
-              {r.improvements && <p className="mb-0 text-muted"><span className="text-slate-100 font-medium">Work on.</span> {r.improvements}</p>}
-              {r.technique && <p className="mb-0 text-muted"><span className="text-slate-100 font-medium">Technique.</span> {r.technique}</p>}
-              {r.recommendations && <p className="mb-0 text-muted"><span className="text-slate-100 font-medium">Training.</span> {r.recommendations}</p>}
-              {r.recoveryAdvice && <p className="mb-0 text-muted"><span className="text-slate-100 font-medium">Recovery.</span> {r.recoveryAdvice}</p>}
-              {r.comments && <p className="mb-0 text-muted">{r.comments}</p>}
-            </div>
-          ))}
-        </section>
-      )}
+      <PublishedReviews reviews={reviews} />
 
       {isCoach && !mine && !myReview && (
-        <form className="card space-y-3" onSubmit={submitReview}>
-          <h3 className="section-title">Write review</h3>
-          {['performanceSummary', 'strengths', 'improvements', 'technique', 'recommendations', 'recoveryAdvice', 'comments'].map((field) => (
-            <div key={field}>
-              <label className="capitalize">{field.replace(/([A-Z])/g, ' $1')}</label>
-              <textarea rows={2} value={form[field]} onChange={(e) => setForm({ ...form, [field]: e.target.value })} />
-            </div>
-          ))}
-          <div>
-            <label>Rating</label>
-            <select value={form.rating} onChange={(e) => setForm({ ...form, rating: Number(e.target.value) })} className="max-w-xs">
-              {[1, 2, 3, 4, 5].map((n) => <option key={n} value={n}>{n}</option>)}
-            </select>
-          </div>
-          <button className="btn-primary w-full" type="submit">Publish review</button>
-        </form>
+        <CoachReviewForm
+          activityId={activity.id}
+          requestId={myPendingRequest?.id}
+          programId={plannedWorkout?.programId}
+          plannedWorkoutId={plannedWorkout?.id}
+          onPublished={async () => {
+            const { data: fresh } = await api.get(`/activities/${id}`);
+            setData(fresh);
+            setMessage('Review published');
+          }}
+        />
       )}
       {activity.source === 'strava' && (
         <div className="mt-8 mb-8">

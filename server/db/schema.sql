@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS users (
   date_of_birth DATE,
   age INTEGER,
   maf_heart_rate INTEGER,
+  maf_offset SMALLINT NOT NULL DEFAULT 0,
   max_heart_rate INTEGER,
   resting_heart_rate INTEGER,
   status TEXT NOT NULL DEFAULT 'active'
@@ -35,6 +36,7 @@ CREATE TABLE IF NOT EXISTS users (
   sync_activity_types JSONB NOT NULL DEFAULT '["Run","Ride","Swim","Walk","Hike","Workout","WeightTraining","Yoga","HIIT"]'::jsonb,
   sync_activity_types_confirmed_at TIMESTAMPTZ,
   email_verified_at TIMESTAMPTZ,
+  week_starts_on SMALLINT NOT NULL DEFAULT 1,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -357,6 +359,8 @@ CREATE TABLE IF NOT EXISTS training_programs (
   target_event_name TEXT,
   status TEXT NOT NULL DEFAULT 'draft'
     CHECK (status IN ('draft', 'active', 'paused', 'halted', 'completed', 'archived')),
+  is_template BOOLEAN NOT NULL DEFAULT FALSE,
+  source_program_id UUID REFERENCES training_programs(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -364,6 +368,7 @@ CREATE TABLE IF NOT EXISTS training_programs (
 CREATE INDEX IF NOT EXISTS idx_training_programs_coach ON training_programs (coach_id, status);
 CREATE INDEX IF NOT EXISTS idx_training_programs_athlete ON training_programs (athlete_id, status);
 CREATE INDEX IF NOT EXISTS idx_training_programs_club ON training_programs (club_id);
+CREATE INDEX IF NOT EXISTS idx_training_programs_templates ON training_programs (coach_id) WHERE is_template = TRUE;
 
 CREATE TABLE IF NOT EXISTS training_phases (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -422,6 +427,32 @@ CREATE INDEX IF NOT EXISTS idx_planned_workouts_athlete_date ON planned_workouts
 CREATE INDEX IF NOT EXISTS idx_planned_workouts_program ON planned_workouts (program_id, scheduled_date);
 CREATE INDEX IF NOT EXISTS idx_planned_workouts_status ON planned_workouts (athlete_id, completion_status, scheduled_date);
 
+CREATE TABLE IF NOT EXISTS training_day_notes (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  athlete_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  coach_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  club_id UUID REFERENCES clubs(id) ON DELETE SET NULL,
+  note_date DATE NOT NULL,
+  body TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (athlete_id, coach_id, note_date)
+);
+CREATE INDEX IF NOT EXISTS idx_training_day_notes_athlete_date ON training_day_notes (athlete_id, note_date);
+
+CREATE TABLE IF NOT EXISTS training_day_unavailability (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  athlete_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  unavailable_date DATE NOT NULL,
+  reason TEXT NOT NULL DEFAULT 'rest'
+    CHECK (reason IN ('injury', 'travel', 'rest', 'other')),
+  note TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (athlete_id, unavailable_date)
+);
+CREATE INDEX IF NOT EXISTS idx_training_day_unavailability_athlete ON training_day_unavailability (athlete_id, unavailable_date);
+
 CREATE TABLE IF NOT EXISTS workout_activity_matches (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   planned_workout_id UUID NOT NULL REFERENCES planned_workouts(id) ON DELETE CASCADE,
@@ -455,11 +486,15 @@ CREATE TABLE IF NOT EXISTS goals (
     CHECK (type IN ('race', 'distance', 'weekly_mileage', 'time', 'challenge', 'other')),
   target_value NUMERIC,
   target_unit TEXT,
+  target_time INTEGER,
+  activity_type TEXT NOT NULL DEFAULT 'Run',
   target_date DATE,
   current_value NUMERIC DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'active'
     CHECK (status IN ('active', 'completed', 'abandoned')),
   notes TEXT,
+  matched_activity_id UUID REFERENCES activities(id) ON DELETE SET NULL,
+  coach_visible BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -560,6 +595,7 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS default_activity_type TEXT NOT NULL D
 ALTER TABLE users ADD COLUMN IF NOT EXISTS sync_activity_types JSONB NOT NULL DEFAULT '["Run","Ride","Swim","Walk","Hike","Workout","WeightTraining","Yoga","HIIT"]'::jsonb;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS sync_activity_types_confirmed_at TIMESTAMPTZ;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMPTZ;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS week_starts_on SMALLINT NOT NULL DEFAULT 1;
 ALTER TABLE events ADD COLUMN IF NOT EXISTS event_time TIME;
 
 CREATE TABLE IF NOT EXISTS password_reset_tokens (
@@ -584,3 +620,33 @@ CREATE TABLE IF NOT EXISTS login_otps (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_login_otps_user ON login_otps (user_id, created_at DESC);
+
+-- ---------------------------------------------------------------------------
+-- Club group sessions (RSVP)
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS group_sessions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  club_id UUID NOT NULL REFERENCES clubs(id) ON DELETE CASCADE,
+  created_by UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  session_date DATE NOT NULL,
+  session_time TIME NOT NULL,
+  sport TEXT NOT NULL DEFAULT 'run'
+    CHECK (sport IN ('run', 'ride', 'swim', 'walk', 'other')),
+  meetup_point TEXT NOT NULL,
+  notes TEXT,
+  status TEXT NOT NULL DEFAULT 'upcoming' CHECK (status IN ('upcoming', 'cancelled')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_group_sessions_club_date ON group_sessions (club_id, session_date, session_time);
+
+CREATE TABLE IF NOT EXISTS group_session_rsvps (
+  session_id UUID NOT NULL REFERENCES group_sessions(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  status TEXT NOT NULL CHECK (status IN ('going', 'maybe', 'not_going')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (session_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_group_session_rsvps_user ON group_session_rsvps (user_id);

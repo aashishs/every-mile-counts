@@ -64,16 +64,30 @@ export async function assignDefaultHeadCoach(clubId, athleteId) {
   const club = camel(await one('SELECT head_coach_user_id FROM clubs WHERE id = $1', [clubId]));
   const coachId = club?.headCoachUserId;
   if (!coachId || coachId === athleteId) return false;
-  const existing = await one(
-    `SELECT id, status FROM coach_assignments WHERE athlete_id = $1 AND coach_id = $2`,
-    [athleteId, coachId]
+  const existing = camel(
+    await one(
+      `SELECT id, status FROM coach_assignments WHERE athlete_id = $1 AND coach_id = $2`,
+      [athleteId, coachId]
+    )
   );
-  if (existing) return false;
-  if ((await coachCount(athleteId)) >= MAX_COACHES) return false;
+  if (existing?.status === 'active') return false;
+  if (!existing && (await coachCount(athleteId)) >= MAX_COACHES) return false;
+  if (existing) {
+    await query(
+      `UPDATE coach_assignments
+       SET status = 'active', club_id = $2, assigned_by = $3
+       WHERE id = $1`,
+      [existing.id, clubId, coachId]
+    );
+    return true;
+  }
   await query(
     `INSERT INTO coach_assignments (athlete_id, coach_id, club_id, assigned_by, status)
      VALUES ($1, $2, $3, $2, 'active')
-     ON CONFLICT (athlete_id, coach_id) DO NOTHING`,
+     ON CONFLICT (athlete_id, coach_id) DO UPDATE SET
+       status = 'active',
+       club_id = EXCLUDED.club_id,
+       assigned_by = EXCLUDED.assigned_by`,
     [athleteId, coachId, clubId]
   );
   return true;

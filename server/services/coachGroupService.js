@@ -5,6 +5,7 @@ import {
   assertCoachInClub,
   httpError,
 } from '../utils/coachingAccess.js';
+import { cloneDateShift, shiftDate } from '../utils/programClone.js';
 
 export async function loadGroup(id) {
   return camel(await one('SELECT * FROM coach_groups WHERE id = $1', [id]));
@@ -139,52 +140,66 @@ export async function resolveTargets(user, { athleteId, groupId, athleteIds, clu
   return { group: null, clubId, athletes };
 }
 
-export async function cloneProgramForAthlete(program, athleteId, groupId = null) {
+export async function cloneProgramForAthlete(program, athleteId, groupId = null, options = {}) {
+  const { asTemplate = false, startDate = null, name = null } = options;
+  if (!asTemplate && !athleteId) throw httpError(400, 'Choose an athlete');
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const copy = await client.query(
-      `INSERT INTO training_programs (
-         coach_id, club_id, athlete_id, name, description, sport, start_date, end_date,
-         target_event_id, target_event_name, status
-       )
-       SELECT coach_id, club_id, $2, name, description, sport, start_date, end_date,
-              target_event_id, target_event_name, 'active'
-       FROM training_programs WHERE id = $1
-       RETURNING *`,
-      [program.id, athleteId]
-    );
-    const next = copy.rows[0];
     const phases = await client.query(
       'SELECT * FROM training_phases WHERE program_id = $1 ORDER BY sort_order, created_at',
       [program.id]
     );
+    const weeks = await client.query(
+      'SELECT * FROM training_weeks WHERE program_id = $1 ORDER BY week_number, created_at',
+      [program.id]
+    );
+    const workouts = await client.query(
+      'SELECT * FROM planned_workouts WHERE program_id = $1 ORDER BY scheduled_date, created_at',
+      [program.id]
+    );
+    const delta = asTemplate ? 0 : cloneDateShift(program, { workouts: workouts.rows, weeks: weeks.rows, phases: phases.rows }, startDate);
+    const nextStart = shiftDate(program.startDate || program.start_date, delta)
+      || (!asTemplate ? startDate : program.startDate || program.start_date || null);
+    const nextEnd = shiftDate(program.endDate || program.end_date, delta);
+    const copy = await client.query(
+      `INSERT INTO training_programs (
+         coach_id, club_id, athlete_id, name, description, sport, start_date, end_date,
+         target_event_id, target_event_name, status, is_template, source_program_id
+       )
+       SELECT coach_id, club_id, $2, $3, description, sport, $4, $5,
+              target_event_id, target_event_name, $6, $7, $1
+       FROM training_programs WHERE id = $1
+       RETURNING *`,
+      [
+        program.id,
+        asTemplate ? null : athleteId,
+        String(name || program.name).trim(),
+        nextStart,
+        nextEnd,
+        asTemplate ? 'draft' : 'active',
+        asTemplate,
+      ]
+    );
+    const next = copy.rows[0];
     const phaseMap = {};
     for (const phase of phases.rows) {
       const inserted = await client.query(
         `INSERT INTO training_phases (program_id, name, objective, sort_order, start_date, end_date)
          VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
-        [next.id, phase.name, phase.objective, phase.sort_order, phase.start_date, phase.end_date]
+        [next.id, phase.name, phase.objective, phase.sort_order, shiftDate(phase.start_date, delta), shiftDate(phase.end_date, delta)]
       );
       phaseMap[phase.id] = inserted.rows[0].id;
     }
-    const weeks = await client.query(
-      'SELECT * FROM training_weeks WHERE program_id = $1 ORDER BY week_number, created_at',
-      [program.id]
-    );
     const weekMap = {};
     for (const week of weeks.rows) {
       const inserted = await client.query(
         `INSERT INTO training_weeks (program_id, phase_id, week_number, start_date, notes)
          VALUES ($1,$2,$3,$4,$5) RETURNING id`,
-        [next.id, phaseMap[week.phase_id] || null, week.week_number, week.start_date, week.notes]
+        [next.id, phaseMap[week.phase_id] || null, week.week_number, shiftDate(week.start_date, delta), week.notes]
       );
       weekMap[week.id] = inserted.rows[0].id;
     }
-    const workouts = await client.query(
-      'SELECT * FROM planned_workouts WHERE program_id = $1 ORDER BY scheduled_date, created_at',
-      [program.id]
-    );
     for (const workout of workouts.rows) {
       await client.query(
         `INSERT INTO planned_workouts (
@@ -196,11 +211,11 @@ export async function cloneProgramForAthlete(program, athleteId, groupId = null)
           next.id,
           workout.phase_id ? phaseMap[workout.phase_id] || null : null,
           workout.week_id ? weekMap[workout.week_id] || null : null,
-          athleteId,
+          asTemplate ? null : athleteId,
           workout.coach_id,
           workout.club_id,
-          groupId,
-          workout.scheduled_date,
+          asTemplate ? null : groupId,
+          shiftDate(workout.scheduled_date, delta) || workout.scheduled_date,
           workout.name,
           workout.sport,
           workout.workout_type,

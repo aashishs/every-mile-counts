@@ -19,6 +19,25 @@ function defaultName(type, time) {
   return `${when} ${type}`;
 }
 
+function isFitFile(file) {
+  const name = String(file?.name || '').toLowerCase();
+  const type = String(file?.type || '').toLowerCase();
+  return name.endsWith('.fit') || type.includes('vnd.ant.fit');
+}
+
+function readAsBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const text = String(reader.result || '');
+      const comma = text.indexOf(',');
+      resolve(comma >= 0 ? text.slice(comma + 1) : text);
+    };
+    reader.onerror = () => reject(reader.error || new Error('Could not read that file'));
+    reader.readAsDataURL(file);
+  });
+}
+
 const emptyManual = () => ({
   type: 'Run',
   name: '',
@@ -77,15 +96,17 @@ export default function AddActivityModal({ onClose, onSaved }) {
     e.preventDefault();
     setError('');
     if (!file) {
-      setError('Choose a .gpx or .tcx file');
+      setError('Choose a .gpx, .tcx, or .fit file');
       return;
     }
     setSaving(true);
     try {
-      const content = await file.text();
+      const fit = isFitFile(file);
+      const content = fit ? await readAsBase64(file) : await file.text();
       const { data } = await api.post('/activities/import', {
         filename: file.name,
         content,
+        encoding: fit ? 'base64' : 'text',
         name: fileMeta.name.trim() || undefined,
         type: fileMeta.type || undefined,
         description: fileMeta.description.trim() || undefined,
@@ -182,14 +203,14 @@ export default function AddActivityModal({ onClose, onSaved }) {
         ) : (
           <form className="space-y-3" onSubmit={saveFile}>
             <p className="text-sm text-muted mb-0">
-              Upload a .gpx or .tcx file from Strava, Garmin, or your watch. FIT is not supported yet.
+              Upload a .gpx, .tcx, or .fit file from Strava, Garmin, or your watch.
             </p>
             <div>
               <label htmlFor="actFile">File</label>
               <input
                 id="actFile"
                 type="file"
-                accept=".gpx,.tcx,.fit,application/gpx+xml,application/xml,text/xml"
+                accept=".gpx,.tcx,.fit,application/gpx+xml,application/xml,text/xml,application/octet-stream,application/vnd.ant.fit"
                 onChange={(e) => setFile(e.target.files?.[0] || null)}
               />
               {file && <p className="text-xs text-muted mt-1 mb-0">{file.name}</p>}

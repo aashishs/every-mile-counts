@@ -14,6 +14,7 @@ function notificationPath(n) {
   if (n.type === 'goal') return '/dashboard';
   if (n.type === 'sync') return '/activities';
   if (n.type === 'membership') return '/membership';
+  if (n.type === 'event' && data.clubId) return `/clubs/${data.clubId}`;
   if (n.type === 'event') return '/events';
   if (n.type === 'training' && data.url) return data.url;
   if (n.type === 'training' && data.workoutId) return `/training/workouts/${data.workoutId}`;

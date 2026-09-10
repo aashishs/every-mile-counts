@@ -35,13 +35,23 @@ export function rejectAppAdmin(req, res, next) {
 }
 
 export function requireRole(...roles) {
-  return (req, res, next) => {
+  return async (req, res, next) => {
     const have = req.user.roles || [];
     const expanded = roles.flatMap((role) => {
       if (role === 'app_admin' || role === 'super_admin') return ['app_admin', 'super_admin'];
       return [role];
     });
-    const has = expanded.some((role) => have.includes(role));
+    let has = expanded.some((role) => have.includes(role));
+    if (!has && expanded.includes('coach')) {
+      const head = await one(
+        `SELECT 1 FROM clubs WHERE head_coach_user_id = $1 LIMIT 1`,
+        [req.user.id]
+      );
+      if (head) {
+        if (!have.includes('coach')) req.user.roles = [...have, 'coach'];
+        has = true;
+      }
+    }
     if (!has) {
       return res.status(403).json({ message: `Requires one of: ${roles.join(', ')}` });
     }

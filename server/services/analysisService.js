@@ -1,8 +1,10 @@
 import { camel, camelMany, many, one } from '../config/db.js';
 import { formatDistance, formatDuration, paceFromSpeed, formatEffort, effortKind, activityMetric, startOfMonth, startOfWeek, startOfYear } from '../utils/format.js';
+import { stepsPerMinute } from '../utils/cadence.js';
 import { athleteHrContext } from '../utils/maf.js';
 import { parseStoredSyncTypes } from '../utils/activityTypes.js';
 import { STRAVA_COACH_SHARE_SQL, getCoachShareState } from '../utils/stravaShare.js';
+import { activityOrigin, withActivityOrigin } from '../utils/activityOrigin.js';
 
 function num(v) {
   return v == null ? 0 : Number(v);
@@ -124,7 +126,7 @@ export function analyzeActivity(activity, athlete = {}) {
   const activityMaxHr = num(activity.maxHeartrate ?? activity.max_heartrate);
   const profile = athleteHrContext(athlete);
   const maxHr = activityMaxHr || profile.maxHeartRate;
-  const cadence = num(activity.avgCadence ?? activity.avg_cadence);
+  const cadence = stepsPerMinute(activity.avgCadence ?? activity.avg_cadence, activity);
   const avgSpeed = num(activity.avgSpeed ?? activity.avg_speed);
   const splits = activity.splits || [];
   const kind = effortKind(activity.type, activity.sportType);
@@ -784,7 +786,8 @@ export async function periodAnalysis(athleteId, period = '90', { type, syncTypes
 }
 
 const GLANCE_COLS = `a.id, a.name, a.type, a.sport_type, a.start_date, a.distance, a.moving_time, a.elapsed_time,
-  a.avg_speed, a.avg_heartrate, a.elevation_gain, a.source, a.source_activity_id`;
+  a.avg_speed, a.avg_heartrate, a.elevation_gain, a.source, a.source_activity_id,
+  a.raw->>'format' AS import_format, a.raw->>'source' AS import_source`;
 
 function packVolume(list) {
   const distance = list.reduce((a, b) => a + num(b.distance), 0);
@@ -909,8 +912,8 @@ export async function coachAthleteGlance(athleteId, coachId) {
     },
     consistency: Math.round((daysWithActivity / 30) * 100),
     byType,
-    lastActivity,
-    needsReview,
+    lastActivity: lastActivity ? withActivityOrigin(lastActivity) : lastActivity,
+    needsReview: needsReview.map(withActivityOrigin),
     stravaConnected: share.connected,
     stravaSharedWithCoach: share.consented,
   };
@@ -941,11 +944,14 @@ function snapshot(activity, athlete = {}) {
   const insights = analyzeActivity(activity, athlete);
   const metric = volumeMetric(sportFamily(activity));
   const paceSec = paceSecondsPerKm(activity);
+  const avgCadence = stepsPerMinute(activity.avgCadence, activity);
   return {
     id: activity.id,
+    athleteId: activity.athleteId,
     name: activity.name,
     type: activity.type,
     sport: sportFamily(activity),
+    origin: activityOrigin(activity),
     metric,
     startDate: activity.startDate,
     distance: num(activity.distance),
@@ -953,12 +959,13 @@ function snapshot(activity, athlete = {}) {
     elevationGain: num(activity.elevationGain),
     avgHeartrate: num(activity.avgHeartrate) || null,
     maxHeartrate: num(activity.maxHeartrate) || null,
-    avgCadence: num(activity.avgCadence) || null,
+    avgCadence,
     avgPower: num(activity.avgPower) || null,
     avgSpeed: num(activity.avgSpeed) || null,
     calories: num(activity.calories) || null,
     paceSecPerKm: paceSec,
     pace: formatEffort(activity) || insights.pace,
+    splits: Array.isArray(activity.splits) ? activity.splits : [],
     trainingLoad: insights.trainingLoad,
     heartRateZone: insights.heartRateZone,
     paceConsistency: insights.paceConsistency,
@@ -975,7 +982,7 @@ function snapshot(activity, athlete = {}) {
         : null,
       hr: formatHr(activity.avgHeartrate),
       maxHr: formatHr(activity.maxHeartrate),
-      cadence: activity.avgCadence ? `${Math.round(activity.avgCadence)} ${effortKind(activity.type, activity.sportType) === 'speed' ? 'rpm' : 'spm'}` : '—',
+      cadence: avgCadence ? `${Math.round(avgCadence)} ${effortKind(activity.type, activity.sportType) === 'speed' ? 'rpm' : 'spm'}` : '—',
       load: insights.trainingLoad != null ? String(Math.round(insights.trainingLoad)) : '—',
     },
   };
@@ -986,6 +993,69 @@ function compareRow(key, label, olderDisplay, newerDisplay, { improved, deltaLab
 }
 
 export function compareActivities(activityA, activityB, athlete = {}) {
+  return compareActivitySet([activityA, activityB], athlete);
+}
+
+export function compareActivitySet(activities, athlete = {}) {
+  const list = (activities || []).filter(Boolean);
+  if (list.length < 2 || list.length > 3) {
+    const err = new Error('Compare 2 or 3 sessions.');
+    err.status = 400;
+    throw err;
+  }
+  const sports = list.map((act) => sportFamily(act));
+  if (sports.some((sport) => sport !== sports[0])) {
+    const err = new Error(`Pick ${sports[0]} sessions only. Mixed types cannot be compared.`);
+    err.status = 400;
+    throw err;
+  }
+
+  const ordered = [...list].sort((a, b) => new Date(a.startDate) - new Date(b.startDate));
+  const sessions = ordered.map((act) => snapshot(act, athlete));
+  const metric = sessions[0].metric;
+  const sport = sports[0];
+  const kind = effortKind(ordered[0].type, ordered[0].sportType);
+
+  const values = (pick) => sessions.map(pick);
+  const rows = [];
+
+  if (metric !== 'duration') {
+    rows.push({ key: 'distance', label: 'Distance', values: values((s) => s.formatted.distance) });
+  }
+  rows.push({ key: 'time', label: 'Time', values: values((s) => s.formatted.time) });
+  if (kind === 'speed') {
+    rows.push({ key: 'pace', label: 'Speed', values: values((s) => s.formatted.pace || '—') });
+  } else if (kind !== 'duration') {
+    rows.push({ key: 'pace', label: 'Pace', values: values((s) => s.formatted.pace || '—') });
+  }
+  rows.push({ key: 'hr', label: 'Avg HR', values: values((s) => s.formatted.hr) });
+  rows.push({ key: 'maxHr', label: 'Max HR', values: values((s) => s.formatted.maxHr) });
+  if (metric !== 'duration') {
+    rows.push({ key: 'elevation', label: 'Climb', values: values((s) => s.formatted.elevation || '—') });
+  }
+  if (sessions.some((s) => s.avgCadence)) {
+    rows.push({ key: 'cadence', label: 'Cadence', values: values((s) => s.formatted.cadence) });
+  }
+
+  const pair = sessions.length === 2 ? compareActivitiesPair(ordered[0], ordered[1], athlete) : null;
+  const headline = sessions.length === 3
+    ? `${sessions.length} ${sport.toLowerCase()}s, oldest to newest.`
+    : pair?.headline || `Comparing two ${sport.toLowerCase()} sessions.`;
+
+  return {
+    sport,
+    metric,
+    headline,
+    verdict: pair?.verdict || 'mixed',
+    comparable: pair?.comparable ?? true,
+    sessions,
+    rows,
+    older: sessions[0],
+    newer: sessions[sessions.length - 1],
+  };
+}
+
+function compareActivitiesPair(activityA, activityB, athlete = {}) {
   const sportA = sportFamily(activityA);
   const sportB = sportFamily(activityB);
   if (sportA !== sportB) {

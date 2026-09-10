@@ -4,7 +4,7 @@ import { camel, one, query } from '../config/db.js';
 import { protect, requireMembership } from '../middleware/auth.js';
 import { setHeadCoach } from '../utils/headCoach.js';
 import { publicUser, isAthleteUser, getAdminClub, getUserMembership, getUserRoles } from '../utils/membership.js';
-import { validateDateOfBirth, ageAndMafFromDob } from '../utils/maf.js';
+import { validateDateOfBirth, validateMafHeartRate, ageFromDob, mafOffsetFromValue, mafHeartRate } from '../utils/maf.js';
 import { slugify } from '../utils/format.js';
 import { writeAudit } from '../services/auditService.js';
 import { asyncHandler } from '../middleware/error.js';
@@ -36,6 +36,7 @@ router.patch(
       'restingHeartRate',
       'notificationPrefs',
       'defaultActivityType',
+      'weekStartsOn',
     ];
     const map = {
       firstName: 'first_name',
@@ -46,10 +47,18 @@ router.patch(
       restingHeartRate: 'resting_heart_rate',
       notificationPrefs: 'notification_prefs',
       defaultActivityType: 'default_activity_type',
+      weekStartsOn: 'week_starts_on',
     };
     const allowedTypes = ACTIVITY_TYPES;
     if (req.body.defaultActivityType !== undefined && !allowedTypes.includes(req.body.defaultActivityType)) {
       return res.status(400).json({ message: 'Choose a valid default activity type' });
+    }
+    if (req.body.weekStartsOn !== undefined) {
+      const n = Number(req.body.weekStartsOn);
+      if (!Number.isInteger(n) || n < 0 || n > 6) {
+        return res.status(400).json({ message: 'Choose which day your week starts on' });
+      }
+      req.body.weekStartsOn = n;
     }
     if (req.body.defaultActivityType !== undefined) {
       const selected = parseStoredSyncTypes(req.user.syncActivityTypes);
@@ -122,16 +131,32 @@ router.patch(
               ? null
               : ['firstName', 'lastName'].includes(key)
                 ? String(req.body[key]).trim()
-                : req.body[key]
+                : key === 'weekStartsOn'
+                  ? Number(req.body[key])
+                  : req.body[key]
         );
       }
     }
-    if (req.body.dateOfBirth !== undefined) {
-      const { age, mafHeartRate } = ageAndMafFromDob(req.body.dateOfBirth || null);
-      sets.push(`age = $${i++}`);
-      vals.push(age);
-      sets.push(`maf_heart_rate = $${i++}`);
-      vals.push(mafHeartRate);
+    if (req.body.dateOfBirth !== undefined || req.body.mafHeartRate !== undefined) {
+      const dob = req.body.dateOfBirth !== undefined ? req.body.dateOfBirth || null : req.user.dateOfBirth;
+      const age = ageFromDob(dob);
+      if (req.body.dateOfBirth !== undefined) {
+        sets.push(`age = $${i++}`);
+        vals.push(age);
+      }
+      if (isAthleteUser(req.user) || req.body.mafHeartRate !== undefined) {
+        let offset = Number(req.user.mafOffset ?? req.user.maf_offset) || 0;
+        if (req.body.mafHeartRate !== undefined && req.body.mafHeartRate !== '' && req.body.mafHeartRate != null) {
+          const mafErr = validateMafHeartRate(age, Number(req.body.mafHeartRate));
+          if (mafErr) return res.status(400).json({ message: mafErr });
+          offset = mafOffsetFromValue(age, req.body.mafHeartRate);
+        }
+        const nextMaf = mafHeartRate(age, offset);
+        sets.push(`maf_heart_rate = $${i++}`);
+        vals.push(nextMaf);
+        sets.push(`maf_offset = $${i++}`);
+        vals.push(offset);
+      }
     }
     if (!sets.length) {
       return res.json({ user: await publicUser(req.user, { roles: req.user.roles }) });

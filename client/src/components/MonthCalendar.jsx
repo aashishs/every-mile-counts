@@ -21,6 +21,7 @@ export default function MonthCalendar({
   events = [],
   monthDate,
   onMonthChange,
+  mutedDays = [],
 }) {
   const cursor = monthDate ? new Date(monthDate) : value ? new Date(`${value}T00:00:00`) : new Date();
   const year = cursor.getFullYear();
@@ -62,6 +63,7 @@ export default function MonthCalendar({
           const selected = value === key;
           const isToday = key === today;
           const marks = byDay[key] || [];
+          const muted = mutedDays.includes(key);
           return (
             <button
               key={key}
@@ -70,9 +72,11 @@ export default function MonthCalendar({
               className={`min-h-[3.25rem] rounded-xl p-1 text-sm transition ${
                 selected
                   ? 'bg-brand text-white'
-                  : inMonth
-                    ? 'bg-ink hover:bg-hover'
-                    : 'bg-transparent text-muted/40'
+                  : muted && inMonth
+                    ? 'bg-ink/50 text-muted'
+                    : inMonth
+                      ? 'bg-ink hover:bg-hover'
+                      : 'bg-transparent text-muted/40'
               } ${isToday && !selected ? 'ring-1 ring-accent' : ''}`}
             >
               <div className="font-semibold">{day.getDate()}</div>
@@ -81,7 +85,7 @@ export default function MonthCalendar({
                   {marks.slice(0, 3).map((ev) => (
                     <span
                       key={ev.id}
-                      className={`w-1.5 h-1.5 rounded-full ${selected ? 'bg-white' : ev.dotClass || 'bg-accent'}`}
+                      className={`w-1.5 h-1.5 rounded-full ${selected ? 'bg-white' : muted ? 'bg-slate-500' : ev.dotClass || 'bg-accent'}`}
                     />
                   ))}
                 </div>

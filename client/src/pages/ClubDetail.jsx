@@ -4,8 +4,9 @@ import api from '../api/client';
 import Layout from '../components/Layout';
 import { useAuth } from '../context/AuthContext';
 import { isAthleteAccount } from '../utils/roles';
-import { formatActivityPrimary, formatDate, formatDateShort, getActivityIcon } from '../utils/format';
+import { formatActivityPrimary, formatDate, formatDateShort, formatDateTime, getActivityIcon } from '../utils/format';
 import ClubInviteCodes from '../components/ClubInviteCodes';
+import GroupSessions from '../components/GroupSessions';
 
 const PAGE_SIZES = [10, 20, 50, 100];
 
@@ -188,12 +189,16 @@ export default function ClubDetail() {
 
   const coaches = useMemo(
     () => members
-      .filter((m) => m.status === 'active' && m.role === 'coach')
+      .filter((m) => m.status === 'active' && (
+        m.role === 'coach'
+        || (m.role === 'club_admin' && club?.headCoachUserId === m.userId)
+      ))
       .map((c) => ({
         ...c,
         assignedCount: assignments.filter((a) => a.coachId === c.userId).length,
+        isHeadCoach: club?.headCoachUserId === c.userId,
       })),
-    [members, assignments]
+    [members, assignments, club?.headCoachUserId]
   );
   const athletes = useMemo(
     () => members.filter((m) => m.role === 'member' && m.status === 'active'),
@@ -501,6 +506,17 @@ export default function ClubDetail() {
         </div>
       )}
 
+      {isMember && (
+        <GroupSessions
+          clubId={id}
+          clubName={club.name}
+          canPost={
+            myMembership?.status === 'active' &&
+            (myMembership.role === 'club_admin' || myMembership.role === 'coach')
+          }
+        />
+      )}
+
       {isAdmin && (
         <div className="chip-row">
           {tabs.map((t) => (
@@ -573,12 +589,19 @@ export default function ClubDetail() {
               <div className="space-y-2 md:hidden mb-3">
                 {coachTable.rows.map((c) => (
                   <div key={c.id} className="card">
-                    <div className="font-semibold">{c.firstName} {c.lastName}</div>
+                    <div className="font-semibold">
+                      {c.firstName} {c.lastName}
+                      {c.isHeadCoach ? <span className="text-xs font-normal text-muted"> · Head coach</span> : null}
+                    </div>
                     <div className="text-xs text-muted truncate mt-0.5">{c.email}</div>
                     <div className="text-xs text-muted mt-2">{c.assignedCount} assigned athlete{c.assignedCount === 1 ? '' : 's'}</div>
-                    <button className="btn-outline btn-sm mt-3" type="button" onClick={() => removeCoach(c.userId)}>
-                      Remove
-                    </button>
+                    {c.isHeadCoach ? (
+                      <p className="text-xs text-muted mb-0 mt-3">Change this on Profile.</p>
+                    ) : (
+                      <button className="btn-outline btn-sm mt-3" type="button" onClick={() => removeCoach(c.userId)}>
+                        Remove
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>
@@ -601,13 +624,18 @@ export default function ClubDetail() {
                       <tr key={c.id} className="border-t border-line">
                         <td className="p-3 font-semibold text-slate-100 whitespace-nowrap">
                           {c.firstName} {c.lastName}
+                          {c.isHeadCoach ? <span className="text-xs font-normal text-muted"> · Head coach</span> : null}
                         </td>
                         <td className="p-3 text-muted">{c.email}</td>
                         <td className="p-3 whitespace-nowrap">{c.assignedCount}</td>
                         <td className="p-3 whitespace-nowrap text-right">
-                          <button className="btn-outline btn-sm" type="button" onClick={() => removeCoach(c.userId)}>
-                            Remove
-                          </button>
+                          {c.isHeadCoach ? (
+                            <span className="text-xs text-muted">Change on Profile</span>
+                          ) : (
+                            <button className="btn-outline btn-sm" type="button" onClick={() => removeCoach(c.userId)}>
+                              Remove
+                            </button>
+                          )}
                         </td>
                       </tr>
                     ))}
@@ -633,7 +661,10 @@ export default function ClubDetail() {
           <div className="space-y-2">
             {coaches.map((c) => (
               <div key={c.id} className="card">
-                <div className="font-semibold">{c.firstName} {c.lastName}</div>
+                <div className="font-semibold">
+                  {c.firstName} {c.lastName}
+                  {c.isHeadCoach ? <span className="text-xs font-normal text-muted"> · Head coach</span> : null}
+                </div>
                 <div className="text-xs text-muted">{c.email}</div>
               </div>
             ))}
@@ -689,7 +720,7 @@ export default function ClubDetail() {
                       <div className="text-xs text-muted truncate mt-0.5">{a.email}</div>
                       <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted mt-2">
                         <span>{a.activityCount ?? 0} activities</span>
-                        <span>Last {a.lastActivityAt ? formatDateShort(a.lastActivityAt) : '—'}</span>
+                        <span>Last {a.lastActivityAt ? formatDateTime(a.lastActivityAt) : '—'}</span>
                       </div>
                       <div className="flex flex-wrap gap-2 mt-3">
                         {assigned.map((x) => (
@@ -708,7 +739,9 @@ export default function ClubDetail() {
                         >
                           <option value="">{coaches.length ? 'Assign a coach…' : 'Add a coach first'}</option>
                           {available.map((c) => (
-                            <option key={c.userId} value={c.userId}>{c.firstName} {c.lastName}</option>
+                            <option key={c.userId} value={c.userId}>
+                              {c.firstName} {c.lastName}{c.isHeadCoach ? ' · Head coach' : ''}
+                            </option>
                           ))}
                         </select>
                         <button className="btn-primary btn-sm" type="button" onClick={() => assign(a.userId)} disabled={!assignPick[a.userId]}>
@@ -741,7 +774,7 @@ export default function ClubDetail() {
                                   <span className="truncate">{act.name}</span>
                                 </span>
                                 <span className="text-xs text-muted shrink-0">
-                                  {formatActivityPrimary(act)} · {formatDate(act.startDate)}
+                                  {formatActivityPrimary(act)} · {formatDateTime(act.startDate)}
                                 </span>
                               </Link>
                             ))
@@ -797,7 +830,7 @@ export default function ClubDetail() {
                                         <span className="truncate">{act.name}</span>
                                       </span>
                                       <span className="text-xs text-muted shrink-0">
-                                        {formatActivityPrimary(act)} · {formatDate(act.startDate)}
+                                        {formatActivityPrimary(act)} · {formatDateTime(act.startDate)}
                                       </span>
                                     </Link>
                                   ))
@@ -808,7 +841,7 @@ export default function ClubDetail() {
                           <td className="p-3 text-muted">{a.email}</td>
                           <td className="p-3 whitespace-nowrap">{a.activityCount ?? 0}</td>
                           <td className="p-3 whitespace-nowrap text-muted">
-                            {a.lastActivityAt ? formatDate(a.lastActivityAt) : '—'}
+                            {a.lastActivityAt ? formatDateTime(a.lastActivityAt) : '—'}
                           </td>
                           <td className="p-3">
                             <div className="flex flex-wrap gap-1 mb-2">
@@ -828,7 +861,9 @@ export default function ClubDetail() {
                               >
                                 <option value="">{coaches.length ? 'Assign…' : 'Add a coach first'}</option>
                                 {available.map((c) => (
-                                  <option key={c.userId} value={c.userId}>{c.firstName} {c.lastName}</option>
+                                  <option key={c.userId} value={c.userId}>
+                                    {c.firstName} {c.lastName}{c.isHeadCoach ? ' · Head coach' : ''}
+                                  </option>
                                 ))}
                               </select>
                               <button className="btn-primary btn-sm" type="button" onClick={() => assign(a.userId)} disabled={!assignPick[a.userId]}>

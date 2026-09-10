@@ -6,8 +6,30 @@ export async function ensureSchemaPatches() {
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS sync_activity_types_confirmed_at TIMESTAMPTZ`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMPTZ`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS age INTEGER`);
-  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS maf_heart_rate INTEGER`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS maf_offset SMALLINT NOT NULL DEFAULT 0`);
+  await pool.query(`
+    UPDATE users
+    SET maf_offset = GREATEST(0, LEAST(5, COALESCE(maf_heart_rate, 0) - (180 - age)))
+    WHERE age IS NOT NULL AND age > 0 AND maf_heart_rate IS NOT NULL
+  `);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS week_starts_on SMALLINT NOT NULL DEFAULT 1`);
   await pool.query(`ALTER TABLE events ADD COLUMN IF NOT EXISTS event_time TIME`);
+  await pool.query(`ALTER TABLE goals ADD COLUMN IF NOT EXISTS target_time INTEGER`);
+  await pool.query(`ALTER TABLE goals ADD COLUMN IF NOT EXISTS activity_type TEXT NOT NULL DEFAULT 'Run'`);
+  await pool.query(`ALTER TABLE goals ADD COLUMN IF NOT EXISTS matched_activity_id UUID REFERENCES activities(id) ON DELETE SET NULL`);
+  await pool.query(`ALTER TABLE goals ADD COLUMN IF NOT EXISTS coach_visible BOOLEAN NOT NULL DEFAULT FALSE`);
+  const goalTypeCheck = await pool.query(
+    `SELECT pg_get_constraintdef(oid) AS def
+     FROM pg_constraint
+     WHERE conrelid = 'goals'::regclass AND conname = 'goals_type_check'`
+  );
+  if (!/weekly_mileage/.test(goalTypeCheck.rows[0]?.def || '')) {
+    await pool.query(`ALTER TABLE goals DROP CONSTRAINT IF EXISTS goals_type_check`);
+    await pool.query(`
+      ALTER TABLE goals ADD CONSTRAINT goals_type_check
+      CHECK (type IN ('race', 'distance', 'weekly_mileage', 'time', 'challenge', 'other'))
+    `);
+  }
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS password_reset_tokens (
@@ -148,11 +170,47 @@ export async function ensureSchemaPatches() {
       )
   `);
 
+  await pool.query(`
+    INSERT INTO user_roles (user_id, role)
+    SELECT DISTINCT c.head_coach_user_id, 'coach'
+    FROM clubs c
+    WHERE c.head_coach_user_id IS NOT NULL
+    ON CONFLICT DO NOTHING
+  `);
+
+  await pool.query(`
+    INSERT INTO coach_assignments (athlete_id, coach_id, club_id, assigned_by, status)
+    SELECT cm.user_id, c.head_coach_user_id, c.id, c.head_coach_user_id, 'active'
+    FROM clubs c
+    JOIN club_members cm ON cm.club_id = c.id AND cm.status = 'active' AND cm.role = 'member'
+    WHERE c.head_coach_user_id IS NOT NULL
+      AND cm.user_id <> c.head_coach_user_id
+      AND NOT EXISTS (
+        SELECT 1 FROM coach_assignments ca
+        WHERE ca.athlete_id = cm.user_id AND ca.coach_id = c.head_coach_user_id
+      )
+      AND (
+        SELECT COUNT(*) FROM coach_assignments ca
+        WHERE ca.athlete_id = cm.user_id AND ca.status = 'active'
+      ) < 3
+    ON CONFLICT (athlete_id, coach_id) DO NOTHING
+  `);
+
   await pool.query(`ALTER TABLE review_requests DROP CONSTRAINT IF EXISTS review_requests_status_check`);
-  await pool.query(
-    `ALTER TABLE review_requests ADD CONSTRAINT review_requests_status_check
-     CHECK (status IN ('pending', 'completed', 'cancelled'))`
-  );
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'review_requests_status_check'
+          AND conrelid = 'review_requests'::regclass
+      ) THEN
+        ALTER TABLE review_requests
+          ADD CONSTRAINT review_requests_status_check
+          CHECK (status IN ('pending', 'completed', 'cancelled'));
+      END IF;
+    END $$;
+  `);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS coach_assignment_requests (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -269,6 +327,9 @@ async function ensureTrainingPlanSchema() {
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_training_programs_coach ON training_programs (coach_id, status)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_training_programs_athlete ON training_programs (athlete_id, status)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_training_programs_club ON training_programs (club_id)`);
+  await pool.query(`ALTER TABLE training_programs ADD COLUMN IF NOT EXISTS is_template BOOLEAN NOT NULL DEFAULT FALSE`);
+  await pool.query(`ALTER TABLE training_programs ADD COLUMN IF NOT EXISTS source_program_id UUID REFERENCES training_programs(id) ON DELETE SET NULL`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_training_programs_templates ON training_programs (coach_id) WHERE is_template = TRUE`);
   await pool.query(`DROP INDEX IF EXISTS idx_training_programs_one_live`);
   await pool.query(`ALTER TABLE training_programs DROP CONSTRAINT IF EXISTS training_programs_status_check`);
   await pool.query(`
@@ -413,5 +474,79 @@ async function ensureTrainingPlanSchema() {
       AND ca.athlete_id = rr.athlete_id
       AND ca.coach_id = rr.coach_id
       AND ca.club_id IS NOT NULL
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS training_day_notes (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      athlete_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      coach_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      club_id UUID REFERENCES clubs(id) ON DELETE SET NULL,
+      note_date DATE NOT NULL,
+      body TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (athlete_id, coach_id, note_date)
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_training_day_notes_athlete_date ON training_day_notes (athlete_id, note_date)`);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS training_day_unavailability (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      athlete_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      unavailable_date DATE NOT NULL,
+      reason TEXT NOT NULL DEFAULT 'rest'
+        CHECK (reason IN ('injury', 'travel', 'rest', 'other')),
+      note TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (athlete_id, unavailable_date)
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_training_day_unavailability_athlete ON training_day_unavailability (athlete_id, unavailable_date)`);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS group_sessions (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      club_id UUID NOT NULL REFERENCES clubs(id) ON DELETE CASCADE,
+      created_by UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      session_date DATE NOT NULL,
+      session_time TIME NOT NULL,
+      sport TEXT NOT NULL DEFAULT 'run'
+        CHECK (sport IN ('run', 'ride', 'swim', 'walk', 'other')),
+      meetup_point TEXT NOT NULL,
+      notes TEXT,
+      status TEXT NOT NULL DEFAULT 'upcoming' CHECK (status IN ('upcoming', 'cancelled')),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_group_sessions_club_date ON group_sessions (club_id, session_date, session_time)`);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS group_session_rsvps (
+      session_id UUID NOT NULL REFERENCES group_sessions(id) ON DELETE CASCADE,
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      status TEXT NOT NULL CHECK (status IN ('going', 'maybe', 'not_going')),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (session_id, user_id)
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_group_session_rsvps_user ON group_session_rsvps (user_id)`);
+
+  // Strava/FIT store run cadence as one foot; UI and analysis use total steps/min.
+  await pool.query(`
+    UPDATE activities
+    SET avg_cadence = avg_cadence * 2
+    WHERE avg_cadence IS NOT NULL
+      AND avg_cadence > 0
+      AND avg_cadence < 130
+      AND COALESCE(source, '') <> 'garmin'
+      AND (
+        type ~* '(run|walk|hike|trail)'
+        OR COALESCE(sport_type, '') ~* '(run|walk|hike|trail)'
+      )
   `);
 }

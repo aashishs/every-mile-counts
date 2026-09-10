@@ -56,6 +56,100 @@ function asDate(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
 }
 
+async function listCoachTemplates(coachId, clubId) {
+  const params = [coachId];
+  let sql = `SELECT p.*, c.name AS club_name,
+                    (SELECT COUNT(*)::int FROM planned_workouts w WHERE w.program_id = p.id) AS workout_count,
+                    (SELECT COUNT(*)::int FROM training_weeks tw WHERE tw.program_id = p.id) AS week_count
+             FROM training_programs p
+             JOIN clubs c ON c.id = p.club_id
+             WHERE p.coach_id = $1 AND p.is_template = TRUE`;
+  if (clubId) {
+    params.push(clubId);
+    sql += ` AND p.club_id = $${params.length}`;
+  }
+  sql += ` ORDER BY p.name`;
+  return camelMany(await many(sql, params));
+}
+
+async function deployProgramCopies(req, program, body) {
+  const startDate = asDate(body.startDate);
+  if (!startDate) throw httpError(400, 'Choose a start date');
+  const targets = await resolveTargets(req.user, {
+    athleteId: body.athleteId,
+    groupId: body.groupId,
+    athleteIds: body.athleteIds,
+    clubId: program.clubId,
+  });
+  const copies = [];
+  for (const athlete of targets.athletes) {
+    const copy = await cloneProgramForAthlete(program, athlete.athleteId, targets.group?.id || null, { startDate });
+    await createNotification({
+      userId: athlete.athleteId,
+      type: 'training',
+      title: 'New training plan',
+      body: `${req.user.firstName} assigned ${copy.name}${targets.group ? ` to ${targets.group.name}` : ' to you'}.`,
+      data: { programId: copy.id, url: `/training/programs/${copy.id}` },
+    });
+    copies.push(copy);
+  }
+  return { copies, group: targets.group };
+}
+
+async function loadDayNotes(athleteId, from, to) {
+  return camelMany(
+    await many(
+      `SELECT n.id, n.athlete_id, n.coach_id, n.club_id, n.note_date, n.body, n.updated_at,
+              u.first_name AS coach_first_name, u.last_name AS coach_last_name
+       FROM training_day_notes n
+       JOIN users u ON u.id = n.coach_id
+       WHERE n.athlete_id = $1 AND n.note_date BETWEEN $2 AND $3
+       ORDER BY n.updated_at DESC`,
+      [athleteId, from, to]
+    )
+  );
+}
+
+async function loadUnavailable(athleteId, from, to) {
+  return camelMany(
+    await many(
+      `SELECT id, athlete_id, unavailable_date, reason, note, updated_at
+       FROM training_day_unavailability
+       WHERE athlete_id = $1 AND unavailable_date BETWEEN $2 AND $3
+       ORDER BY unavailable_date`,
+      [athleteId, from, to]
+    )
+  );
+}
+
+const UNAVAILABLE_REASONS = ['injury', 'travel', 'rest', 'other'];
+
+async function skipWorkoutsForUnavailable(athleteId, date) {
+  await query(
+    `UPDATE planned_workouts
+     SET completion_status = 'skipped', updated_at = NOW()
+     WHERE athlete_id = $1 AND scheduled_date = $2
+       AND completion_status IN ('planned', 'pending_match', 'missed')
+       AND LOWER(workout_type) <> 'rest'`,
+    [athleteId, date]
+  );
+}
+
+async function restoreWorkoutsAfterUnavailable(athleteId, date) {
+  await query(
+    `UPDATE planned_workouts w
+     SET completion_status = 'planned', updated_at = NOW()
+     WHERE w.athlete_id = $1 AND w.scheduled_date = $2
+       AND w.completion_status = 'skipped'
+       AND LOWER(w.workout_type) <> 'rest'
+       AND NOT EXISTS (
+         SELECT 1 FROM workout_activity_matches m
+         WHERE m.planned_workout_id = w.id AND m.status IN ('auto', 'confirmed')
+       )`,
+    [athleteId, date]
+  );
+}
+
 function mondayOf(ymd) {
   const [y, m, d] = String(ymd).split('-').map(Number);
   if (!y || !m || !d) return ymd;
@@ -166,6 +260,14 @@ router.get(
   requireRole('coach'),
   asyncHandler(async (req, res) => {
     res.json({ groups: await listCoachGroups(req.user.id) });
+  })
+);
+
+router.get(
+  '/templates',
+  requireRole('coach'),
+  asyncHandler(async (req, res) => {
+    res.json({ templates: await listCoachTemplates(req.user.id, req.query.clubId || null) });
   })
 );
 
@@ -306,6 +408,7 @@ router.get(
          JOIN clubs c ON c.id = p.club_id
          LEFT JOIN users u ON u.id = p.athlete_id
          WHERE p.coach_id = $1
+           AND COALESCE(p.is_template, FALSE) = FALSE
          ORDER BY CASE p.status
            WHEN 'active' THEN 0 WHEN 'paused' THEN 1 WHEN 'halted' THEN 2 WHEN 'draft' THEN 3
            WHEN 'completed' THEN 4 ELSE 5 END, p.updated_at DESC`,
@@ -373,6 +476,7 @@ router.get(
     }));
 
     const groups = await listCoachGroups(req.user.id);
+    const templates = await listCoachTemplates(req.user.id);
     const summaries = athletes.map((row) => {
       const athletePrograms = programsWithPrep.filter((p) => p.athleteId === row.athleteId);
       const singles = toPrepare.filter((w) => w.athleteId === row.athleteId && !w.programId);
@@ -391,6 +495,7 @@ router.get(
       counts,
       programs: programsWithPrep,
       groups,
+      templates,
       toPrepare,
       today,
       upcoming: toPrepare.filter((w) => asDate(w.scheduledDate) !== todayYmd()),
@@ -439,7 +544,7 @@ router.get(
       )
     );
     const reviews = await clubReviewsForAthlete(req.user.id, req.params.athleteId, assignment.clubId);
-    const athlete = camel(await one('SELECT id, first_name, last_name, email, avatar_url FROM users WHERE id = $1', [req.params.athleteId]));
+    const athlete = camel(await one('SELECT id, first_name, last_name, email, avatar_url, week_starts_on FROM users WHERE id = $1', [req.params.athleteId]));
     res.json({
       athlete,
       assignment,
@@ -459,7 +564,11 @@ router.get(
     const to = asDate(req.query.to) || from;
     const athleteId = req.query.athleteId || req.user.id;
     if (athleteId !== req.user.id) {
-      if (!(req.user.roles || []).includes('coach')) throw httpError(403, 'Access denied');
+      const roles = req.user.roles || [];
+      if (!roles.includes('coach')) {
+        const head = await one('SELECT 1 FROM clubs WHERE head_coach_user_id = $1 LIMIT 1', [req.user.id]);
+        if (!head) throw httpError(403, 'Access denied');
+      }
       const assignment = await assertAssignedCoach(req.user.id, athleteId);
       if (req.query.clubId && req.query.clubId !== assignment.clubId) {
         throw httpError(403, 'Access denied');
@@ -480,9 +589,20 @@ router.get(
     const workouts = camelMany(
       await many(
         `SELECT w.id, w.scheduled_date, w.name, w.sport, w.workout_type, w.completion_status,
-                w.distance, w.duration, COALESCE(p.name, 'Assigned activity') AS program_name
+                w.distance, w.duration, w.target_pace,
+                COALESCE(p.name, 'Assigned activity') AS program_name,
+                a.id AS activity_id, a.name AS activity_name,
+                a.distance AS actual_distance, a.moving_time AS actual_duration
          FROM planned_workouts w
          LEFT JOIN training_programs p ON p.id = w.program_id
+         LEFT JOIN LATERAL (
+           SELECT m.activity_id
+           FROM workout_activity_matches m
+           WHERE m.planned_workout_id = w.id AND m.status IN ('auto', 'confirmed')
+           ORDER BY m.matched_at DESC
+           LIMIT 1
+         ) match ON TRUE
+         LEFT JOIN activities a ON a.id = match.activity_id
          WHERE w.athlete_id = $1
            AND w.scheduled_date BETWEEN $2 AND $3
            AND (w.program_id IS NULL OR p.status IN ('active', 'paused', 'completed'))
@@ -491,7 +611,106 @@ router.get(
         params
       )
     );
-    res.json({ workouts });
+    const dayNotes = await loadDayNotes(athleteId, from, to);
+    const unavailable = await loadUnavailable(athleteId, from, to);
+    res.json({ workouts, dayNotes, unavailable });
+  })
+);
+
+router.put(
+  '/availability',
+  asyncHandler(async (req, res) => {
+    const noteDate = asDate(req.body.date);
+    if (!noteDate) throw httpError(400, 'Pick a day');
+    const athleteId = req.user.id;
+    const clear = req.body.unavailable === false || req.body.unavailable === 'false';
+    if (clear) {
+      await query(
+        `DELETE FROM training_day_unavailability WHERE athlete_id = $1 AND unavailable_date = $2`,
+        [athleteId, noteDate]
+      );
+      await restoreWorkoutsAfterUnavailable(athleteId, noteDate);
+      return res.json({ unavailable: null });
+    }
+    const reason = UNAVAILABLE_REASONS.includes(req.body.reason) ? req.body.reason : 'rest';
+    const note = String(req.body.note || '').trim().slice(0, 280) || null;
+    const existing = camel(
+      await one(
+        `SELECT id FROM training_day_unavailability WHERE athlete_id = $1 AND unavailable_date = $2`,
+        [athleteId, noteDate]
+      )
+    );
+    const row = camel(
+      await one(
+        `INSERT INTO training_day_unavailability (athlete_id, unavailable_date, reason, note)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (athlete_id, unavailable_date) DO UPDATE SET
+           reason = EXCLUDED.reason,
+           note = EXCLUDED.note,
+           updated_at = NOW()
+         RETURNING *`,
+        [athleteId, noteDate, reason, note]
+      )
+    );
+    await skipWorkoutsForUnavailable(athleteId, noteDate);
+    if (!existing) {
+      const coaches = camelMany(
+        await many(
+          `SELECT coach_id FROM coach_assignments WHERE athlete_id = $1 AND status = 'active'`,
+          [athleteId]
+        )
+      );
+      const reasonLabel = reason === 'injury' ? 'injury' : reason === 'travel' ? 'travel' : reason === 'other' ? 'other' : 'rest';
+      const body = `${req.user.firstName} can’t train on ${noteDate} (${reasonLabel}${note ? ` · ${note}` : ''}).`;
+      for (const coach of coaches) {
+        await createNotification({
+          userId: coach.coachId,
+          type: 'training',
+          title: 'Athlete can’t train',
+          body,
+          data: { athleteId, date: noteDate, url: `/coaches/athletes/${athleteId}/training` },
+        });
+      }
+    }
+    res.json({ unavailable: row });
+  })
+);
+
+router.put(
+  '/day-notes',
+  requireRole('coach'),
+  asyncHandler(async (req, res) => {
+    const athleteId = req.body.athleteId;
+    const noteDate = asDate(req.body.date);
+    const body = String(req.body.body || '').trim().slice(0, 280);
+    if (!athleteId || !noteDate) throw httpError(400, 'Pick a day');
+    const assignment = await assertAssignedCoach(req.user.id, athleteId);
+    if (!body) {
+      await query(
+        `DELETE FROM training_day_notes WHERE athlete_id = $1 AND coach_id = $2 AND note_date = $3`,
+        [athleteId, req.user.id, noteDate]
+      );
+      return res.json({ note: null });
+    }
+    const row = camel(
+      await one(
+        `INSERT INTO training_day_notes (athlete_id, coach_id, club_id, note_date, body)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (athlete_id, coach_id, note_date) DO UPDATE SET
+           body = EXCLUDED.body,
+           club_id = COALESCE(EXCLUDED.club_id, training_day_notes.club_id),
+           updated_at = NOW()
+         RETURNING *`,
+        [athleteId, req.user.id, assignment.clubId || null, noteDate, body]
+      )
+    );
+    res.json({
+      note: {
+        ...row,
+        coachFirstName: req.user.firstName,
+        coachLastName: req.user.lastName,
+      },
+    });
   })
 );
 
@@ -505,7 +724,7 @@ router.get(
          FROM training_programs p
          JOIN clubs c ON c.id = p.club_id
          LEFT JOIN users u ON u.id = p.athlete_id
-         WHERE p.coach_id = $1
+         WHERE p.coach_id = $1 AND COALESCE(p.is_template, FALSE) = FALSE
          ORDER BY p.updated_at DESC`,
         [req.user.id]
       )
@@ -603,10 +822,56 @@ router.delete(
 );
 
 router.post(
+  '/programs/:id/save-template',
+  requireRole('coach'),
+  asyncHandler(async (req, res) => {
+    const program = await loadProgramOwnedOrThrow(req);
+    if (program.isTemplate) {
+      return res.json({ program: await hydrateProgram(program, req.user.id), already: true });
+    }
+    const sessions = await one('SELECT COUNT(*)::int AS n FROM planned_workouts WHERE program_id = $1', [program.id]);
+    if (!sessions?.n) throw httpError(400, 'Add at least one session before saving as a template');
+    const name = String(req.body.name || program.name).trim();
+    if (!name) throw httpError(400, 'Template name is required');
+    const template = await cloneProgramForAthlete(program, null, null, { asTemplate: true, name });
+    res.status(201).json({ program: await hydrateProgram(template, req.user.id) });
+  })
+);
+
+router.post(
+  '/templates/:id/deploy',
+  requireRole('coach'),
+  asyncHandler(async (req, res) => {
+    const program = await loadProgramOwnedOrThrow(req);
+    if (!program.isTemplate) throw httpError(400, 'Save this plan as a template first');
+    const result = await deployProgramCopies(req, program, req.body || {});
+    res.status(201).json({
+      assigned: result.copies.length,
+      groupId: result.group?.id || null,
+      programs: result.copies,
+      program: result.copies[0]
+        ? await hydrateProgram(result.copies[0], req.user.id)
+        : await hydrateProgram(program, req.user.id),
+    });
+  })
+);
+
+router.post(
   '/programs/:id/assign',
   requireRole('coach'),
   asyncHandler(async (req, res) => {
     const program = await loadProgramOwnedOrThrow(req);
+    if (program.isTemplate) {
+      const result = await deployProgramCopies(req, program, req.body || {});
+      return res.json({
+        assigned: result.copies.length,
+        groupId: result.group?.id || null,
+        programs: result.copies,
+        program: result.copies[0]
+          ? await hydrateProgram(result.copies[0], req.user.id)
+          : await hydrateProgram(program, req.user.id),
+      });
+    }
     const groupId = req.body.groupId || null;
     const athleteIds = Array.isArray(req.body.athleteIds) ? req.body.athleteIds : [];
     if (groupId || athleteIds.length > 1) {
@@ -688,6 +953,7 @@ router.post(
       completed: ['archived'],
       archived: [],
     };
+    if (next === 'active' && program.isTemplate) throw httpError(400, 'Use this template for an athlete or group instead of activating it');
     if (next === 'active' && !program.athleteId) throw httpError(400, 'Assign an athlete before activating');
     if (!(allowed[program.status] || []).includes(next)) {
       throw httpError(400, `Cannot change ${program.status} to ${next}`);

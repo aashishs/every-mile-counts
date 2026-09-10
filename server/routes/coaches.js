@@ -226,6 +226,6 @@ function withAthleteMaf(row) {
   return {
     ...row,
     age,
-    mafHeartRate: mafHeartRate(age) ?? row.mafHeartRate ?? null,
+    mafHeartRate: row.mafHeartRate ?? mafHeartRate(age, row.mafOffset) ?? null,
   };
 }
