@@ -215,9 +215,6 @@ export default function ActivityDetail() {
           {formatEffort(activity) && formatEffort(activity) !== '—' && (
             <span className="rounded-full bg-black/25 px-3 py-1 text-xs font-semibold">{formatEffort(activity)}</span>
           )}
-          {glance.heartRateZone?.label && (
-            <span className="rounded-full bg-black/25 px-3 py-1 text-xs font-semibold">Z{glance.heartRateZone.zone} {glance.heartRateZone.label}</span>
-          )}
         </div>
       </div>
 
@@ -275,9 +272,6 @@ export default function ActivityDetail() {
           <div className="grid grid-cols-2 gap-2 mb-2">
             {glance.paceConsistency && glance.paceConsistency !== 'unknown' && effort.kind !== 'duration' && (
               <Insight label={effort.kind === 'speed' ? 'Speed' : 'Pace'} value={glance.paceConsistency} />
-            )}
-            {glance.heartRateZone?.label && (
-              <Insight label="HR zone" value={`Z${glance.heartRateZone.zone}`} hint={glance.heartRateZone.label} />
             )}
             {glance.mafCheck && (
               <Insight

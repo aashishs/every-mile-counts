@@ -285,7 +285,9 @@ export async function athleteDashboard(athleteId, athlete = {}, { type, syncType
   const upcomingEvents = camelMany(
     await many(
       `SELECT * FROM events
-       WHERE owner_type = 'athlete' AND owner_id = $1 AND status = 'upcoming'
+       WHERE owner_type = 'athlete' AND owner_id = $1
+         AND status = 'upcoming'
+         AND event_date >= CURRENT_DATE
        ORDER BY event_date ASC LIMIT 20`,
       [athleteId]
     )

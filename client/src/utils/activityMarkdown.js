@@ -62,12 +62,10 @@ function splitsTable(splits, kind) {
 
 function insightLines(insights) {
   if (!insights) return [];
-  const zone = insights.heartRateZone;
   const lines = [
     insights.paceConsistency && insights.paceConsistency !== 'unknown'
       ? `- Pace consistency: ${insights.paceConsistency}`
       : null,
-    zone?.label ? `- Heart-rate zone: Z${zone.zone} ${zone.label}` : null,
     insights.mafCheck
       ? `- MAF (${insights.mafCheck.mafHeartRate} bpm): avg HR ${insights.mafCheck.avgHeartrate} (${insights.mafCheck.label})`
       : null,

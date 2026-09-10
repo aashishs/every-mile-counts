@@ -236,7 +236,12 @@ export default function Events() {
               </thead>
               <tbody>
                 {events.map((event) => {
-                  const locked = event.status === 'completed' || (event.mappedActivities || []).length > 0;
+                  const eventDay = String(event.eventDate || '').slice(0, 10);
+                  const today = ymd(new Date());
+                  const linkedCount = (event.mappedActivities || []).length;
+                  const isPast = Boolean(eventDay && eventDay < today);
+                  const displayStatus = event.status === 'completed' || linkedCount > 0 || isPast ? 'completed' : 'upcoming';
+                  const hasLinkedActivity = linkedCount > 0;
                   const typeLabel = EVENT_TYPES.find((t) => t.value === event.category)?.label || event.category || '—';
                   return (
                     <tr
@@ -255,16 +260,19 @@ export default function Events() {
                       <td className="p-3 text-muted">{event.location || '—'}</td>
                       <td className="p-3 whitespace-nowrap">{event.distance ? formatDistance(event.distance) : '—'}</td>
                       <td className="p-3">
-                        <span className={`badge ${locked ? 'bg-emerald-500/15 text-emerald-300' : 'bg-accent/15 text-accent'}`}>
-                          {event.status}
+                        <span className={`badge ${displayStatus === 'completed' ? 'bg-emerald-500/15 text-emerald-300' : 'bg-accent/15 text-accent'}`}>
+                          {displayStatus}
                         </span>
                       </td>
                       <td className="p-3 whitespace-nowrap text-right" onClick={(e) => e.stopPropagation()}>
-                        {!locked && (
+                        {!hasLinkedActivity && !isPast && (
                           <>
                             <button type="button" className="btn-outline btn-sm mr-1" onClick={() => openEdit(event)}>Edit</button>
                             <button type="button" className="btn-outline btn-sm" onClick={() => askDelete(event)}>Delete</button>
                           </>
+                        )}
+                        {!hasLinkedActivity && isPast && (
+                          <button type="button" className="btn-outline btn-sm" onClick={() => askDelete(event)}>Delete</button>
                         )}
                       </td>
                     </tr>
@@ -387,9 +395,11 @@ function matchesEventCategory(activity, category) {
 function EventCard({ event, when, activities, onMap, onEdit, onDelete }) {
   const eventDay = String(event.eventDate || '').slice(0, 10);
   const today = ymd(new Date());
-  const upcoming = event.status === 'upcoming' && eventDay > today;
   const linked = event.mappedActivities || [];
-  const locked = event.status === 'completed' || linked.length > 0;
+  const isPast = Boolean(eventDay && eventDay < today);
+  const displayStatus = event.status === 'completed' || linked.length > 0 || isPast ? 'completed' : 'upcoming';
+  const locked = linked.length > 0;
+  const canLink = isPast && linked.length === 0;
   const linkedIds = new Set(linked.map((a) => a.id));
   const sportLabel = EVENT_TYPES.find((t) => t.value === event.category)?.label || event.category || 'matching';
   const candidates = activities.filter((a) => (
@@ -406,10 +416,15 @@ function EventCard({ event, when, activities, onMap, onEdit, onDelete }) {
           <p className="text-sm text-muted">{when} · {event.category} · {event.location || 'TBD'}</p>
         </div>
         <div className="flex flex-col items-end gap-2 shrink-0">
-          <span className={`badge ${locked ? 'bg-emerald-500/15 text-emerald-300' : 'bg-accent/15 text-accent'}`}>{event.status}</span>
-          {!locked && (
+          <span className={`badge ${displayStatus === 'completed' ? 'bg-emerald-500/15 text-emerald-300' : 'bg-accent/15 text-accent'}`}>{displayStatus}</span>
+          {!locked && !isPast && (
             <div className="flex gap-2">
               <button type="button" className="btn-outline btn-sm" onClick={() => onEdit(event)}>Edit</button>
+              <button type="button" className="btn-outline btn-sm" onClick={() => onDelete(event)}>Delete</button>
+            </div>
+          )}
+          {!locked && isPast && (
+            <div className="flex gap-2">
               <button type="button" className="btn-outline btn-sm" onClick={() => onDelete(event)}>Delete</button>
             </div>
           )}
@@ -428,7 +443,7 @@ function EventCard({ event, when, activities, onMap, onEdit, onDelete }) {
           ))}
         </div>
       )}
-      {!upcoming && !locked && (
+      {canLink && (
         <div className="mt-3">
           <label className="text-xs">Link a {sportLabel.toLowerCase()} from {formatDate(event.eventDate)}</label>
           {candidates.length ? (

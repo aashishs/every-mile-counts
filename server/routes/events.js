@@ -7,9 +7,22 @@ import { formatDistance, formatDuration } from '../utils/format.js';
 const router = express.Router();
 router.use(protect, requireMembership, rejectAppAdmin);
 
+async function markPastEventsCompleted(ownerId) {
+  await query(
+    `UPDATE events
+     SET status = 'completed', updated_at = NOW()
+     WHERE owner_type = 'athlete'
+       AND owner_id = $1
+       AND status = 'upcoming'
+       AND event_date < CURRENT_DATE`,
+    [ownerId]
+  );
+}
+
 router.get(
   '/',
   asyncHandler(async (req, res) => {
+    await markPastEventsCompleted(req.user.id);
     const pageSizes = [10, 20, 50, 100];
     const parsedLimit = pageSizes.includes(Number(req.query.limit)) ? Number(req.query.limit) : 10;
     const parsedPage = Math.max(1, Number(req.query.page) || 1);
@@ -177,8 +190,9 @@ router.delete(
       ])
     );
     if (!existing) return res.status(404).json({ message: 'Event not found' });
-    if (existing.status === 'completed') {
-      return res.status(400).json({ message: 'Completed events cannot be deleted' });
+    const linked = await one(`SELECT 1 AS ok FROM event_activities WHERE event_id = $1 LIMIT 1`, [req.params.id]);
+    if (linked) {
+      return res.status(400).json({ message: 'Events with a linked activity cannot be deleted' });
     }
     await query(`UPDATE activities SET event_id = NULL WHERE event_id = $1`, [req.params.id]);
     await query(`DELETE FROM events WHERE id = $1`, [req.params.id]);
@@ -200,9 +214,6 @@ router.post(
       ])
     );
     if (!event) return res.status(404).json({ message: 'Event not found' });
-    if (event.status === 'completed') {
-      return res.status(400).json({ message: 'This event already has a linked activity and cannot be changed' });
-    }
     const alreadyLinked = await one(`SELECT 1 FROM event_activities WHERE event_id = $1 LIMIT 1`, [event.id]);
     if (alreadyLinked) {
       return res.status(400).json({ message: 'This event already has a linked activity and cannot be changed' });
