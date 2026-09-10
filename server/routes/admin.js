@@ -115,11 +115,45 @@ router.get(
     const byRole = camelMany(
       await many(`SELECT role, COUNT(*)::int AS count FROM user_roles GROUP BY role`)
     );
+    const platform = camel(
+      await one(
+        `WITH platform_users AS (
+           SELECT u.id, u.status
+           FROM users u
+           WHERE u.status <> 'deleted'
+             AND NOT EXISTS (
+               SELECT 1 FROM user_roles ar WHERE ar.user_id = u.id AND ar.role IN ${STAFF_ROLE_SQL}
+             )
+         )
+         SELECT
+           (SELECT COUNT(*)::int FROM platform_users WHERE status = 'active') AS active_users,
+           (
+             SELECT COUNT(DISTINCT pu.id)::int
+             FROM platform_users pu
+             JOIN oauth_connections oc ON oc.user_id = pu.id
+              AND oc.provider = 'strava' AND COALESCE(oc.connected, FALSE) = TRUE
+           ) AS strava_connected,
+           (
+             SELECT COUNT(DISTINCT pu.id)::int
+             FROM platform_users pu
+             JOIN user_roles ur ON ur.user_id = pu.id AND ur.role = 'athlete'
+           ) AS athletes,
+           (
+             SELECT COUNT(DISTINCT pu.id)::int
+             FROM platform_users pu
+             JOIN user_roles ur ON ur.user_id = pu.id AND ur.role = 'coach'
+           ) AS coaches`
+      )
+    );
     res.json({
       users: users.count,
       clubs: clubs.count,
       activities: activities.count,
       activeMemberships: memberships.active,
+      activeUsers: platform.activeUsers,
+      stravaConnected: platform.stravaConnected,
+      athletes: platform.athletes,
+      coaches: platform.coaches,
       byRole,
     });
   })
@@ -129,32 +163,67 @@ router.get(
   '/users',
   asyncHandler(async (req, res) => {
     const { q, role, status } = req.query;
+    const pageSizes = [10, 20, 50, 100];
+    const parsedLimit = pageSizes.includes(Number(req.query.limit)) ? Number(req.query.limit) : 20;
+    const parsedPage = Math.max(1, Number(req.query.page) || 1);
+
+    const where = [
+      `u.status <> 'deleted'`,
+      `NOT EXISTS (
+         SELECT 1 FROM user_roles ar WHERE ar.user_id = u.id AND ar.role IN ${STAFF_ROLE_SQL}
+       )`,
+    ];
     const params = [];
-    let sql = `SELECT u.id, u.email, u.first_name, u.last_name, u.status, u.created_at, u.last_login_at,
-                 COALESCE(JSON_AGG(DISTINCT ur.role) FILTER (WHERE ur.role IS NOT NULL), '[]'::json) AS roles,
-                 BOOL_OR(oc.connected) AS strava_connected,
-                 MAX(oc.last_sync_at) AS last_sync_at,
-                 MAX(oc.last_sync_status) AS last_sync_status,
-                 MAX(oc.last_sync_error) AS last_sync_error,
-                 (SELECT COUNT(*) FROM activities a WHERE a.athlete_id = u.id)::int AS activity_count
-               FROM users u
-               LEFT JOIN user_roles ur ON ur.user_id = u.id
-               LEFT JOIN oauth_connections oc ON oc.user_id = u.id AND oc.provider = 'strava'
-               WHERE u.status <> 'deleted'
-                 AND NOT EXISTS (
-                   SELECT 1 FROM user_roles ar WHERE ar.user_id = u.id AND ar.role IN ${STAFF_ROLE_SQL}
-                 )`;
+
     if (q) {
       params.push(`%${q}%`);
-      sql += ` AND (u.email ILIKE $${params.length} OR u.first_name ILIKE $${params.length} OR u.last_name ILIKE $${params.length})`;
+      where.push(
+        `(u.email ILIKE $${params.length} OR u.first_name ILIKE $${params.length} OR u.last_name ILIKE $${params.length})`
+      );
     }
     if (status) {
       params.push(status);
-      sql += ` AND u.status = $${params.length}`;
+      where.push(`u.status = $${params.length}`);
     }
-    sql += ' GROUP BY u.id ORDER BY u.created_at DESC LIMIT 200';
-    let users = camelMany(await many(sql, params));
-    if (role) users = users.filter((u) => (Array.isArray(u.roles) ? u.roles : []).includes(role));
+    if (role) {
+      params.push(role);
+      where.push(
+        `EXISTS (SELECT 1 FROM user_roles r WHERE r.user_id = u.id AND r.role = $${params.length})`
+      );
+    }
+
+    const whereSql = where.join(' AND ');
+    const countRow = await one(
+      `SELECT COUNT(*)::int AS total
+       FROM users u
+       WHERE ${whereSql}`,
+      params
+    );
+    const total = countRow.total || 0;
+    const pages = Math.max(1, Math.ceil(total / parsedLimit) || 1);
+    const safePage = Math.min(parsedPage, pages);
+    const offset = (safePage - 1) * parsedLimit;
+
+    const listParams = [...params, parsedLimit, offset];
+    const users = camelMany(
+      await many(
+        `SELECT u.id, u.email, u.first_name, u.last_name, u.status, u.created_at, u.last_login_at,
+           COALESCE(JSON_AGG(DISTINCT ur.role) FILTER (WHERE ur.role IS NOT NULL), '[]'::json) AS roles,
+           BOOL_OR(oc.connected) AS strava_connected,
+           MAX(oc.last_sync_at) AS last_sync_at,
+           MAX(oc.last_sync_status) AS last_sync_status,
+           MAX(oc.last_sync_error) AS last_sync_error,
+           (SELECT COUNT(*) FROM activities a WHERE a.athlete_id = u.id)::int AS activity_count
+         FROM users u
+         LEFT JOIN user_roles ur ON ur.user_id = u.id
+         LEFT JOIN oauth_connections oc ON oc.user_id = u.id AND oc.provider = 'strava'
+         WHERE ${whereSql}
+         GROUP BY u.id
+         ORDER BY u.created_at DESC
+         LIMIT $${listParams.length - 1} OFFSET $${listParams.length}`,
+        listParams
+      )
+    );
 
     const stats = camel(
       await one(
@@ -197,7 +266,14 @@ router.get(
       )
     );
 
-    res.json({ users, stats });
+    res.json({
+      users,
+      stats,
+      total,
+      page: safePage,
+      pages,
+      limit: parsedLimit,
+    });
   })
 );
 

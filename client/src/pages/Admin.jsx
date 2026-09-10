@@ -38,6 +38,7 @@ const emptyCodeForm = {
 };
 
 const AUDIT_PAGE_SIZES = [10, 20, 50, 100];
+const USER_PAGE_SIZES = [10, 20, 50, 100];
 
 function copyText(value) {
   return navigator.clipboard.writeText(value);
@@ -59,6 +60,10 @@ export default function Admin() {
   const [overview, setOverview] = useState(null);
   const [users, setUsers] = useState([]);
   const [userStats, setUserStats] = useState(null);
+  const [userPage, setUserPage] = useState(1);
+  const [userLimit, setUserLimit] = useState(20);
+  const [userTotal, setUserTotal] = useState(0);
+  const [userPages, setUserPages] = useState(1);
   const [clubs, setClubs] = useState([]);
   const [codes, setCodes] = useState([]);
   const [memberships, setMemberships] = useState([]);
@@ -104,15 +109,24 @@ export default function Admin() {
   const [clubForm, setClubForm] = useState({ name: '', location: '', email: '', password: '', firstName: '', lastName: '' });
   const [coachRequests, setCoachRequests] = useState([]);
 
+  const loadUsers = async (page = userPage, limit = userLimit, q = userQ) => {
+    const params = { page, limit };
+    if (q.trim()) params.q = q.trim();
+    const { data } = await api.get('/admin/users', { params });
+    setUsers(data.users || []);
+    setUserStats(data.stats || null);
+    setUserTotal(data.total || 0);
+    setUserPages(data.pages || 1);
+    setUserLimit(data.limit || limit);
+    if (data.page && data.page !== page) setUserPage(data.page);
+    else setUserPage(page);
+  };
+
   const load = async (next = tab) => {
     if (next === 'staff' && superAdmin) setStaff((await api.get('/admin/staff')).data.users);
     if (next === 'overview') setOverview((await api.get('/admin/overview')).data);
     if (next === 'users') {
-      const params = {};
-      if (userQ.trim()) params.q = userQ.trim();
-      const { data } = await api.get('/admin/users', { params });
-      setUsers(data.users || []);
-      setUserStats(data.stats || null);
+      await loadUsers(userPage, userLimit, userQ);
       setClubs((await api.get('/admin/clubs')).data.clubs);
     }
     if (next === 'clubs') setClubs((await api.get('/admin/clubs')).data.clubs);
@@ -532,6 +546,10 @@ export default function Admin() {
       {tab === 'overview' && overview && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <Tile label="Users" value={overview.users} />
+          <Tile label="Active users" value={overview.activeUsers ?? 0} />
+          <Tile label="Strava connected" value={overview.stravaConnected ?? 0} />
+          <Tile label="Athletes" value={overview.athletes ?? 0} />
+          <Tile label="Coaches" value={overview.coaches ?? 0} />
           <Tile label="Clubs" value={overview.clubs} />
           <Tile label="Activities" value={overview.activities} />
           <Tile label="Active memberships" value={overview.activeMemberships} />
@@ -560,21 +578,36 @@ export default function Admin() {
             </div>
           )}
           <form
-            className="flex gap-2"
+            className="flex flex-col sm:flex-row gap-2 sm:items-center"
             onSubmit={(e) => {
               e.preventDefault();
-              load('users');
+              setUserPage(1);
+              loadUsers(1, userLimit, userQ);
             }}
           >
             <input value={userQ} onChange={(e) => setUserQ(e.target.value)} placeholder="Search name or email" />
             <button className="btn-outline shrink-0" type="submit">Search</button>
+            <label className="flex items-center gap-2 text-sm text-muted mb-0 sm:ml-auto">
+              <span>Show</span>
+              <select
+                className="w-auto py-1.5"
+                value={userLimit}
+                onChange={(e) => {
+                  const nextLimit = Number(e.target.value);
+                  setUserLimit(nextLimit);
+                  setUserPage(1);
+                  loadUsers(1, nextLimit, userQ);
+                }}
+                aria-label="Users per page"
+              >
+                {USER_PAGE_SIZES.map((n) => (
+                  <option key={n} value={n}>{n}</option>
+                ))}
+              </select>
+            </label>
           </form>
           {adminErr && <div className="card text-orange-300 text-sm">{adminErr}</div>}
           {adminMsg && <div className="card text-brand text-sm">{adminMsg}</div>}
-          <div className="text-xs text-muted">
-            Showing {users.length} user{users.length === 1 ? '' : 's'}
-            {userQ.trim() ? ` matching “${userQ.trim()}”` : ''}
-          </div>
           <div className="card overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
@@ -620,8 +653,48 @@ export default function Admin() {
                     </td>
                   </tr>
                 ))}
+                {!users.length && (
+                  <tr>
+                    <td className="p-2 text-muted" colSpan={7}>
+                      {userQ.trim() ? 'No users match that search.' : 'No users yet.'}
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mt-4">
+              <p className="text-xs text-muted mb-0">
+                Showing {userTotal === 0 ? 0 : (userPage - 1) * userLimit + 1}–{Math.min(userPage * userLimit, userTotal)} of {userTotal}
+                {userQ.trim() ? ` matching “${userQ.trim()}”` : ''}
+                {' '}· Page {userPage} of {userPages}
+              </p>
+              <div className="grid grid-cols-2 gap-2 sm:flex">
+                <button
+                  className="btn-outline btn-sm"
+                  type="button"
+                  disabled={userPage <= 1}
+                  onClick={() => {
+                    const next = userPage - 1;
+                    setUserPage(next);
+                    loadUsers(next, userLimit, userQ);
+                  }}
+                >
+                  Previous
+                </button>
+                <button
+                  className="btn-outline btn-sm"
+                  type="button"
+                  disabled={userPage >= userPages}
+                  onClick={() => {
+                    const next = userPage + 1;
+                    setUserPage(next);
+                    loadUsers(next, userLimit, userQ);
+                  }}
+                >
+                  Next
+                </button>
+              </div>
+            </div>
           </div>
 
           {detail && (
