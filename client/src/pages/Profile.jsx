@@ -256,7 +256,7 @@ export default function Profile() {
   const previewAge = ageFromDob(form.dateOfBirth);
   const previewBaseMaf = mafBase(previewAge);
   const previewMaf = previewAge != null
-    ? clampMafHeartRate(previewAge, form.mafHeartRate || previewBaseMaf)
+    ? clampMafHeartRate(previewAge, form.mafHeartRate === '' || form.mafHeartRate == null ? previewBaseMaf : form.mafHeartRate)
     : null;
   const previewBonus = previewAge != null ? mafOffsetFromValue(previewAge, previewMaf) : 0;
 
@@ -269,6 +269,24 @@ export default function Profile() {
       dateOfBirth,
       mafHeartRate: nextAge != null ? mafHeartRate(nextAge, offset) : '',
     });
+  };
+
+  const setMafHeartRate = (raw) => {
+    if (raw === '') {
+      setForm({ ...form, mafHeartRate: '' });
+      return;
+    }
+    // Allow partial typing on mobile (e.g. "1" while entering "145"); clamp only later.
+    if (!/^\d{0,3}$/.test(String(raw))) return;
+    setForm({ ...form, mafHeartRate: raw });
+  };
+
+  const commitMafHeartRate = () => {
+    if (previewAge == null) return;
+    setForm((prev) => ({
+      ...prev,
+      mafHeartRate: clampMafHeartRate(previewAge, prev.mafHeartRate === '' ? previewBaseMaf : prev.mafHeartRate),
+    }));
   };
 
   const tabs = TAB_DEFS.filter((t) => !t.athleteOnly || athlete);
@@ -398,23 +416,22 @@ export default function Profile() {
               <label htmlFor="mafHeartRate">MAF</label>
               <input
                 id="mafHeartRate"
-                type="number"
-                min={previewBaseMaf || undefined}
-                max={previewBaseMaf != null ? previewBaseMaf + 5 : undefined}
-                step="1"
-                value={previewMaf ?? ''}
-                onChange={(e) => setForm({
-                  ...form,
-                  mafHeartRate: e.target.value === '' ? '' : clampMafHeartRate(previewAge, e.target.value),
-                })}
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                autoComplete="off"
+                enterKeyHint="done"
+                value={form.mafHeartRate ?? ''}
+                onChange={(e) => setMafHeartRate(e.target.value)}
+                onBlur={commitMafHeartRate}
                 required
                 disabled={previewAge == null}
-                placeholder="bpm"
+                placeholder={previewBaseMaf != null ? String(previewBaseMaf) : 'bpm'}
               />
               {previewBaseMaf != null && (
                 <p className="text-xs text-muted mt-1">
-                  {previewBaseMaf} bpm is 180 − age
-                  {previewBonus > 0 ? ` · +${previewBonus} for consistent training` : '. You can add up to 5 bpm.'}
+                  {previewBaseMaf}–{previewBaseMaf + 5} bpm (180 − age
+                  {previewBonus > 0 ? ` · currently +${previewBonus}` : ', plus up to 5'})
                 </p>
               )}
             </div>
