@@ -133,6 +133,7 @@ router.get(
               AND oc.provider = 'strava'
               AND oc.connected = TRUE
               AND oc.access_token_enc IS NOT NULL
+              AND COALESCE(oc.last_sync_status, '') NOT IN ('error', 'disconnected')
            ) AS strava_connected,
            (
              SELECT COUNT(DISTINCT pu.id)::int

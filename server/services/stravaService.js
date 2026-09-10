@@ -72,8 +72,8 @@ async function saveTokens(userId, {
   await query(
     `INSERT INTO oauth_connections
       (user_id, provider, provider_user_id, access_token_enc, refresh_token_enc, expires_at, connected,
-       granted_scope, pending_coach_share, coach_share_consented_at, updated_at)
-     VALUES ($1, 'strava', $2::text, $3, $4, $5, TRUE, $6::text, FALSE, $7::timestamptz, NOW())
+       granted_scope, pending_coach_share, coach_share_consented_at, last_sync_status, last_sync_error, updated_at)
+     VALUES ($1, 'strava', $2::text, $3, $4, $5, TRUE, $6::text, FALSE, $7::timestamptz, 'connected', NULL, NOW())
      ON CONFLICT (user_id, provider) DO UPDATE SET
        provider_user_id = EXCLUDED.provider_user_id,
        access_token_enc = EXCLUDED.access_token_enc,
@@ -83,6 +83,7 @@ async function saveTokens(userId, {
        granted_scope = COALESCE(EXCLUDED.granted_scope, oauth_connections.granted_scope),
        pending_coach_share = FALSE,
        coach_share_consented_at = COALESCE(EXCLUDED.coach_share_consented_at, oauth_connections.coach_share_consented_at),
+       last_sync_status = 'connected',
        last_sync_error = NULL,
        updated_at = NOW()`,
     [

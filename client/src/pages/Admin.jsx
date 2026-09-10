@@ -546,7 +546,7 @@ export default function Admin() {
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
             <Tile label="Users" value={overview.users ?? 0} />
             <Tile label="Active users" value={overview.activeUsers ?? 0} />
-            <Tile label="Strava connected" value={overview.stravaConnected ?? 0} />
+            <Tile label="Strava connected" value={overview.stravaConnected ?? 0} hint="Excludes sync failures" />
             <Tile label="Athletes" value={overview.athletes ?? 0} />
             <Tile label="Coaches" value={overview.coaches ?? 0} />
             <Tile label="Club admins" value={overview.clubAdmins ?? 0} />
