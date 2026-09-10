@@ -59,7 +59,6 @@ export default function Admin() {
   const [tab, setTab] = useState('users');
   const [overview, setOverview] = useState(null);
   const [users, setUsers] = useState([]);
-  const [userStats, setUserStats] = useState(null);
   const [userPage, setUserPage] = useState(1);
   const [userLimit, setUserLimit] = useState(20);
   const [userTotal, setUserTotal] = useState(0);
@@ -114,7 +113,6 @@ export default function Admin() {
     if (q.trim()) params.q = q.trim();
     const { data } = await api.get('/admin/users', { params });
     setUsers(data.users || []);
-    setUserStats(data.stats || null);
     setUserTotal(data.total || 0);
     setUserPages(data.pages || 1);
     setUserLimit(data.limit || limit);
@@ -544,39 +542,31 @@ export default function Admin() {
       )}
 
       {tab === 'overview' && overview && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <Tile label="Users" value={overview.users} />
-          <Tile label="Active users" value={overview.activeUsers ?? 0} />
-          <Tile label="Strava connected" value={overview.stravaConnected ?? 0} />
-          <Tile label="Athletes" value={overview.athletes ?? 0} />
-          <Tile label="Coaches" value={overview.coaches ?? 0} />
-          <Tile label="Clubs" value={overview.clubs} />
-          <Tile label="Activities" value={overview.activities} />
-          <Tile label="Active memberships" value={overview.activeMemberships} />
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+            <Tile label="Users" value={overview.users ?? 0} />
+            <Tile label="Active users" value={overview.activeUsers ?? 0} />
+            <Tile label="Strava connected" value={overview.stravaConnected ?? 0} />
+            <Tile label="Athletes" value={overview.athletes ?? 0} />
+            <Tile label="Coaches" value={overview.coaches ?? 0} />
+            <Tile label="Club admins" value={overview.clubAdmins ?? 0} />
+            <Tile label="Clubs" value={overview.clubs ?? 0} />
+            <Tile
+              label="Clubs (active)"
+              value={overview.activeClubs ?? 0}
+              hint={[
+                overview.pendingCoachClubs ? `${overview.pendingCoachClubs} pending coach` : null,
+                overview.readOnlyClubs ? `${overview.readOnlyClubs} read-only` : null,
+              ].filter(Boolean).join(' · ') || undefined}
+            />
+            <Tile label="Activities" value={overview.activities ?? 0} />
+            <Tile label="Active memberships" value={overview.activeMemberships ?? 0} />
+          </div>
         </div>
       )}
 
       {tab === 'users' && (
         <div className="space-y-4">
-          {userStats && (
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-8 gap-3">
-              <Tile label="Users" value={userStats.totalUsers ?? 0} />
-              <Tile label="Active" value={userStats.activeUsers ?? 0} />
-              <Tile label="Strava connected" value={userStats.stravaConnected ?? 0} />
-              <Tile label="Athletes" value={userStats.athletes ?? 0} />
-              <Tile label="Coaches" value={userStats.coaches ?? 0} />
-              <Tile label="Club admins" value={userStats.clubAdmins ?? 0} />
-              <Tile label="Clubs" value={userStats.clubs ?? 0} />
-              <Tile
-                label="Clubs (active)"
-                value={userStats.activeClubs ?? 0}
-                hint={[
-                  userStats.pendingCoachClubs ? `${userStats.pendingCoachClubs} pending coach` : null,
-                  userStats.readOnlyClubs ? `${userStats.readOnlyClubs} read-only` : null,
-                ].filter(Boolean).join(' · ') || undefined}
-              />
-            </div>
-          )}
           <form
             className="flex flex-col sm:flex-row gap-2 sm:items-center"
             onSubmit={(e) => {

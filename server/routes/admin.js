@@ -106,8 +106,6 @@ async function maybeRestoreClub(clubId) {
 router.get(
   '/overview',
   asyncHandler(async (_req, res) => {
-    const users = await one(`SELECT COUNT(*)::int AS count FROM users WHERE status <> 'deleted'`);
-    const clubs = await one(`SELECT COUNT(*)::int AS count FROM clubs`);
     const activities = await one(`SELECT COUNT(*)::int AS count FROM activities`);
     const memberships = await one(
       `SELECT COUNT(*)::int AS active FROM memberships WHERE status IN ('active','expiring_soon') AND user_id IS NOT NULL`
@@ -126,12 +124,15 @@ router.get(
              )
          )
          SELECT
+           (SELECT COUNT(*)::int FROM platform_users) AS total_users,
            (SELECT COUNT(*)::int FROM platform_users WHERE status = 'active') AS active_users,
            (
              SELECT COUNT(DISTINCT pu.id)::int
              FROM platform_users pu
              JOIN oauth_connections oc ON oc.user_id = pu.id
-              AND oc.provider = 'strava' AND COALESCE(oc.connected, FALSE) = TRUE
+              AND oc.provider = 'strava'
+              AND oc.connected = TRUE
+              AND oc.access_token_enc IS NOT NULL
            ) AS strava_connected,
            (
              SELECT COUNT(DISTINCT pu.id)::int
@@ -142,18 +143,31 @@ router.get(
              SELECT COUNT(DISTINCT pu.id)::int
              FROM platform_users pu
              JOIN user_roles ur ON ur.user_id = pu.id AND ur.role = 'coach'
-           ) AS coaches`
+           ) AS coaches,
+           (
+             SELECT COUNT(DISTINCT pu.id)::int
+             FROM platform_users pu
+             JOIN user_roles ur ON ur.user_id = pu.id AND ur.role = 'club_admin'
+           ) AS club_admins,
+           (SELECT COUNT(*)::int FROM clubs) AS clubs,
+           (SELECT COUNT(*)::int FROM clubs WHERE status = 'active') AS active_clubs,
+           (SELECT COUNT(*)::int FROM clubs WHERE status = 'pending_coach') AS pending_coach_clubs,
+           (SELECT COUNT(*)::int FROM clubs WHERE status = 'read_only') AS read_only_clubs`
       )
     );
     res.json({
-      users: users.count,
-      clubs: clubs.count,
-      activities: activities.count,
-      activeMemberships: memberships.active,
+      users: platform.totalUsers,
       activeUsers: platform.activeUsers,
       stravaConnected: platform.stravaConnected,
       athletes: platform.athletes,
       coaches: platform.coaches,
+      clubAdmins: platform.clubAdmins,
+      clubs: platform.clubs,
+      activeClubs: platform.activeClubs,
+      pendingCoachClubs: platform.pendingCoachClubs,
+      readOnlyClubs: platform.readOnlyClubs,
+      activities: activities.count,
+      activeMemberships: memberships.active,
       byRole,
     });
   })
@@ -209,7 +223,7 @@ router.get(
       await many(
         `SELECT u.id, u.email, u.first_name, u.last_name, u.status, u.created_at, u.last_login_at,
            COALESCE(JSON_AGG(DISTINCT ur.role) FILTER (WHERE ur.role IS NOT NULL), '[]'::json) AS roles,
-           BOOL_OR(oc.connected) AS strava_connected,
+           BOOL_OR(oc.connected = TRUE AND oc.access_token_enc IS NOT NULL) AS strava_connected,
            MAX(oc.last_sync_at) AS last_sync_at,
            MAX(oc.last_sync_status) AS last_sync_status,
            MAX(oc.last_sync_error) AS last_sync_error,
@@ -225,50 +239,8 @@ router.get(
       )
     );
 
-    const stats = camel(
-      await one(
-        `WITH platform_users AS (
-           SELECT u.id, u.status
-           FROM users u
-           WHERE u.status <> 'deleted'
-             AND NOT EXISTS (
-               SELECT 1 FROM user_roles ar WHERE ar.user_id = u.id AND ar.role IN ${STAFF_ROLE_SQL}
-             )
-         )
-         SELECT
-           (SELECT COUNT(*)::int FROM platform_users) AS total_users,
-           (SELECT COUNT(*)::int FROM platform_users WHERE status = 'active') AS active_users,
-           (
-             SELECT COUNT(DISTINCT pu.id)::int
-             FROM platform_users pu
-             JOIN oauth_connections oc ON oc.user_id = pu.id
-              AND oc.provider = 'strava' AND COALESCE(oc.connected, FALSE) = TRUE
-           ) AS strava_connected,
-           (
-             SELECT COUNT(DISTINCT pu.id)::int
-             FROM platform_users pu
-             JOIN user_roles ur ON ur.user_id = pu.id AND ur.role = 'athlete'
-           ) AS athletes,
-           (
-             SELECT COUNT(DISTINCT pu.id)::int
-             FROM platform_users pu
-             JOIN user_roles ur ON ur.user_id = pu.id AND ur.role = 'coach'
-           ) AS coaches,
-           (
-             SELECT COUNT(DISTINCT pu.id)::int
-             FROM platform_users pu
-             JOIN user_roles ur ON ur.user_id = pu.id AND ur.role = 'club_admin'
-           ) AS club_admins,
-           (SELECT COUNT(*)::int FROM clubs) AS clubs,
-           (SELECT COUNT(*)::int FROM clubs WHERE status = 'active') AS active_clubs,
-           (SELECT COUNT(*)::int FROM clubs WHERE status = 'pending_coach') AS pending_coach_clubs,
-           (SELECT COUNT(*)::int FROM clubs WHERE status = 'read_only') AS read_only_clubs`
-      )
-    );
-
     res.json({
       users,
-      stats,
       total,
       page: safePage,
       pages,
@@ -342,7 +314,9 @@ router.get(
     const roles = (await many(`SELECT role FROM user_roles WHERE user_id = $1`, [user.id])).map((r) => r.role);
     const strava = camel(
       await one(
-        `SELECT connected, last_sync_at, last_sync_status, last_sync_error, provider_user_id, expires_at
+        `SELECT
+           (connected = TRUE AND access_token_enc IS NOT NULL) AS connected,
+           last_sync_at, last_sync_status, last_sync_error, provider_user_id, expires_at
          FROM oauth_connections WHERE user_id = $1 AND provider = 'strava'`,
         [user.id]
       )
@@ -667,7 +641,7 @@ router.get(
         `SELECT cm.id, cm.role, cm.status, cm.requested_at, cm.approved_at,
                 u.id AS user_id, u.first_name, u.last_name, u.email, u.status AS user_status,
                 COALESCE(ARRAY_AGG(DISTINCT ur.role) FILTER (WHERE ur.role IS NOT NULL), '{}') AS user_roles,
-                BOOL_OR(oc.connected) FILTER (WHERE oc.provider = 'strava') AS strava_connected,
+                BOOL_OR(oc.connected = TRUE AND oc.access_token_enc IS NOT NULL) FILTER (WHERE oc.provider = 'strava') AS strava_connected,
                 (SELECT COUNT(*) FROM activities a WHERE a.athlete_id = u.id)::int AS activity_count
          FROM club_members cm
          JOIN users u ON u.id = cm.user_id
